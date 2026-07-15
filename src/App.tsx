@@ -65,7 +65,18 @@ export default function App() {
 
   const fetchMyRegistration = async (email: string) => {
     try {
-      const res = await fetch(`/api/registrations/my?email=${encodeURIComponent(email)}`);
+      const headers: Record<string, string> = {};
+      const savedStudent = localStorage.getItem("svec_sih_student");
+      let token = student?.token;
+      if (!token && savedStudent) {
+        try {
+          token = JSON.parse(savedStudent).token;
+        } catch (_) {}
+      }
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      const res = await fetch(`/api/registrations/my?email=${encodeURIComponent(email)}`, { headers });
       if (res.ok) {
         const data = await res.json();
         if (data.found && data.registration) {
@@ -107,6 +118,25 @@ export default function App() {
 
   // Safe fallback list of menu items if fetch hasn't completed or returned empty
   const getRenderMenuItems = (): MenuItem[] => {
+    if (student) {
+      if (hasExistingRegistration) {
+        return [
+          { id: "registration-tab", label: "My Registration", type: "system", target: "receipt", order: 1 }
+        ];
+      } else {
+        return [
+          { id: "registration-tab", label: "My Registration", type: "system", target: "register", order: 1 }
+        ];
+      }
+    }
+
+    const hasAdminToken = !!sessionStorage.getItem("svec_sih_admin_token");
+    if (view === "admin" || hasAdminToken) {
+      return [
+        { id: "admin-tab-header", label: "Admin Panel", type: "system", target: "admin", order: 1 }
+      ];
+    }
+
     if (menuItems && menuItems.length > 0) {
       return menuItems.sort((a, b) => a.order - b.order);
     }
@@ -163,7 +193,19 @@ export default function App() {
 
   // Helper to change view and close drawers
   const navigateTo = (target: string) => {
-    setView(target);
+    if (student) {
+      // Allow only register or receipt view for logged in students
+      if (target === "receipt" || target === "register") {
+        setView(target);
+      } else {
+        const allowedTarget = hasExistingRegistration ? "receipt" : "register";
+        setView(allowedTarget);
+      }
+    } else if (view === "admin" || sessionStorage.getItem("svec_sih_admin_token")) {
+      setView("admin");
+    } else {
+      setView(target);
+    }
     setMobileMenuOpen(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };

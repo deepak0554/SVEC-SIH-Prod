@@ -3,8 +3,12 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import Razorpay from "razorpay";
+import jwt from "jsonwebtoken";
+import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
 import { ProblemStatement, Registration, Student, FeeConfig, HomepageContent, CustomPage, MenuItem } from "./src/types";
+
+const JWT_SECRET = process.env.JWT_SECRET || "svec_sih_hackathon_jwt_secret_2026";
 
 const app = express();
 const PORT = 3000;
@@ -242,19 +246,111 @@ function writeMenuItems(items: MenuItem[]) {
 function readSettings(): FeeConfig {
   try {
     const data = fs.readFileSync(SETTINGS_FILE, "utf-8");
-    return JSON.parse(data);
+    const parsed = JSON.parse(data);
+    return {
+      feeEnabled: parsed.feeEnabled ?? false,
+      feeAmount: parsed.feeAmount ?? 499,
+      razorpayKeyId: parsed.razorpayKeyId ?? "",
+      razorpayKeySecret: parsed.razorpayKeySecret ?? "",
+      jwtEnabled: parsed.jwtEnabled ?? false,
+      emailEnabled: parsed.emailEnabled ?? false,
+      smtpHost: parsed.smtpHost ?? "",
+      smtpPort: parsed.smtpPort ?? 587,
+      smtpUser: parsed.smtpUser ?? "",
+      smtpPass: parsed.smtpPass ?? "",
+      smtpFrom: parsed.smtpFrom ?? ""
+    };
   } catch (err) {
     return {
       feeEnabled: false,
       feeAmount: 499,
       razorpayKeyId: "",
-      razorpayKeySecret: ""
+      razorpayKeySecret: "",
+      jwtEnabled: false,
+      emailEnabled: false,
+      smtpHost: "",
+      smtpPort: 587,
+      smtpUser: "",
+      smtpPass: "",
+      smtpFrom: ""
     };
   }
 }
 
 function writeSettings(settings: FeeConfig) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+}
+
+
+// Async SMTP email dispatch helper
+async function sendEmail(to: string, subject: string, htmlContent: string): Promise<boolean> {
+  const settings = readSettings();
+  if (!settings.emailEnabled) {
+    console.log(`[Email Skipped] system-wide email is disabled. Target: ${to}, Subject: ${subject}`);
+    return false;
+  }
+
+  const host = (settings.smtpHost || "").trim();
+  const port = Number(settings.smtpPort) || 587;
+  const user = (settings.smtpUser || "").trim();
+  const pass = (settings.smtpPass || "").trim();
+  const from = (settings.smtpFrom || "").trim() || `"SVEC SIH Support" <noreply@example.com>`;
+
+  if (!host || !user || !pass) {
+    console.warn(`[Email Failed] SMTP configuration is missing some fields (Host: ${host}, User: ${user}). Target: ${to}`);
+    return false;
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host,
+      port,
+      secure: port === 465,
+      auth: {
+        user,
+        pass
+      },
+      tls: {
+        rejectUnauthorized: false // avoids failing on self-signed certificates common in dev
+      }
+    });
+
+    await transporter.sendMail({
+      from,
+      to,
+      subject,
+      html: htmlContent
+    });
+
+    console.log(`[Email Success] Message sent to ${to}. Subject: ${subject}`);
+    return true;
+  } catch (err) {
+    console.error(`[Email Error] Failed to send email to ${to}:`, err);
+    return false;
+  }
+}
+
+
+// Student JWT authentication validation middleware
+function validateStudentJWT(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const settings = readSettings();
+  if (!settings.jwtEnabled) {
+    return next();
+  }
+
+  const authHeader = req.headers["authorization"];
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid authorization token" });
+  }
+
+  const token = authHeader.split(" ")[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string };
+    (req as any).studentUser = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Your session has expired. Please log in again." });
+  }
 }
 
 
@@ -362,6 +458,36 @@ app.post("/api/auth/register", (req, res) => {
   students.push(newStudent);
   writeStudents(students);
 
+  // Trigger background welcome email
+  const welcomeSubject = "Welcome to SVEC SIH Hackathon Portal!";
+  const welcomeHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+      <h2 style="color: #4f46e5; margin-top: 0; margin-bottom: 16px; font-size: 20px; font-weight: bold;">Welcome to SVEC SIH Hackathon Portal!</h2>
+      <p style="font-size: 14px; color: #334155; line-height: 1.6;">Hello,</p>
+      <p style="font-size: 14px; color: #334155; line-height: 1.6;">Your student registration portal account has been successfully created. You can now use your credentials to manage your team roster, select SIH problem statements, and complete your formal registration.</p>
+      
+      <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; padding: 16px; border-radius: 8px; margin: 24px 0;">
+        <h3 style="margin-top: 0; color: #0f172a; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px;">Your Registration Details:</h3>
+        <p style="font-size: 13px; color: #475569; margin: 4px 0;"><strong>Student Email:</strong> ${newStudent.email}</p>
+        <p style="font-size: 13px; color: #475569; margin: 4px 0;"><strong>Department:</strong> ${newStudent.department || "N/A"}</p>
+        <p style="font-size: 13px; color: #475569; margin: 4px 0;"><strong>Mobile:</strong> ${newStudent.mobile || "N/A"}</p>
+      </div>
+
+      <p style="font-size: 14px; color: #334155; line-height: 1.6;">If you have any questions or require support, please contact your department coordinator or SPOC.</p>
+      <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+      <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">This is an automated system notification from SVEC Smart India Hackathon Portal. Please do not reply directly to this email.</p>
+    </div>
+  `;
+  sendEmail(newStudent.email, welcomeSubject, welcomeHtml).catch(err => {
+    console.error("Welcome email background task failed:", err);
+  });
+
+  const token = jwt.sign(
+    { id: newStudent.id, email: newStudent.email },
+    JWT_SECRET,
+    { expiresIn: "1d" }
+  );
+
   res.status(201).json({
     success: true,
     student: {
@@ -370,7 +496,8 @@ app.post("/api/auth/register", (req, res) => {
       gender: newStudent.gender,
       department: newStudent.department,
       mobile: newStudent.mobile
-    }
+    },
+    token
   });
 });
 
@@ -394,6 +521,12 @@ app.post("/api/auth/login", (req, res) => {
     return res.status(401).json({ error: "Invalid email or password." });
   }
 
+  const token = jwt.sign(
+    { id: student.id, email: student.email },
+    JWT_SECRET,
+    { expiresIn: "1d" }
+  );
+
   res.json({
     success: true,
     student: {
@@ -402,7 +535,8 @@ app.post("/api/auth/login", (req, res) => {
       gender: student.gender || "",
       department: student.department || "",
       mobile: student.mobile || ""
-    }
+    },
+    token
   });
 });
 
@@ -412,7 +546,8 @@ app.get("/api/settings/public", (req, res) => {
   res.json({
     feeEnabled: settings.feeEnabled,
     feeAmount: settings.feeAmount,
-    razorpayKeyId: settings.razorpayKeyId
+    razorpayKeyId: settings.razorpayKeyId,
+    jwtEnabled: !!settings.jwtEnabled
   });
 });
 
@@ -430,7 +565,19 @@ app.post("/api/settings", validateAdmin, (req, res) => {
   if ((req as any).adminRole === "Student SPOC") {
     return res.status(403).json({ error: "Access Denied: Student SPOC is not authorized to update system settings." });
   }
-  const { feeEnabled, feeAmount, razorpayKeyId, razorpayKeySecret } = req.body;
+  const { 
+    feeEnabled, 
+    feeAmount, 
+    razorpayKeyId, 
+    razorpayKeySecret, 
+    jwtEnabled,
+    emailEnabled,
+    smtpHost,
+    smtpPort,
+    smtpUser,
+    smtpPass,
+    smtpFrom
+  } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
     return res.status(400).json({ error: "A valid fee amount is required when fee is enabled." });
@@ -440,11 +587,111 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     feeEnabled: !!feeEnabled,
     feeAmount: Number(feeAmount) || 0,
     razorpayKeyId: (razorpayKeyId || "").trim(),
-    razorpayKeySecret: (razorpayKeySecret || "").trim()
+    razorpayKeySecret: (razorpayKeySecret || "").trim(),
+    jwtEnabled: !!jwtEnabled,
+    emailEnabled: !!emailEnabled,
+    smtpHost: (smtpHost || "").trim(),
+    smtpPort: Number(smtpPort) || 587,
+    smtpUser: (smtpUser || "").trim(),
+    smtpPass: (smtpPass || "").trim(),
+    smtpFrom: (smtpFrom || "").trim()
   };
 
   writeSettings(updated);
   res.json({ success: true, settings: updated });
+});
+
+// Admin/Student SPOC Bulk Broadcast Email API
+app.post("/api/admin/broadcast-email", validateAdmin, async (req, res) => {
+  const settings = readSettings();
+  if (!settings.emailEnabled) {
+    return res.status(400).json({ error: "Email System is disabled. Please enable email notifications and configure SMTP credentials in the Settings tab before sending broadcasts." });
+  }
+
+  const { subject, message, recipientGroup, testEmail } = req.body;
+  if (!subject || !message || !recipientGroup) {
+    return res.status(400).json({ error: "Subject, message and recipient group are required." });
+  }
+
+  let recipientEmails: string[] = [];
+
+  if (recipientGroup === "test_single") {
+    if (!testEmail || !/\S+@\S+\.\S+/.test(testEmail)) {
+      return res.status(400).json({ error: "A valid test email address is required." });
+    }
+    recipientEmails = [testEmail.trim()];
+  } else if (recipientGroup === "all_logins") {
+    const students = readStudents();
+    recipientEmails = students.map(s => s.email);
+  } else if (recipientGroup === "team_leads") {
+    const regs = readRegistrations();
+    recipientEmails = regs.map(r => r.studentEmail || "").filter(email => !!email);
+  } else if (recipientGroup === "all_team_members") {
+    const regs = readRegistrations();
+    regs.forEach(r => {
+      if (r.studentEmail) recipientEmails.push(r.studentEmail);
+      if (r.member1Email) recipientEmails.push(r.member1Email);
+      if (r.member2Email) recipientEmails.push(r.member2Email);
+      if (r.member3Email) recipientEmails.push(r.member3Email);
+      if (r.member4Email) recipientEmails.push(r.member4Email);
+      if (r.member5Email) recipientEmails.push(r.member5Email);
+    });
+  } else {
+    return res.status(400).json({ error: "Invalid recipient group selected." });
+  }
+
+  // Sanitize, filter empty/invalid, lowercase, and deduplicate
+  const emailRegex = /\S+@\S+\.\S+/;
+  const sanitized = recipientEmails
+    .map(e => e.trim().toLowerCase())
+    .filter(e => !!e && emailRegex.test(e));
+  
+  const uniqueRecipients = Array.from(new Set(sanitized));
+
+  if (uniqueRecipients.length === 0) {
+    return res.status(400).json({ error: `No recipients found in the group: "${recipientGroup}".` });
+  }
+
+  // Send success response early indicating process has started
+  res.json({
+    success: true,
+    recipientCount: uniqueRecipients.length,
+    message: `Broadcast queued successfully! Initiated sending to ${uniqueRecipients.length} recipients.`
+  });
+
+  // Execute actual sending in the background
+  const formattedHtml = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+      <div style="border-bottom: 2px solid #4f46e5; padding-bottom: 12px; margin-bottom: 20px;">
+        <h2 style="color: #4f46e5; margin: 0; font-size: 18px; font-weight: bold;">SVEC SIH Hackathon Updates</h2>
+        <span style="font-size: 10px; color: #64748b; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Official Announcement</span>
+      </div>
+      <div style="font-size: 14px; color: #334155; line-height: 1.6; white-space: pre-wrap;">${message}</div>
+      <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+      <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">This is an official announcement from SVEC Smart India Hackathon Administration.</p>
+    </div>
+  `;
+
+  // Process sending in chunks to avoid overloading or rate limits (e.g. 5 at a time)
+  (async () => {
+    console.log(`[Broadcast] Starting email broadcast for subject: "${subject}" to ${uniqueRecipients.length} students.`);
+    const chunkSize = 5;
+    for (let i = 0; i < uniqueRecipients.length; i += chunkSize) {
+      const chunk = uniqueRecipients.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(email => 
+          sendEmail(email, subject, formattedHtml).catch(err => {
+            console.error(`[Broadcast] Error sending to ${email}:`, err);
+          })
+        )
+      );
+      // Brief sleep between chunks
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    console.log(`[Broadcast] Completed email broadcast for subject: "${subject}".`);
+  })().catch(err => {
+    console.error("[Broadcast] Critical background error during broadcast processing:", err);
+  });
 });
 
 // Create Razorpay Order
@@ -798,10 +1045,18 @@ app.get("/api/registrations", validateAdmin, (req, res) => {
 });
 
 // GET own registration (Student lookup)
-app.get("/api/registrations/my", (req, res) => {
+app.get("/api/registrations/my", validateStudentJWT, (req, res) => {
   const email = req.query.email;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email query parameter is required." });
+  }
+
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Accessing another student's registration is not allowed." });
+    }
   }
 
   const emailClean = email.trim().toLowerCase();
@@ -816,10 +1071,18 @@ app.get("/api/registrations/my", (req, res) => {
 });
 
 // PUT update own project proposal (Student portal)
-app.put("/api/registrations/my/proposal", (req, res) => {
+app.put("/api/registrations/my/proposal", validateStudentJWT, (req, res) => {
   const { email, abstract, implementationSteps, pptFileName, pptBase64, proposalStatus } = req.body;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email is required." });
+  }
+
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Accessing another student's registration is not allowed." });
+    }
   }
 
   const emailClean = email.trim().toLowerCase();
@@ -852,10 +1115,18 @@ app.put("/api/registrations/my/proposal", (req, res) => {
 });
 
 // GET a student's profile
-app.get("/api/students/profile", (req, res) => {
+app.get("/api/students/profile", validateStudentJWT, (req, res) => {
   const email = req.query.email;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email query parameter is required." });
+  }
+
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Accessing another student's profile is not allowed." });
+    }
   }
 
   const emailClean = email.trim().toLowerCase();
@@ -877,10 +1148,18 @@ app.get("/api/students/profile", (req, res) => {
 });
 
 // PUT update student's profile
-app.put("/api/students/profile", (req, res) => {
+app.put("/api/students/profile", validateStudentJWT, (req, res) => {
   const { email, gender, department, mobile } = req.body;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email is required." });
+  }
+
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Accessing another student's profile is not allowed." });
+    }
   }
 
   const emailClean = email.trim().toLowerCase();
@@ -913,10 +1192,18 @@ app.put("/api/students/profile", (req, res) => {
 });
 
 // POST student reset/change their own password
-app.post("/api/students/change-password", (req, res) => {
+app.post("/api/students/change-password", validateStudentJWT, (req, res) => {
   const { email, oldPassword, newPassword } = req.body;
   if (!email || !oldPassword || !newPassword) {
     return res.status(400).json({ error: "Email, old password, and new password are required." });
+  }
+
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Modifying another student's password is not allowed." });
+    }
   }
 
   if (newPassword.length < 6) {
@@ -944,7 +1231,7 @@ app.post("/api/students/change-password", (req, res) => {
 });
 
 // PUT update student's own team member details
-app.put("/api/registrations/my/team", (req, res) => {
+app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
   const {
     email,
     leadName,
@@ -975,6 +1262,14 @@ app.put("/api/registrations/my/team", (req, res) => {
 
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email is required." });
+  }
+
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Modifying another student's team is not allowed." });
+    }
   }
 
   const emailClean = email.trim().toLowerCase();
@@ -1162,7 +1457,7 @@ app.get("/api/registrations/check-team", (req, res) => {
 });
 
 // POST submit a registration
-app.post("/api/registrations", (req, res) => {
+app.post("/api/registrations", validateStudentJWT, (req, res) => {
   const {
     teamName,
     leadName,
@@ -1216,6 +1511,14 @@ app.post("/api/registrations", (req, res) => {
     return res.status(400).json({ error: "Please fill in all required fields." });
   }
 
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
+    const tokenEmail = (req as any).studentUser?.email;
+    if (tokenEmail && tokenEmail.toLowerCase() !== studentEmail.trim().toLowerCase()) {
+      return res.status(403).json({ error: "Forbidden: Submitting a registration under another student's account is not allowed." });
+    }
+  }
+
   // Validate that there is at least one female student in the team based on gender fields
   const hasFemale = 
     (leadGender || "").toLowerCase() === "female" ||
@@ -1250,7 +1553,6 @@ app.post("/api/registrations", (req, res) => {
   }
 
   // Handle registration fee if enabled
-  const settings = readSettings();
   let paymentStatus: "free" | "paid" = "free";
   let amountPaid = 0;
 
@@ -1331,6 +1633,91 @@ app.post("/api/registrations", (req, res) => {
 
   registrations.push(newRegistration);
   writeRegistrations(registrations);
+
+  // Trigger background confirmation emails to all team members
+  try {
+    const pStatements = readStatements();
+    const matchedPS = pStatements.find(s => s.id === problemStatementId);
+    const psDetails = matchedPS ? `${matchedPS.code}: ${matchedPS.title}` : "Selected SIH Problem Statement";
+
+    const teamEmails = [
+      studentEmail?.trim(),
+      member1Email?.trim(),
+      member2Email?.trim(),
+      member3Email?.trim(),
+      member4Email?.trim(),
+      member5Email?.trim()
+    ].filter((email): email is string => !!email && /\S+@\S+\.\S+/.test(email));
+
+    const uniqueTeamEmails = Array.from(new Set(teamEmails.map(e => e.toLowerCase())));
+
+    if (uniqueTeamEmails.length > 0) {
+      const confirmSubject = `SIH Hackathon Registration Confirmed - Team: ${teamName}`;
+      const confirmHtml = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <span style="display: inline-block; background-color: #e0e7ff; color: #4338ca; padding: 6px 12px; border-radius: 9999px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Registration Confirmed</span>
+            <h2 style="color: #4f46e5; margin-top: 8px; margin-bottom: 4px; font-size: 22px; font-weight: bold;">Smart India Hackathon</h2>
+            <p style="font-size: 14px; color: #64748b; margin-top: 0;">SVEC Campus Hackathon Edition</p>
+          </div>
+
+          <p style="font-size: 14px; color: #334155; line-height: 1.6;">Congratulations!</p>
+          <p style="font-size: 14px; color: #334155; line-height: 1.6;">Your team <strong>${teamName}</strong> has been successfully registered for the SVEC internal selection hackathon for Smart India Hackathon (SIH).</p>
+          
+          <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; padding: 20px; border-radius: 12px; margin: 24px 0;">
+            <h3 style="margin-top: 0; color: #0f172a; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Hackathon Registration Summary:</h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 13px; color: #334155;">
+              <tr>
+                <td style="padding: 6px 0; color: #64748b; width: 40%;"><strong>Registration ID:</strong></td>
+                <td style="padding: 6px 0; font-family: monospace; font-weight: bold; color: #4f46e5;">${registrationId}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;"><strong>Team Name:</strong></td>
+                <td style="padding: 6px 0; font-weight: bold;">${teamName}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;"><strong>Team Leader:</strong></td>
+                <td style="padding: 6px 0;">${leadName} (${leadDepartment})</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;"><strong>Problem Statement:</strong></td>
+                <td style="padding: 6px 0; font-weight: 500;">${psDetails}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;"><strong>Mentor Name:</strong></td>
+                <td style="padding: 6px 0;">${mentorName}</td>
+              </tr>
+              <tr>
+                <td style="padding: 6px 0; color: #64748b;"><strong>Fee Payment Status:</strong></td>
+                <td style="padding: 6px 0; text-transform: uppercase; font-size: 11px;"><span style="background-color: ${paymentStatus === "paid" ? "#d1fae5" : "#f3f4f6"}; color: ${paymentStatus === "paid" ? "#065f46" : "#374151"}; padding: 2px 6px; border-radius: 4px; font-weight: bold;">${paymentStatus}</span></td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 14px; border-radius: 8px; margin-bottom: 24px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+            <strong>Team Members roster:</strong><br/>
+            1. ${leadName} (Leader, Mobile: ${leadMobile})<br/>
+            2. ${member1} (${member1Email || "No Email"})<br/>
+            3. ${member2} (${member2Email || "No Email"})<br/>
+            4. ${member3} (${member3Email || "No Email"})<br/>
+            5. ${member4} (${member4Email || "No Email"})<br/>
+            6. ${member5} (${member5Email || "No Email"})
+          </div>
+
+          <p style="font-size: 14px; color: #334155; line-height: 1.6;">You can log in to the portal at any time to view your confirmation slip, upload your project proposal PPT/abstract, or update your team profile.</p>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+          <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">This is an automated confirmation from SVEC Smart India Hackathon Portal.</p>
+        </div>
+      `;
+
+      // Dispatch to each member in background
+      Promise.all(uniqueTeamEmails.map(email => sendEmail(email, confirmSubject, confirmHtml))).catch(err => {
+        console.error("Failed to send some of the team registration confirmation emails:", err);
+      });
+    }
+  } catch (err) {
+    console.error("Error setting up team registration email dispatch:", err);
+  }
 
   res.status(201).json({
     success: true,

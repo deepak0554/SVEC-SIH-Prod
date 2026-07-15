@@ -65,6 +65,13 @@ export interface FeeConfig {
   feeAmount: number;
   razorpayKeyId: string;
   razorpayKeySecret: string;
+  jwtEnabled?: boolean;
+  emailEnabled?: boolean;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUser?: string;
+  smtpPass?: string;
+  smtpFrom?: string;
 }
 
 

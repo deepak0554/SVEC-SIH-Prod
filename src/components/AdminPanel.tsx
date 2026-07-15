@@ -26,7 +26,8 @@ import {
   Mail,
   LogOut,
   UserPlus,
-  ShieldAlert
+  ShieldAlert,
+  Send
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -56,7 +57,7 @@ export default function AdminPanel({
     return !!sessionStorage.getItem("svec_sih_admin_token");
   });
   const [loginError, setLoginError] = useState("");
-  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security">("registrations");
+  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast">("registrations");
 
   // Change own password states (Admins / Student SPOC)
   const [oldAdminPassword, setOldAdminPassword] = useState("");
@@ -78,6 +79,15 @@ export default function AdminPanel({
   const [newAdminRole, setNewAdminRole] = useState<"SPOC" | "Student SPOC">("Student SPOC");
   const [adminAddError, setAdminAddError] = useState("");
   const [adminAddSuccess, setAdminAddSuccess] = useState("");
+
+  // Email Broadcast state
+  const [broadcastSubject, setBroadcastSubject] = useState("");
+  const [broadcastMessage, setBroadcastMessage] = useState("");
+  const [broadcastRecipientGroup, setBroadcastRecipientGroup] = useState<"all_logins" | "team_leads" | "all_team_members" | "test_single">("test_single");
+  const [broadcastTestEmail, setBroadcastTestEmail] = useState("");
+  const [broadcastSuccess, setBroadcastSuccess] = useState("");
+  const [broadcastError, setBroadcastError] = useState("");
+  const [broadcastLoading, setBroadcastLoading] = useState(false);
 
   const fetchAdminsList = async () => {
     setAdminsLoading(true);
@@ -162,12 +172,72 @@ export default function AdminPanel({
     }
   };
 
+  // Broadcast Email Handler
+  const handleSendBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBroadcastError("");
+    setBroadcastSuccess("");
+
+    if (!broadcastSubject.trim()) {
+      setBroadcastError("Subject line cannot be empty.");
+      return;
+    }
+    if (!broadcastMessage.trim()) {
+      setBroadcastError("Broadcast message content cannot be empty.");
+      return;
+    }
+    if (broadcastRecipientGroup === "test_single" && (!broadcastTestEmail.trim() || !/\S+@\S+\.\S+/.test(broadcastTestEmail))) {
+      setBroadcastError("Please provide a valid single recipient email address for testing.");
+      return;
+    }
+
+    setBroadcastLoading(true);
+    try {
+      const res = await fetch("/api/admin/broadcast-email", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({
+          subject: broadcastSubject,
+          message: broadcastMessage,
+          recipientGroup: broadcastRecipientGroup,
+          testEmail: broadcastTestEmail
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setBroadcastSuccess(data.message || "Bulk broadcast email initiated successfully!");
+        // Only clear if not test
+        if (broadcastRecipientGroup !== "test_single") {
+          setBroadcastSubject("");
+          setBroadcastMessage("");
+        }
+      } else {
+        setBroadcastError(data.error || "Failed to dispatch broadcast email.");
+      }
+    } catch (err) {
+      setBroadcastError("Network error. Could not reach server to dispatch broadcast.");
+    } finally {
+      setBroadcastLoading(false);
+    }
+  };
+
   // State for Settings & Fees
   const [settingsForm, setSettingsForm] = useState({
     feeEnabled: false,
     feeAmount: 0,
     razorpayKeyId: "",
-    razorpayKeySecret: ""
+    razorpayKeySecret: "",
+    jwtEnabled: false,
+    emailEnabled: false,
+    smtpHost: "",
+    smtpPort: 587,
+    smtpUser: "",
+    smtpPass: "",
+    smtpFrom: ""
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -186,7 +256,14 @@ export default function AdminPanel({
           feeEnabled: data.feeEnabled || false,
           feeAmount: data.feeAmount || 0,
           razorpayKeyId: data.razorpayKeyId || "",
-          razorpayKeySecret: data.razorpayKeySecret || ""
+          razorpayKeySecret: data.razorpayKeySecret || "",
+          jwtEnabled: data.jwtEnabled || false,
+          emailEnabled: data.emailEnabled || false,
+          smtpHost: data.smtpHost || "",
+          smtpPort: data.smtpPort || 587,
+          smtpUser: data.smtpUser || "",
+          smtpPass: data.smtpPass || "",
+          smtpFrom: data.smtpFrom || ""
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -216,6 +293,13 @@ export default function AdminPanel({
       }
       if (!settingsForm.razorpayKeyId.trim() || !settingsForm.razorpayKeySecret.trim()) {
         setSettingsError("Razorpay Key ID and Key Secret are required when registration fee is enabled.");
+        return;
+      }
+    }
+
+    if (settingsForm.emailEnabled) {
+      if (!settingsForm.smtpHost.trim() || !settingsForm.smtpUser.trim() || !settingsForm.smtpPass.trim()) {
+        setSettingsError("SMTP Host, Username, and Password are required when the email system is enabled.");
         return;
       }
     }
@@ -1030,6 +1114,17 @@ export default function AdminPanel({
           >
             Student Logins
           </button>
+          <button
+            onClick={() => setActiveTab("broadcast")}
+            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "broadcast"
+                ? "bg-white text-indigo-600 shadow-sm"
+                : "text-slate-600 hover:text-slate-900"
+            }`}
+            id="admin-tab-broadcast"
+          >
+            Email Broadcast
+          </button>
           {adminRole === "SPOC" && (
             <>
               <button
@@ -1747,6 +1842,29 @@ export default function AdminPanel({
                   </label>
                 </div>
 
+                {/* Toggle JWT authentication */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                      <Lock className="w-4 h-4 text-indigo-500" />
+                      Enable JWT Authentication
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      Enforce secure JSON Web Token (JWT) verification on all student registration and profile endpoints. Only SPOC (Super Admin) can toggle this configuration.
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.jwtEnabled}
+                      disabled={adminRole !== "SPOC"}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, jwtEnabled: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 peer-disabled:opacity-55"></div>
+                  </label>
+                </div>
+
                 {/* Config Fields */}
                 <AnimatePresence>
                   {settingsForm.feeEnabled && (
@@ -1800,6 +1918,107 @@ export default function AdminPanel({
                             placeholder="••••••••••••••••••••••••"
                             className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
                             required={settingsForm.feeEnabled}
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Toggle Email Service */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                      <Mail className="w-4 h-4 text-indigo-500" />
+                      Enable Automatic & Bulk Email System
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      Enables SMTP-driven email dispatch for automated student registrations, team submissions, and bulk administration broadcasts.
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.emailEnabled}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, emailEnabled: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+
+                {/* SMTP Credentials Form Fields */}
+                <AnimatePresence>
+                  {settingsForm.emailEnabled && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-4 overflow-hidden border border-slate-100 rounded-2xl p-4 bg-slate-50/20"
+                    >
+                      <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-2">SMTP Configuration</h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* SMTP Host */}
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">SMTP Host</label>
+                          <input
+                            type="text"
+                            value={settingsForm.smtpHost}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, smtpHost: e.target.value }))}
+                            placeholder="e.g. smtp.gmail.com"
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            required={settingsForm.emailEnabled}
+                          />
+                        </div>
+
+                        {/* SMTP Port */}
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">SMTP Port</label>
+                          <input
+                            type="number"
+                            value={settingsForm.smtpPort}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, smtpPort: parseInt(e.target.value, 10) || 587 }))}
+                            placeholder="e.g. 587 or 465"
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            required={settingsForm.emailEnabled}
+                          />
+                        </div>
+
+                        {/* SMTP User */}
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">SMTP Username</label>
+                          <input
+                            type="text"
+                            value={settingsForm.smtpUser}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, smtpUser: e.target.value }))}
+                            placeholder="e.g. your-email@gmail.com"
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            required={settingsForm.emailEnabled}
+                          />
+                        </div>
+
+                        {/* SMTP Pass */}
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">SMTP Password / App Key</label>
+                          <input
+                            type="password"
+                            value={settingsForm.smtpPass}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, smtpPass: e.target.value }))}
+                            placeholder="••••••••••••••••"
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            required={settingsForm.emailEnabled}
+                          />
+                        </div>
+
+                        {/* SMTP From */}
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Sender Display Address (From)</label>
+                          <input
+                            type="text"
+                            value={settingsForm.smtpFrom}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, smtpFrom: e.target.value }))}
+                            placeholder='e.g. "SVEC SIH Hackathon" <noreply@svecsih.org>'
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
                           />
                         </div>
                       </div>
@@ -2332,6 +2551,209 @@ export default function AdminPanel({
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* EMAIL BROADCAST TAB */}
+      {activeTab === "broadcast" && (
+        <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-left">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-8 shadow-sm">
+            <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-100">
+              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0">
+                <Mail className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-xl font-extrabold font-display text-slate-800">
+                  Bulk Email Broadcast Portal
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Send announcements, notifications, schedule updates, or reminders to students and team members.
+                </p>
+              </div>
+            </div>
+
+            {!settingsForm.emailEnabled ? (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-slate-700">
+                <div className="flex gap-3">
+                  <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h4 className="text-sm font-bold text-amber-800">Email System is Offline</h4>
+                    <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                      The automatic & bulk email system is currently disabled or not configured. 
+                    </p>
+                    <p className="text-xs text-amber-600 mt-2 leading-relaxed">
+                      {adminRole === "SPOC" ? (
+                        <span>
+                          Please go to the <strong>Settings</strong> tab to enable the system and configure your institution's SMTP host credentials.
+                        </span>
+                      ) : (
+                        <span>
+                          Please request a <strong>Super Admin (SPOC)</strong> to navigate to the Settings tab, enable the email system, and configure valid institutional SMTP credentials.
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSendBroadcast} className="space-y-6">
+                {broadcastError && (
+                  <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <span>{broadcastError}</span>
+                  </div>
+                )}
+
+                {broadcastSuccess && (
+                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>{broadcastSuccess}</span>
+                  </div>
+                )}
+
+                {/* Recipient Selection */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Recipient Target Group
+                  </label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "test_single" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
+                      <input
+                        type="radio"
+                        name="recipientGroup"
+                        checked={broadcastRecipientGroup === "test_single"}
+                        onChange={() => setBroadcastRecipientGroup("test_single")}
+                        className="mt-1 accent-indigo-600"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block">Single Test Email</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Send a test to a single email to verify SMTP configuration and formatting.</span>
+                      </div>
+                    </label>
+
+                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "all_logins" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
+                      <input
+                        type="radio"
+                        name="recipientGroup"
+                        checked={broadcastRecipientGroup === "all_logins"}
+                        onChange={() => setBroadcastRecipientGroup("all_logins")}
+                        className="mt-1 accent-indigo-600"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block">All Registered Student Logins</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Broadcasts to all student email accounts who created a portal login profile.</span>
+                      </div>
+                    </label>
+
+                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "team_leads" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
+                      <input
+                        type="radio"
+                        name="recipientGroup"
+                        checked={broadcastRecipientGroup === "team_leads"}
+                        onChange={() => setBroadcastRecipientGroup("team_leads")}
+                        className="mt-1 accent-indigo-600"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block">Team Leaders Only</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Dispatches only to primary team submitters/leaders.</span>
+                      </div>
+                    </label>
+
+                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "all_team_members" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
+                      <input
+                        type="radio"
+                        name="recipientGroup"
+                        checked={broadcastRecipientGroup === "all_team_members"}
+                        onChange={() => setBroadcastRecipientGroup("all_team_members")}
+                        className="mt-1 accent-indigo-600"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block">All Roster Members</span>
+                        <span className="text-[10px] text-slate-400 block mt-0.5">Dispatches to all listed team members on every registered team's complete roster.</span>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Conditional Single Test Email Input */}
+                <AnimatePresence>
+                  {broadcastRecipientGroup === "test_single" && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-1.5 overflow-hidden"
+                    >
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Test Email Recipient
+                      </label>
+                      <input
+                        type="email"
+                        value={broadcastTestEmail}
+                        onChange={(e) => setBroadcastTestEmail(e.target.value)}
+                        placeholder="e.g. administrator@example.com"
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                        required={broadcastRecipientGroup === "test_single"}
+                      />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Email Subject */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Email Subject
+                  </label>
+                  <input
+                    type="text"
+                    value={broadcastSubject}
+                    onChange={(e) => setBroadcastSubject(e.target.value)}
+                    placeholder="e.g. SVEC SIH Hackathon - Mandatory PPT Template & Submission Deadline"
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-bold"
+                    required
+                  />
+                </div>
+
+                {/* Email Message Content */}
+                <div className="space-y-1.5">
+                  <div className="flex justify-between items-center">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Email Message Body
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-medium font-bold">Text wraps automatically</span>
+                  </div>
+                  <textarea
+                    value={broadcastMessage}
+                    onChange={(e) => setBroadcastMessage(e.target.value)}
+                    placeholder="Type your official announcement here..."
+                    rows={8}
+                    className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all leading-relaxed"
+                    required
+                  />
+                </div>
+
+                <div className="pt-4 border-t border-slate-100 flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={broadcastLoading}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md hover:shadow-lg cursor-pointer flex items-center gap-1.5"
+                  >
+                    {broadcastLoading ? (
+                      <>
+                        <span className="w-4 h-4 border-2 border-indigo-200 border-t-white rounded-full animate-spin inline-block"></span>
+                        <span>Sending Broadcast...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Send Official Broadcast</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

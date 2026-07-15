@@ -270,9 +270,14 @@ export default function RegistrationForm({
         ...paymentDetails
       };
 
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if ((student as any).token) {
+        headers["Authorization"] = `Bearer ${(student as any).token}`;
+      }
+
       const res = await fetch("/api/registrations", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload)
       });
       const data = await res.json();

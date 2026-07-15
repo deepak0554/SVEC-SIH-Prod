@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { Mail, Lock, LogIn, UserPlus, AlertCircle, CheckCircle2, GraduationCap, Phone, User, BookOpen } from "lucide-react";
 
 interface StudentAuthProps {
-  onAuthSuccess: (student: { id: string; email: string; gender?: string; department?: string; mobile?: string }) => void;
+  onAuthSuccess: (student: { id: string; email: string; gender?: string; department?: string; mobile?: string; token?: string }) => void;
 }
 
 export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
@@ -67,13 +67,14 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
 
       const data = await res.json();
       if (res.ok) {
+        const studentData = { ...data.student, token: data.token };
         if (!isLogin) {
           setSuccess("Account created successfully! Logging you in...");
           setTimeout(() => {
-            onAuthSuccess(data.student);
+            onAuthSuccess(studentData);
           }, 1500);
         } else {
-          onAuthSuccess(data.student);
+          onAuthSuccess(studentData);
         }
       } else {
         setError(data.error || "Authentication failed. Please try again.");

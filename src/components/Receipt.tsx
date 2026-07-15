@@ -42,6 +42,20 @@ export default function Receipt({
 }: ReceiptProps) {
   const statement = problemStatements.find(ps => ps.id === registration.problemStatementId);
 
+  const getAuthHeaders = (extraHeaders: Record<string, string> = {}) => {
+    const headers: Record<string, string> = { ...extraHeaders };
+    try {
+      const saved = localStorage.getItem("svec_sih_student");
+      if (saved) {
+        const studentObj = JSON.parse(saved);
+        if (studentObj.token) {
+          headers["Authorization"] = `Bearer ${studentObj.token}`;
+        }
+      }
+    } catch (err) {}
+    return headers;
+  };
+
   // Tab Navigation State
   const [activeTab, setActiveTab] = useState<"slip" | "proposal" | "profile" | "team">("slip");
 
@@ -147,7 +161,9 @@ export default function Receipt({
     setProfileError("");
     setProfileSuccess("");
     try {
-      const res = await fetch(`/api/students/profile?email=${encodeURIComponent(registration.studentEmail || "")}`);
+      const res = await fetch(`/api/students/profile?email=${encodeURIComponent(registration.studentEmail || "")}`, {
+        headers: getAuthHeaders()
+      });
       if (res.ok) {
         const data = await res.json();
         setProfileMobile(data.mobile || "");
@@ -274,9 +290,9 @@ export default function Receipt({
     try {
       const res = await fetch("/api/registrations/my/proposal", {
         method: "PUT",
-        headers: {
+        headers: getAuthHeaders({
           "Content-Type": "application/json"
-        },
+        }),
         body: JSON.stringify({
           email: registration.studentEmail,
           abstract,
@@ -914,7 +930,7 @@ export default function Receipt({
                       try {
                         const res = await fetch("/api/students/profile", {
                           method: "PUT",
-                          headers: { "Content-Type": "application/json" },
+                          headers: getAuthHeaders({ "Content-Type": "application/json" }),
                           body: JSON.stringify({
                             email: registration.studentEmail,
                             gender: profileGender,
@@ -1022,7 +1038,7 @@ export default function Receipt({
                       try {
                         const res = await fetch("/api/students/change-password", {
                           method: "POST",
-                          headers: { "Content-Type": "application/json" },
+                          headers: getAuthHeaders({ "Content-Type": "application/json" }),
                           body: JSON.stringify({
                             email: registration.studentEmail,
                             oldPassword: profileOldPass,
@@ -1154,7 +1170,7 @@ export default function Receipt({
                   try {
                     const res = await fetch("/api/registrations/my/team", {
                       method: "PUT",
-                      headers: { "Content-Type": "application/json" },
+                      headers: getAuthHeaders({ "Content-Type": "application/json" }),
                       body: JSON.stringify({
                         email: registration.studentEmail,
                         leadName,
