@@ -76,6 +76,31 @@ export interface FeeConfig {
   logoUrl?: string;
   portalTitle?: string;
   portalCaption?: string;
+
+  // SMS Gateway config
+  smsEnabled?: boolean;
+  smsProvider?: "twilio" | "msg91" | "custom";
+  twilioSid?: string;
+  twilioAuthToken?: string;
+  twilioFrom?: string;
+  msg91AuthKey?: string;
+  msg91SenderId?: string;
+  msg91Route?: string;
+  smsCustomUrl?: string;
+  smsCustomMethod?: "GET" | "POST";
+  smsCustomHeaders?: string;
+  smsCustomPayload?: string;
+
+  // WhatsApp Business profile config
+  whatsappEnabled?: boolean;
+  whatsappProvider?: "meta" | "custom";
+  whatsappAccessToken?: string;
+  whatsappPhoneId?: string;
+  whatsappWabaId?: string;
+  whatsappCustomUrl?: string;
+  whatsappCustomMethod?: "GET" | "POST";
+  whatsappCustomHeaders?: string;
+  whatsappCustomPayload?: string;
 }
 
 

@@ -263,7 +263,32 @@ function readSettings(): FeeConfig {
       portalTheme: parsed.portalTheme ?? "light",
       logoUrl: parsed.logoUrl ?? "",
       portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
-      portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College"
+      portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College",
+
+      // SMS config
+      smsEnabled: parsed.smsEnabled ?? false,
+      smsProvider: parsed.smsProvider ?? "twilio",
+      twilioSid: parsed.twilioSid ?? "",
+      twilioAuthToken: parsed.twilioAuthToken ?? "",
+      twilioFrom: parsed.twilioFrom ?? "",
+      msg91AuthKey: parsed.msg91AuthKey ?? "",
+      msg91SenderId: parsed.msg91SenderId ?? "",
+      msg91Route: parsed.msg91Route ?? "4",
+      smsCustomUrl: parsed.smsCustomUrl ?? "",
+      smsCustomMethod: parsed.smsCustomMethod ?? "POST",
+      smsCustomHeaders: parsed.smsCustomHeaders ?? "",
+      smsCustomPayload: parsed.smsCustomPayload ?? "",
+
+      // WhatsApp config
+      whatsappEnabled: parsed.whatsappEnabled ?? false,
+      whatsappProvider: parsed.whatsappProvider ?? "meta",
+      whatsappAccessToken: parsed.whatsappAccessToken ?? "",
+      whatsappPhoneId: parsed.whatsappPhoneId ?? "",
+      whatsappWabaId: parsed.whatsappWabaId ?? "",
+      whatsappCustomUrl: parsed.whatsappCustomUrl ?? "",
+      whatsappCustomMethod: parsed.whatsappCustomMethod ?? "POST",
+      whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
+      whatsappCustomPayload: parsed.whatsappCustomPayload ?? ""
     };
   } catch (err) {
     return {
@@ -281,7 +306,30 @@ function readSettings(): FeeConfig {
       portalTheme: "light",
       logoUrl: "",
       portalTitle: "SVEC - SIH Internal Hackathon 2026",
-      portalCaption: "Sri Vasavi Engineering College"
+      portalCaption: "Sri Vasavi Engineering College",
+
+      smsEnabled: false,
+      smsProvider: "twilio",
+      twilioSid: "",
+      twilioAuthToken: "",
+      twilioFrom: "",
+      msg91AuthKey: "",
+      msg91SenderId: "",
+      msg91Route: "4",
+      smsCustomUrl: "",
+      smsCustomMethod: "POST",
+      smsCustomHeaders: "",
+      smsCustomPayload: "",
+
+      whatsappEnabled: false,
+      whatsappProvider: "meta",
+      whatsappAccessToken: "",
+      whatsappPhoneId: "",
+      whatsappWabaId: "",
+      whatsappCustomUrl: "",
+      whatsappCustomMethod: "POST",
+      whatsappCustomHeaders: "",
+      whatsappCustomPayload: ""
     };
   }
 }
@@ -337,6 +385,280 @@ async function sendEmail(to: string, subject: string, htmlContent: string): Prom
     console.error(`[Email Error] Failed to send email to ${to}:`, err);
     return false;
   }
+}
+
+// Real SMS Dispatch Helper
+async function sendRealSms(to: string, message: string): Promise<{ success: boolean; error?: string }> {
+  const settings = readSettings();
+  if (!settings.smsEnabled) {
+    console.log(`[SMS Disabled] To: ${to}, Message: ${message}`);
+    return { success: true };
+  }
+
+  const provider = settings.smsProvider || "twilio";
+  const sanitizedTo = to.replace(/\s+/g, "").trim();
+
+  if (provider === "twilio") {
+    const sid = (settings.twilioSid || "").trim();
+    const token = (settings.twilioAuthToken || "").trim();
+    const from = (settings.twilioFrom || "").trim();
+
+    if (!sid || !token || !from) {
+      return { success: false, error: "Twilio SID, Auth Token, or From Number is missing." };
+    }
+
+    try {
+      const auth = Buffer.from(`${sid}:${token}`).toString("base64");
+      // Twilio API accepts + prefixed country code
+      const targetPhone = sanitizedTo.startsWith("+") ? sanitizedTo : (sanitizedTo.startsWith("91") && sanitizedTo.length === 12 ? `+${sanitizedTo}` : `+91${sanitizedTo}`);
+      const body = new URLSearchParams({
+        To: targetPhone,
+        From: from,
+        Body: message
+      });
+
+      const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        body: body.toString()
+      });
+
+      const resData = await response.json() as any;
+      if (response.ok) {
+        console.log(`[Twilio SMS Success] Sent to ${sanitizedTo}. SID: ${resData.sid}`);
+        return { success: true };
+      } else {
+        return { success: false, error: resData.message || `Twilio Error status ${response.status}` };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "Twilio request exception" };
+    }
+  } else if (provider === "msg91") {
+    const authKey = (settings.msg91AuthKey || "").trim();
+    const senderId = (settings.msg91SenderId || "").trim();
+    const route = (settings.msg91Route || "4").trim();
+
+    if (!authKey) {
+      return { success: false, error: "MSG91 Auth Key is missing." };
+    }
+
+    try {
+      // MSG91 prefers 91 prefix without '+'
+      const targetPhone = sanitizedTo.replace("+", "");
+      const finalPhone = targetPhone.startsWith("91") && targetPhone.length === 12 ? targetPhone : `91${targetPhone}`;
+
+      const response = await fetch(`https://api.msg91.com/api/v2/sendsms`, {
+        method: "POST",
+        headers: {
+          "authkey": authKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sender: senderId || "SVECSI",
+          route: route,
+          sms: [
+            {
+              message: message,
+              to: [finalPhone]
+            }
+          ]
+        })
+      });
+
+      const resData = await response.text();
+      if (response.ok) {
+        console.log(`[MSG91 SMS Success] Sent to ${sanitizedTo}. Response: ${resData}`);
+        return { success: true };
+      } else {
+        return { success: false, error: `MSG91 HTTP Error status ${response.status}` };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "MSG91 request exception" };
+    }
+  } else if (provider === "custom") {
+    const url = (settings.smsCustomUrl || "").trim();
+    const method = settings.smsCustomMethod || "POST";
+    const headersStr = (settings.smsCustomHeaders || "").trim();
+    const payloadStr = (settings.smsCustomPayload || "").trim();
+
+    if (!url) {
+      return { success: false, error: "Custom SMS HTTP Gateway URL is missing." };
+    }
+
+    try {
+      let headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (headersStr) {
+        try {
+          headers = { ...headers, ...JSON.parse(headersStr) };
+        } catch (e: any) {
+          console.warn("[Custom SMS Headers Error]", e);
+        }
+      }
+
+      const cleanPhone = sanitizedTo.replace("+", "");
+      let processedUrl = url
+        .replace(/\{\{phone\}\}/g, encodeURIComponent(sanitizedTo))
+        .replace(/\{\{message\}\}/g, encodeURIComponent(message));
+      
+      let processedPayload = payloadStr
+        .replace(/\{\{phone\}\}/g, cleanPhone)
+        .replace(/\{\{message\}\}/g, message);
+
+      const requestOptions: any = {
+        method,
+        headers
+      };
+
+      if (method === "POST" && processedPayload) {
+        requestOptions.body = processedPayload;
+      }
+
+      const response = await fetch(processedUrl, requestOptions);
+      const resText = await response.text();
+      if (response.ok) {
+        console.log(`[Custom SMS Success] Sent to ${sanitizedTo}. Response: ${resText}`);
+        return { success: true };
+      } else {
+        return { success: false, error: `Custom Gateway HTTP Status ${response.status}: ${resText}` };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "Custom Gateway exception" };
+    }
+  }
+
+  return { success: false, error: "Invalid SMS gateway provider selected." };
+}
+
+// Real WhatsApp Template Dispatch Helper
+async function sendRealWhatsapp(to: string, templateName: string, variables: string[]): Promise<{ success: boolean; error?: string }> {
+  const settings = readSettings();
+  if (!settings.whatsappEnabled) {
+    console.log(`[WhatsApp Disabled] To: ${to}, Template: ${templateName}`);
+    return { success: true };
+  }
+
+  const provider = settings.whatsappProvider || "meta";
+  const sanitizedTo = to.replace(/\s+/g, "").trim();
+
+  if (provider === "meta") {
+    const accessToken = (settings.whatsappAccessToken || "").trim();
+    const phoneId = (settings.whatsappPhoneId || "").trim();
+
+    if (!accessToken || !phoneId) {
+      return { success: false, error: "Meta WhatsApp Token or Phone ID is missing." };
+    }
+
+    try {
+      const cleanPhone = sanitizedTo.replace("+", "");
+      const finalPhone = cleanPhone.startsWith("91") && cleanPhone.length === 12 ? cleanPhone : `91${cleanPhone}`;
+
+      const parameters = variables.map(v => ({
+        type: "text",
+        text: v
+      }));
+
+      const body = {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: finalPhone,
+        type: "template",
+        template: {
+          name: templateName,
+          language: {
+            code: "en_US"
+          },
+          components: parameters.length > 0 ? [
+            {
+              type: "body",
+              parameters: parameters
+            }
+          ] : []
+        }
+      };
+
+      const response = await fetch(`https://graph.facebook.com/v18.0/${phoneId}/messages`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
+
+      const resData = await response.json() as any;
+      if (response.ok) {
+        console.log(`[Meta WhatsApp Success] Sent to ${sanitizedTo}. Msg ID: ${resData.messages?.[0]?.id}`);
+        return { success: true };
+      } else {
+        return { success: false, error: resData.error?.message || `Meta WhatsApp status ${response.status}` };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "Meta WhatsApp exception" };
+    }
+  } else if (provider === "custom") {
+    const url = (settings.whatsappCustomUrl || "").trim();
+    const method = settings.whatsappCustomMethod || "POST";
+    const headersStr = (settings.whatsappCustomHeaders || "").trim();
+    const payloadStr = (settings.whatsappCustomPayload || "").trim();
+
+    if (!url) {
+      return { success: false, error: "Custom WhatsApp HTTP Gateway URL is missing." };
+    }
+
+    try {
+      let headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (headersStr) {
+        try {
+          headers = { ...headers, ...JSON.parse(headersStr) };
+        } catch (e: any) {
+          console.warn("[Custom WhatsApp Headers Error]", e);
+        }
+      }
+
+      const cleanPhone = sanitizedTo.replace("+", "");
+      const variablesJson = JSON.stringify(variables);
+      const var1 = variables[0] || "";
+      const var2 = variables[1] || "";
+      const var3 = variables[2] || "";
+
+      let processedUrl = url
+        .replace(/\{\{phone\}\}/g, encodeURIComponent(sanitizedTo))
+        .replace(/\{\{template\}\}/g, encodeURIComponent(templateName));
+      
+      let processedPayload = payloadStr
+        .replace(/\{\{phone\}\}/g, cleanPhone)
+        .replace(/\{\{template\}\}/g, templateName)
+        .replace(/\{\{variables\}\}/g, variablesJson)
+        .replace(/\{\{var1\}\}/g, var1)
+        .replace(/\{\{var2\}\}/g, var2)
+        .replace(/\{\{var3\}\}/g, var3);
+
+      const requestOptions: any = {
+        method,
+        headers
+      };
+
+      if (method === "POST" && processedPayload) {
+        requestOptions.body = processedPayload;
+      }
+
+      const response = await fetch(processedUrl, requestOptions);
+      const resText = await response.text();
+      if (response.ok) {
+        console.log(`[Custom WhatsApp Success] Sent to ${sanitizedTo}. Response: ${resText}`);
+        return { success: true };
+      } else {
+        return { success: false, error: `Custom WhatsApp status ${response.status}: ${resText}` };
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || "Custom WhatsApp request exception" };
+    }
+  }
+
+  return { success: false, error: "Invalid WhatsApp gateway provider selected." };
 }
 
 
@@ -608,7 +930,32 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     portalTheme,
     logoUrl,
     portalTitle,
-    portalCaption
+    portalCaption,
+
+    // SMS variables
+    smsEnabled,
+    smsProvider,
+    twilioSid,
+    twilioAuthToken,
+    twilioFrom,
+    msg91AuthKey,
+    msg91SenderId,
+    msg91Route,
+    smsCustomUrl,
+    smsCustomMethod,
+    smsCustomHeaders,
+    smsCustomPayload,
+
+    // WhatsApp variables
+    whatsappEnabled,
+    whatsappProvider,
+    whatsappAccessToken,
+    whatsappPhoneId,
+    whatsappWabaId,
+    whatsappCustomUrl,
+    whatsappCustomMethod,
+    whatsappCustomHeaders,
+    whatsappCustomPayload
   } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
@@ -630,7 +977,32 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     portalTheme: (portalTheme || "light").trim() as any,
     logoUrl: (logoUrl || "").trim(),
     portalTitle: (portalTitle || "SVEC - SIH Internal Hackathon 2026").trim(),
-    portalCaption: (portalCaption || "Sri Vasavi Engineering College").trim()
+    portalCaption: (portalCaption || "Sri Vasavi Engineering College").trim(),
+
+    // SMS properties
+    smsEnabled: !!smsEnabled,
+    smsProvider: (smsProvider || "twilio").trim() as any,
+    twilioSid: (twilioSid || "").trim(),
+    twilioAuthToken: (twilioAuthToken || "").trim(),
+    twilioFrom: (twilioFrom || "").trim(),
+    msg91AuthKey: (msg91AuthKey || "").trim(),
+    msg91SenderId: (msg91SenderId || "").trim(),
+    msg91Route: (msg91Route || "4").trim(),
+    smsCustomUrl: (smsCustomUrl || "").trim(),
+    smsCustomMethod: (smsCustomMethod || "POST").trim() as any,
+    smsCustomHeaders: (smsCustomHeaders || "").trim(),
+    smsCustomPayload: (smsCustomPayload || "").trim(),
+
+    // WhatsApp properties
+    whatsappEnabled: !!whatsappEnabled,
+    whatsappProvider: (whatsappProvider || "meta").trim() as any,
+    whatsappAccessToken: (whatsappAccessToken || "").trim(),
+    whatsappPhoneId: (whatsappPhoneId || "").trim(),
+    whatsappWabaId: (whatsappWabaId || "").trim(),
+    whatsappCustomUrl: (whatsappCustomUrl || "").trim(),
+    whatsappCustomMethod: (whatsappCustomMethod || "POST").trim() as any,
+    whatsappCustomHeaders: (whatsappCustomHeaders || "").trim(),
+    whatsappCustomPayload: (whatsappCustomPayload || "").trim()
   };
 
   writeSettings(updated);
@@ -685,7 +1057,12 @@ app.get("/api/admin/broadcast-logs", validateAdmin, (req, res) => {
 });
 
 // Admin/Student SPOC Bulk Broadcast SMS API
-app.post("/api/admin/broadcast-sms", validateAdmin, (req, res) => {
+app.post("/api/admin/broadcast-sms", validateAdmin, async (req, res) => {
+  const settings = readSettings();
+  if (!settings.smsEnabled) {
+    return res.status(400).json({ error: "SMS System is disabled. Please enable SMS notifications and configure your SMS Gateway credentials in the Settings tab before sending broadcasts." });
+  }
+
   const { message, recipientGroup, testMobile } = req.body;
   if (!message || !recipientGroup) {
     return res.status(400).json({ error: "Message content and recipient group are required." });
@@ -722,24 +1099,52 @@ app.post("/api/admin/broadcast-sms", validateAdmin, (req, res) => {
 
   console.log(`[SMS Broadcast] Dispatched bulk SMS to ${uniqueRecipients.length} recipients: "${message}"`);
 
+  let successCount = 0;
+  let failCount = 0;
+  let lastError = "";
+
+  for (const recipient of uniqueRecipients) {
+    const result = await sendRealSms(recipient, message);
+    if (result.success) {
+      successCount++;
+    } else {
+      failCount++;
+      lastError = result.error || "Unknown error";
+    }
+  }
+
+  const status = failCount === uniqueRecipients.length ? "failed" : "completed";
+  const statusMsg = failCount > 0 
+    ? `SMS broadcast finished. Sent: ${successCount}, Failed: ${failCount}. Last error: ${lastError}` 
+    : `SMS broadcast sent successfully to ${uniqueRecipients.length} recipients!`;
+
   writeBroadcastLog({
     channel: "SMS",
     message,
     recipientGroup,
     recipientCount: uniqueRecipients.length,
     sender: (req as any).adminUser || "system_admin",
-    status: "completed"
+    status: status
   });
+
+  if (status === "failed") {
+    return res.status(500).json({ error: `All SMS dispatch attempts failed. Error: ${lastError}` });
+  }
 
   res.json({
     success: true,
     recipientCount: uniqueRecipients.length,
-    message: `SMS broadcast sent successfully to ${uniqueRecipients.length} recipients!`
+    message: statusMsg
   });
 });
 
 // Admin/Student SPOC Bulk Broadcast WhatsApp API
-app.post("/api/admin/broadcast-whatsapp", validateAdmin, (req, res) => {
+app.post("/api/admin/broadcast-whatsapp", validateAdmin, async (req, res) => {
+  const settings = readSettings();
+  if (!settings.whatsappEnabled) {
+    return res.status(400).json({ error: "WhatsApp System is disabled. Please enable WhatsApp notifications and configure your WhatsApp Business API credentials in the Settings tab before sending broadcasts." });
+  }
+
   const { templateName, variables, recipientGroup, testMobile } = req.body;
   if (!templateName || !recipientGroup) {
     return res.status(400).json({ error: "Template selection and recipient group are required." });
@@ -775,13 +1180,31 @@ app.post("/api/admin/broadcast-whatsapp", validateAdmin, (req, res) => {
   }
 
   let msgText = `[Template: ${templateName}]`;
-  if (variables && Array.isArray(variables)) {
-    msgText += ` - Variables: ${variables.join(" | ")}`;
-  } else if (variables && typeof variables === "object") {
-    msgText += ` - Variables: ${JSON.stringify(variables)}`;
+  const varsArray = Array.isArray(variables) ? variables : [];
+  if (varsArray.length > 0) {
+    msgText += ` - Variables: ${varsArray.join(" | ")}`;
   }
 
   console.log(`[WhatsApp Broadcast] Sending WhatsApp template "${templateName}" to ${uniqueRecipients.length} recipients.`);
+
+  let successCount = 0;
+  let failCount = 0;
+  let lastError = "";
+
+  for (const recipient of uniqueRecipients) {
+    const result = await sendRealWhatsapp(recipient, templateName, varsArray);
+    if (result.success) {
+      successCount++;
+    } else {
+      failCount++;
+      lastError = result.error || "Unknown error";
+    }
+  }
+
+  const status = failCount === uniqueRecipients.length ? "failed" : "completed";
+  const statusMsg = failCount > 0 
+    ? `WhatsApp broadcast finished. Sent: ${successCount}, Failed: ${failCount}. Last error: ${lastError}` 
+    : `WhatsApp template broadcast dispatched successfully to ${uniqueRecipients.length} recipients!`;
 
   writeBroadcastLog({
     channel: "WhatsApp",
@@ -789,13 +1212,17 @@ app.post("/api/admin/broadcast-whatsapp", validateAdmin, (req, res) => {
     recipientGroup,
     recipientCount: uniqueRecipients.length,
     sender: (req as any).adminUser || "system_admin",
-    status: "completed"
+    status: status
   });
+
+  if (status === "failed") {
+    return res.status(500).json({ error: `All WhatsApp dispatch attempts failed. Error: ${lastError}` });
+  }
 
   res.json({
     success: true,
     recipientCount: uniqueRecipients.length,
-    message: `WhatsApp template broadcast dispatched successfully to ${uniqueRecipients.length} recipients!`
+    message: statusMsg
   });
 });
 

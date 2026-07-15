@@ -412,7 +412,32 @@ export default function AdminPanel({
     portalTheme: "light" as "light" | "dark",
     logoUrl: "",
     portalTitle: "",
-    portalCaption: ""
+    portalCaption: "",
+
+    // SMS Configuration
+    smsEnabled: false,
+    smsProvider: "twilio" as "twilio" | "msg91" | "custom",
+    twilioSid: "",
+    twilioAuthToken: "",
+    twilioFrom: "",
+    msg91AuthKey: "",
+    msg91SenderId: "",
+    msg91Route: "4",
+    smsCustomUrl: "",
+    smsCustomMethod: "POST" as "GET" | "POST",
+    smsCustomHeaders: "",
+    smsCustomPayload: "",
+
+    // WhatsApp Configuration
+    whatsappEnabled: false,
+    whatsappProvider: "meta" as "meta" | "custom",
+    whatsappAccessToken: "",
+    whatsappPhoneId: "",
+    whatsappWabaId: "",
+    whatsappCustomUrl: "",
+    whatsappCustomMethod: "POST" as "GET" | "POST",
+    whatsappCustomHeaders: "",
+    whatsappCustomPayload: ""
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -442,7 +467,32 @@ export default function AdminPanel({
           portalTheme: data.portalTheme || "light",
           logoUrl: data.logoUrl || "",
           portalTitle: data.portalTitle || "",
-          portalCaption: data.portalCaption || ""
+          portalCaption: data.portalCaption || "",
+
+          // SMS Gateway Config
+          smsEnabled: data.smsEnabled || false,
+          smsProvider: data.smsProvider || "twilio",
+          twilioSid: data.twilioSid || "",
+          twilioAuthToken: data.twilioAuthToken || "",
+          twilioFrom: data.twilioFrom || "",
+          msg91AuthKey: data.msg91AuthKey || "",
+          msg91SenderId: data.msg91SenderId || "",
+          msg91Route: data.msg91Route || "4",
+          smsCustomUrl: data.smsCustomUrl || "",
+          smsCustomMethod: data.smsCustomMethod || "POST",
+          smsCustomHeaders: data.smsCustomHeaders || "",
+          smsCustomPayload: data.smsCustomPayload || "",
+
+          // WhatsApp Config
+          whatsappEnabled: data.whatsappEnabled || false,
+          whatsappProvider: data.whatsappProvider || "meta",
+          whatsappAccessToken: data.whatsappAccessToken || "",
+          whatsappPhoneId: data.whatsappPhoneId || "",
+          whatsappWabaId: data.whatsappWabaId || "",
+          whatsappCustomUrl: data.whatsappCustomUrl || "",
+          whatsappCustomMethod: data.whatsappCustomMethod || "POST",
+          whatsappCustomHeaders: data.whatsappCustomHeaders || "",
+          whatsappCustomPayload: data.whatsappCustomPayload || ""
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -480,6 +530,39 @@ export default function AdminPanel({
       if (!settingsForm.smtpHost.trim() || !settingsForm.smtpUser.trim() || !settingsForm.smtpPass.trim()) {
         setSettingsError("SMTP Host, Username, and Password are required when the email system is enabled.");
         return;
+      }
+    }
+
+    if (settingsForm.smsEnabled) {
+      if (settingsForm.smsProvider === "twilio") {
+        if (!settingsForm.twilioSid.trim() || !settingsForm.twilioAuthToken.trim() || !settingsForm.twilioFrom.trim()) {
+          setSettingsError("Twilio Account SID, Auth Token, and From Number are required when Twilio SMS is selected.");
+          return;
+        }
+      } else if (settingsForm.smsProvider === "msg91") {
+        if (!settingsForm.msg91AuthKey.trim()) {
+          setSettingsError("MSG91 Auth Key is required when MSG91 SMS is selected.");
+          return;
+        }
+      } else if (settingsForm.smsProvider === "custom") {
+        if (!settingsForm.smsCustomUrl.trim()) {
+          setSettingsError("Custom SMS Endpoint URL is required when custom gateway is selected.");
+          return;
+        }
+      }
+    }
+
+    if (settingsForm.whatsappEnabled) {
+      if (settingsForm.whatsappProvider === "meta") {
+        if (!settingsForm.whatsappAccessToken.trim() || !settingsForm.whatsappPhoneId.trim()) {
+          setSettingsError("Meta Graph API Permanent Access Token and Phone Number ID are required when Meta Cloud API is selected.");
+          return;
+        }
+      } else if (settingsForm.whatsappProvider === "custom") {
+        if (!settingsForm.whatsappCustomUrl.trim()) {
+          setSettingsError("Custom WhatsApp Endpoint URL is required when custom WhatsApp gateway is selected.");
+          return;
+        }
       }
     }
 
@@ -2216,6 +2299,324 @@ export default function AdminPanel({
                           />
                         </div>
                       </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Toggle SMS Gateway Service */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                      <Smartphone className="w-4 h-4 text-indigo-500" />
+                      Enable SMS Gateway Dispatch
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      Enables real-time SMS dispatch to students (leads & team members) for alerts, registration confirmations, and announcements.
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.smsEnabled}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, smsEnabled: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+
+                {/* SMS Gateway Credentials Form Fields */}
+                <AnimatePresence>
+                  {settingsForm.smsEnabled && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-4 overflow-hidden border border-slate-100 rounded-2xl p-4 bg-slate-50/20"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+                        <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider">SMS Gateway Configuration</h3>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Provider Technology:</label>
+                          <select
+                            value={settingsForm.smsProvider}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, smsProvider: e.target.value as any }))}
+                            className="px-2 py-1 border border-slate-200 rounded-lg text-xs outline-none bg-white font-medium text-slate-700"
+                          >
+                            <option value="twilio">Twilio SMS API</option>
+                            <option value="msg91">MSG91 API (India)</option>
+                            <option value="custom">Custom HTTP GET/POST</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {settingsForm.smsProvider === "twilio" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Twilio Account SID</label>
+                            <input
+                              type="text"
+                              value={settingsForm.twilioSid}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, twilioSid: e.target.value }))}
+                              placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              required={settingsForm.smsEnabled && settingsForm.smsProvider === "twilio"}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Twilio Auth Token</label>
+                            <input
+                              type="password"
+                              value={settingsForm.twilioAuthToken}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, twilioAuthToken: e.target.value }))}
+                              placeholder="••••••••••••••••••••••••••••••••"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              required={settingsForm.smsEnabled && settingsForm.smsProvider === "twilio"}
+                            />
+                          </div>
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Twilio From Phone Number</label>
+                            <input
+                              type="text"
+                              value={settingsForm.twilioFrom}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, twilioFrom: e.target.value }))}
+                              placeholder="e.g. +18559092012"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              required={settingsForm.smsEnabled && settingsForm.smsProvider === "twilio"}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {settingsForm.smsProvider === "msg91" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">MSG91 Auth Key</label>
+                            <input
+                              type="password"
+                              value={settingsForm.msg91AuthKey}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, msg91AuthKey: e.target.value }))}
+                              placeholder="Enter your MSG91 Auth Key"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              required={settingsForm.smsEnabled && settingsForm.smsProvider === "msg91"}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Sender ID (DLT Header)</label>
+                            <input
+                              type="text"
+                              value={settingsForm.msg91SenderId}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, msg91SenderId: e.target.value }))}
+                              placeholder="e.g. SVECSI (6 characters)"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Route ID</label>
+                            <input
+                              type="text"
+                              value={settingsForm.msg91Route}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, msg91Route: e.target.value }))}
+                              placeholder="e.g. 4 (Transactional)"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {settingsForm.smsProvider === "custom" && (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="sm:col-span-2 space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Custom Gateway Base URL</label>
+                              <input
+                                type="text"
+                                value={settingsForm.smsCustomUrl}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, smsCustomUrl: e.target.value }))}
+                                placeholder="e.g. https://api.smsvendor.com/send?apikey=XYZ&phone={{phone}}&msg={{message}}"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                                required={settingsForm.smsEnabled && settingsForm.smsProvider === "custom"}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Request Method</label>
+                              <select
+                                value={settingsForm.smsCustomMethod}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, smsCustomMethod: e.target.value as any }))}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all bg-white font-medium"
+                              >
+                                <option value="GET">HTTP GET</option>
+                                <option value="POST">HTTP POST</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Custom HTTP Headers (JSON)</label>
+                              <textarea
+                                value={settingsForm.smsCustomHeaders}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, smsCustomHeaders: e.target.value }))}
+                                placeholder='e.g. { "Authorization": "Bearer TOKEN" }'
+                                rows={3}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Custom POST Payload (JSON)</label>
+                              <textarea
+                                value={settingsForm.smsCustomPayload}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, smsCustomPayload: e.target.value }))}
+                                placeholder='e.g. { "to": "{{phone}}", "body": "{{message}}" }'
+                                rows={3}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-slate-400">
+                            * Use <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{phone}}"}</code> for the target recipient and <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{message}}"}</code> for the text payload. They will be automatically replaced during bulk broadcast dispatch.
+                          </p>
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* Toggle WhatsApp Business Service */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                      <MessageCircle className="w-4 h-4 text-emerald-500" />
+                      Enable WhatsApp Business Profile Notifications
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      Enables real WhatsApp Business Cloud templates or custom WhatsApp gateway API dispatch to students for registration flow and deadline alerts.
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.whatsappEnabled}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappEnabled: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                  </label>
+                </div>
+
+                {/* WhatsApp Gateway Credentials Form Fields */}
+                <AnimatePresence>
+                  {settingsForm.whatsappEnabled && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="space-y-4 overflow-hidden border border-slate-100 rounded-2xl p-4 bg-slate-50/20"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-100 pb-3">
+                        <h3 className="text-xs font-bold text-emerald-600 uppercase tracking-wider">WhatsApp Business Configuration</h3>
+                        <div className="flex items-center gap-2">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Profile Engine:</label>
+                          <select
+                            value={settingsForm.whatsappProvider}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappProvider: e.target.value as any }))}
+                            className="px-2 py-1 border border-slate-200 rounded-lg text-xs outline-none bg-white font-medium text-slate-700"
+                          >
+                            <option value="meta">Meta Cloud API (Official)</option>
+                            <option value="custom">Custom WhatsApp Provider API</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {settingsForm.whatsappProvider === "meta" && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Meta Graph Permanent Access Token</label>
+                            <input
+                              type="password"
+                              value={settingsForm.whatsappAccessToken}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappAccessToken: e.target.value }))}
+                              placeholder="EAAGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              required={settingsForm.whatsappEnabled && settingsForm.whatsappProvider === "meta"}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">WhatsApp Phone Number ID</label>
+                            <input
+                              type="text"
+                              value={settingsForm.whatsappPhoneId}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappPhoneId: e.target.value }))}
+                              placeholder="e.g. 106129845129032"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              required={settingsForm.whatsappEnabled && settingsForm.whatsappProvider === "meta"}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">WhatsApp Business Account ID</label>
+                            <input
+                              type="text"
+                              value={settingsForm.whatsappWabaId}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappWabaId: e.target.value }))}
+                              placeholder="e.g. 109312847192837"
+                              className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {settingsForm.whatsappProvider === "custom" && (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div className="sm:col-span-2 space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Custom WhatsApp Gateway URL</label>
+                              <input
+                                type="text"
+                                value={settingsForm.whatsappCustomUrl}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappCustomUrl: e.target.value }))}
+                                placeholder="e.g. https://api.whatsappgateway.com/send"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                                required={settingsForm.whatsappEnabled && settingsForm.whatsappProvider === "custom"}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Request Method</label>
+                              <select
+                                value={settingsForm.whatsappCustomMethod}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappCustomMethod: e.target.value as any }))}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all bg-white font-medium"
+                              >
+                                <option value="GET">HTTP GET</option>
+                                <option value="POST">HTTP POST</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Custom HTTP Headers (JSON)</label>
+                              <textarea
+                                value={settingsForm.whatsappCustomHeaders}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappCustomHeaders: e.target.value }))}
+                                placeholder='e.g. { "x-api-key": "SECRET" }'
+                                rows={3}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Custom Payload Structure (JSON)</label>
+                              <textarea
+                                value={settingsForm.whatsappCustomPayload}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, whatsappCustomPayload: e.target.value }))}
+                                placeholder='e.g. { "to": "{{phone}}", "template": "{{template}}", "body_vars": {{variables}} }'
+                                rows={3}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+                          </div>
+                          <p className="text-[10px] text-slate-400">
+                            * Placeholders: <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{phone}}"}</code> (sanitized 10/12-digit format), <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{template}}"}</code>, <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{variables}}"}</code> (JSON array), and individual variables: <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{var1}}"}</code>, <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{var2}}"}</code>, <code className="font-mono bg-slate-100 px-1 py-0.5 rounded">{"{{var3}}"}</code>.
+                          </p>
+                        </div>
+                      )}
                     </motion.div>
                   )}
                 </AnimatePresence>
