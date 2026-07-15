@@ -1,0 +1,81 @@
+{
+  "sihDetails": {
+    "title": "Smart India Hackathon 2026",
+    "description": "Smart India Hackathon is a nationwide initiative to provide students with a platform to solve some of the pressing problems we face in our daily lives, and thus inculcate a culture of product innovation and a mindset of problem-solving. This year, Sri Vasavi Engineering College is hosting the Internal Hackathon to select the best teams to represent us at the national level. Join us in this prestigious competition to showcase your technical skills and innovation!",
+    "slogan": "Inculcating a Culture of Product Innovation and Problem-Solving",
+    "dates": "Registration: Oct 1 - Oct 25 | Internal Hackathon: Nov 10-11, 2026",
+    "bannerUrl": ""
+  },
+  "sponsors": [
+    {
+      "id": "1",
+      "name": "AICTE",
+      "logoUrl": "",
+      "siteUrl": "https://aicte-india.org"
+    },
+    {
+      "id": "2",
+      "name": "Ministry of Education",
+      "logoUrl": "",
+      "siteUrl": "https://education.gov.in"
+    },
+    {
+      "id": "3",
+      "name": "Persistent Systems",
+      "logoUrl": "",
+      "siteUrl": ""
+    }
+  ],
+  "studentSpocs": [],
+  "collegeSpocs": [
+    {
+      "id": "1784100699420",
+      "name": "G Deepak",
+      "role": "SPOC",
+      "department": "CSE",
+      "email": "pavankuma.gorantla@srivasaviengg.ac.in",
+      "phone": "9491555369",
+      "imageUrl": ""
+    }
+  ],
+  "previousPhotos": [
+    {
+      "id": "1",
+      "title": "SIH 2024 Winning Ceremony",
+      "imageUrl": "",
+      "description": "SVEC team receiving the 1st prize at nodal center."
+    },
+    {
+      "id": "2",
+      "title": "Internal Evaluation Hackathon",
+      "imageUrl": "",
+      "description": "Expert panel evaluating student prototypes during the 2025 internal round."
+    }
+  ],
+  "patrons": [
+    {
+      "id": "p1",
+      "name": "Sri G. Satyanarayana",
+      "position": "President",
+      "imageUrl": ""
+    },
+    {
+      "id": "p2",
+      "name": "Sri Ch. V. V. Subba Rao",
+      "position": "Secretary",
+      "imageUrl": ""
+    },
+    {
+      "id": "p3",
+      "name": "Sri K. Venkateswara Rao",
+      "position": "Technical Director",
+      "imageUrl": ""
+    },
+    {
+      "id": "p4",
+      "name": "Dr. Gudru Prasada Rao",
+      "position": "Principal",
+      "imageUrl": ""
+    }
+  ]
+}

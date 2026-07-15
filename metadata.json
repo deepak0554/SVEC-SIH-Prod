@@ -1,0 +1,6 @@
+{
+  "name": "SIH Hackathon Registration Form",
+  "description": "Student registration form for the SIH Internal Hackathon with dynamic problem statements and an admin dashboard to manage entries and dropdown values.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
