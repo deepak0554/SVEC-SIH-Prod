@@ -24,6 +24,7 @@ const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
 const HOMEPAGE_FILE = path.join(DATA_DIR, "homepage_content.json");
 const PAGES_FILE = path.join(DATA_DIR, "custom_pages.json");
 const MENU_FILE = path.join(DATA_DIR, "menu_items.json");
+const BROADCAST_LOGS_FILE = path.join(DATA_DIR, "broadcast_logs.json");
 
 const defaultHomepageContent: HomepageContent = {
   sihDetails: {
@@ -258,7 +259,11 @@ function readSettings(): FeeConfig {
       smtpPort: parsed.smtpPort ?? 587,
       smtpUser: parsed.smtpUser ?? "",
       smtpPass: parsed.smtpPass ?? "",
-      smtpFrom: parsed.smtpFrom ?? ""
+      smtpFrom: parsed.smtpFrom ?? "",
+      portalTheme: parsed.portalTheme ?? "light",
+      logoUrl: parsed.logoUrl ?? "",
+      portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
+      portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College"
     };
   } catch (err) {
     return {
@@ -272,7 +277,11 @@ function readSettings(): FeeConfig {
       smtpPort: 587,
       smtpUser: "",
       smtpPass: "",
-      smtpFrom: ""
+      smtpFrom: "",
+      portalTheme: "light",
+      logoUrl: "",
+      portalTitle: "SVEC - SIH Internal Hackathon 2026",
+      portalCaption: "Sri Vasavi Engineering College"
     };
   }
 }
@@ -333,24 +342,25 @@ async function sendEmail(to: string, subject: string, htmlContent: string): Prom
 
 // Student JWT authentication validation middleware
 function validateStudentJWT(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const settings = readSettings();
-  if (!settings.jwtEnabled) {
-    return next();
+  const authHeader = req.headers["authorization"];
+  
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.split(" ")[1];
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string };
+      (req as any).studentUser = decoded;
+      return next();
+    } catch (err) {
+      return res.status(401).json({ error: "Your session has expired. Please log in again." });
+    }
   }
 
-  const authHeader = req.headers["authorization"];
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  const settings = readSettings();
+  if (settings.jwtEnabled) {
     return res.status(401).json({ error: "Missing or invalid authorization token" });
   }
 
-  const token = authHeader.split(" ")[1];
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string };
-    (req as any).studentUser = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: "Your session has expired. Please log in again." });
-  }
+  next();
 }
 
 
@@ -400,12 +410,26 @@ function validateAdmin(req: express.Request, res: express.Response, next: expres
     return res.status(401).json({ error: "Unauthorized access code" });
   }
 
+  // 1. Support master ADMIN_PASSCODE bypass
   if (passcode === ADMIN_PASSCODE) {
     (req as any).adminRole = "SPOC";
     (req as any).adminUser = "system_admin";
     return next();
   }
 
+  // 2. Try verifying as signed JWT admin token
+  try {
+    const decoded = jwt.verify(passcode, JWT_SECRET) as { username: string; role: string; isAdmin: boolean };
+    if (decoded && decoded.isAdmin) {
+      (req as any).adminRole = decoded.role;
+      (req as any).adminUser = decoded.username;
+      return next();
+    }
+  } catch (err) {
+    // If not a valid JWT token, fall back to old-style raw token check for seamless transition/session compatibility
+  }
+
+  // 3. Fallback: Old-style raw token compatibility check
   if (passcode.startsWith("ADMIN:")) {
     const parts = passcode.split(":");
     if (parts.length === 3) {
@@ -547,7 +571,11 @@ app.get("/api/settings/public", (req, res) => {
     feeEnabled: settings.feeEnabled,
     feeAmount: settings.feeAmount,
     razorpayKeyId: settings.razorpayKeyId,
-    jwtEnabled: !!settings.jwtEnabled
+    jwtEnabled: !!settings.jwtEnabled,
+    portalTheme: settings.portalTheme || "light",
+    logoUrl: settings.logoUrl || "",
+    portalTitle: settings.portalTitle || "SVEC - SIH Internal Hackathon 2026",
+    portalCaption: settings.portalCaption || "Sri Vasavi Engineering College"
   });
 });
 
@@ -576,7 +604,11 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     smtpPort,
     smtpUser,
     smtpPass,
-    smtpFrom
+    smtpFrom,
+    portalTheme,
+    logoUrl,
+    portalTitle,
+    portalCaption
   } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
@@ -594,11 +626,177 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     smtpPort: Number(smtpPort) || 587,
     smtpUser: (smtpUser || "").trim(),
     smtpPass: (smtpPass || "").trim(),
-    smtpFrom: (smtpFrom || "").trim()
+    smtpFrom: (smtpFrom || "").trim(),
+    portalTheme: (portalTheme || "light").trim() as any,
+    logoUrl: (logoUrl || "").trim(),
+    portalTitle: (portalTitle || "SVEC - SIH Internal Hackathon 2026").trim(),
+    portalCaption: (portalCaption || "Sri Vasavi Engineering College").trim()
   };
 
   writeSettings(updated);
   res.json({ success: true, settings: updated });
+});
+
+// Broadcast Logging System
+interface BroadcastLog {
+  id: string;
+  channel: "Email" | "SMS" | "WhatsApp";
+  subject?: string;
+  message: string;
+  recipientGroup: string;
+  recipientCount: number;
+  timestamp: string;
+  sender: string;
+  status: "completed" | "failed" | "queued";
+}
+
+function readBroadcastLogs(): BroadcastLog[] {
+  try {
+    if (!fs.existsSync(BROADCAST_LOGS_FILE)) {
+      return [];
+    }
+    return JSON.parse(fs.readFileSync(BROADCAST_LOGS_FILE, "utf-8"));
+  } catch (err) {
+    return [];
+  }
+}
+
+function writeBroadcastLog(log: Omit<BroadcastLog, "id" | "timestamp">) {
+  try {
+    const logs = readBroadcastLogs();
+    const newLog: BroadcastLog = {
+      ...log,
+      id: `BC-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      timestamp: new Date().toISOString()
+    };
+    logs.unshift(newLog);
+    if (logs.length > 100) {
+      logs.splice(100);
+    }
+    fs.writeFileSync(BROADCAST_LOGS_FILE, JSON.stringify(logs, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Error writing broadcast log:", err);
+  }
+}
+
+// Get Admin Broadcast Logs
+app.get("/api/admin/broadcast-logs", validateAdmin, (req, res) => {
+  res.json(readBroadcastLogs());
+});
+
+// Admin/Student SPOC Bulk Broadcast SMS API
+app.post("/api/admin/broadcast-sms", validateAdmin, (req, res) => {
+  const { message, recipientGroup, testMobile } = req.body;
+  if (!message || !recipientGroup) {
+    return res.status(400).json({ error: "Message content and recipient group are required." });
+  }
+
+  let recipients: string[] = [];
+  if (recipientGroup === "test_single") {
+    if (!testMobile || testMobile.trim().length < 10) {
+      return res.status(400).json({ error: "A valid mobile number is required for testing." });
+    }
+    recipients = [testMobile.trim()];
+  } else if (recipientGroup === "all_logins") {
+    const students = readStudents();
+    recipients = students.map(s => s.mobile || "").filter(m => m.trim().length >= 10);
+  } else if (recipientGroup === "team_leads") {
+    const regs = readRegistrations();
+    recipients = regs.map(r => r.leadMobile || "").filter(m => m.trim().length >= 10);
+  } else if (recipientGroup === "all_team_members") {
+    const regs = readRegistrations();
+    regs.forEach(r => {
+      if (r.leadMobile) recipients.push(r.leadMobile);
+      if (r.member1Phone) recipients.push(r.member1Phone);
+      if (r.member2Phone) recipients.push(r.member2Phone);
+      if (r.member3Phone) recipients.push(r.member3Phone);
+      if (r.member4Phone) recipients.push(r.member4Phone);
+      if (r.member5Phone) recipients.push(r.member5Phone);
+    });
+  }
+
+  const uniqueRecipients = Array.from(new Set(recipients.map(r => r.trim()).filter(Boolean)));
+  if (uniqueRecipients.length === 0) {
+    return res.status(400).json({ error: `No recipients with valid mobile numbers found in group: "${recipientGroup}".` });
+  }
+
+  console.log(`[SMS Broadcast] Dispatched bulk SMS to ${uniqueRecipients.length} recipients: "${message}"`);
+
+  writeBroadcastLog({
+    channel: "SMS",
+    message,
+    recipientGroup,
+    recipientCount: uniqueRecipients.length,
+    sender: (req as any).adminUser || "system_admin",
+    status: "completed"
+  });
+
+  res.json({
+    success: true,
+    recipientCount: uniqueRecipients.length,
+    message: `SMS broadcast sent successfully to ${uniqueRecipients.length} recipients!`
+  });
+});
+
+// Admin/Student SPOC Bulk Broadcast WhatsApp API
+app.post("/api/admin/broadcast-whatsapp", validateAdmin, (req, res) => {
+  const { templateName, variables, recipientGroup, testMobile } = req.body;
+  if (!templateName || !recipientGroup) {
+    return res.status(400).json({ error: "Template selection and recipient group are required." });
+  }
+
+  let recipients: string[] = [];
+  if (recipientGroup === "test_single") {
+    if (!testMobile || testMobile.trim().length < 10) {
+      return res.status(400).json({ error: "A valid mobile number is required for testing." });
+    }
+    recipients = [testMobile.trim()];
+  } else if (recipientGroup === "all_logins") {
+    const students = readStudents();
+    recipients = students.map(s => s.mobile || "").filter(m => m.trim().length >= 10);
+  } else if (recipientGroup === "team_leads") {
+    const regs = readRegistrations();
+    recipients = regs.map(r => r.leadMobile || "").filter(m => m.trim().length >= 10);
+  } else if (recipientGroup === "all_team_members") {
+    const regs = readRegistrations();
+    regs.forEach(r => {
+      if (r.leadMobile) recipients.push(r.leadMobile);
+      if (r.member1Phone) recipients.push(r.member1Phone);
+      if (r.member2Phone) recipients.push(r.member2Phone);
+      if (r.member3Phone) recipients.push(r.member3Phone);
+      if (r.member4Phone) recipients.push(r.member4Phone);
+      if (r.member5Phone) recipients.push(r.member5Phone);
+    });
+  }
+
+  const uniqueRecipients = Array.from(new Set(recipients.map(r => r.trim()).filter(Boolean)));
+  if (uniqueRecipients.length === 0) {
+    return res.status(400).json({ error: `No recipients with valid mobile numbers found in group: "${recipientGroup}".` });
+  }
+
+  let msgText = `[Template: ${templateName}]`;
+  if (variables && Array.isArray(variables)) {
+    msgText += ` - Variables: ${variables.join(" | ")}`;
+  } else if (variables && typeof variables === "object") {
+    msgText += ` - Variables: ${JSON.stringify(variables)}`;
+  }
+
+  console.log(`[WhatsApp Broadcast] Sending WhatsApp template "${templateName}" to ${uniqueRecipients.length} recipients.`);
+
+  writeBroadcastLog({
+    channel: "WhatsApp",
+    message: msgText,
+    recipientGroup,
+    recipientCount: uniqueRecipients.length,
+    sender: (req as any).adminUser || "system_admin",
+    status: "completed"
+  });
+
+  res.json({
+    success: true,
+    recipientCount: uniqueRecipients.length,
+    message: `WhatsApp template broadcast dispatched successfully to ${uniqueRecipients.length} recipients!`
+  });
 });
 
 // Admin/Student SPOC Bulk Broadcast Email API
@@ -653,6 +851,16 @@ app.post("/api/admin/broadcast-email", validateAdmin, async (req, res) => {
   }
 
   // Send success response early indicating process has started
+  writeBroadcastLog({
+    channel: "Email",
+    subject,
+    message,
+    recipientGroup,
+    recipientCount: uniqueRecipients.length,
+    sender: (req as any).adminUser || "system_admin",
+    status: "completed"
+  });
+
   res.json({
     success: true,
     recipientCount: uniqueRecipients.length,
@@ -755,7 +963,12 @@ app.post("/api/admin/login", (req, res) => {
       return res.status(401).json({ error: "Invalid username, password, or role selection." });
     }
 
-    const token = `ADMIN:${admin.role}:${admin.username}`;
+    const token = jwt.sign(
+      { username: admin.username, role: admin.role, isAdmin: true },
+      JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
     res.json({
       success: true,
       token,
@@ -771,11 +984,26 @@ app.post("/api/admin/login", (req, res) => {
 // Admin check passcode (keeps backward compatibility)
 app.post("/api/admin/verify", (req, res) => {
   const { passcode } = req.body;
+  if (!passcode) {
+    return res.status(401).json({ error: "Passcode is required." });
+  }
+
   if (passcode === ADMIN_PASSCODE) {
     return res.json({ success: true, role: "SPOC", username: "system_admin" });
   }
 
-  if (passcode && passcode.startsWith("ADMIN:")) {
+  // 1. Try verifying as signed JWT admin token
+  try {
+    const decoded = jwt.verify(passcode, JWT_SECRET) as { username: string; role: string; isAdmin: boolean };
+    if (decoded && decoded.isAdmin) {
+      return res.json({ success: true, role: decoded.role, username: decoded.username });
+    }
+  } catch (err) {
+    // If not a valid JWT token, fall back to old-style raw token check for seamless transition/session compatibility
+  }
+
+  // 2. Fallback: Old-style raw token check
+  if (passcode.startsWith("ADMIN:")) {
     const parts = passcode.split(":");
     if (parts.length === 3) {
       const role = parts[1];

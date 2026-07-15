@@ -72,6 +72,10 @@ export interface FeeConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpFrom?: string;
+  portalTheme?: "light" | "dark";
+  logoUrl?: string;
+  portalTitle?: string;
+  portalCaption?: string;
 }
 
 

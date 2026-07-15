@@ -2,8 +2,10 @@ import React, { useState, useEffect } from "react";
 import { HomepageContent, CustomPage, MenuItem, Sponsor, Patron, TeamSpoc, PreviousPhoto } from "../types";
 import { 
   Plus, Trash2, Edit2, CheckCircle, AlertCircle, Save, Layers, List, Link as LinkIcon, 
-  UserPlus, Image as ImageIcon, Sparkles, FileText, LayoutGrid, Eye, ArrowUp, ArrowDown 
+  UserPlus, Image as ImageIcon, Sparkles, FileText, LayoutGrid, Eye, ArrowUp, ArrowDown,
+  ShieldAlert
 } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 
 interface PageMenuCustomizerProps {
   passcode: string;
@@ -60,6 +62,13 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
   // Menu items list for live editing
   const [editingMenu, setEditingMenu] = useState<MenuItem[]>([]);
+
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
 
   // Fetch all customizable parameters
   const fetchAllData = async () => {
@@ -227,37 +236,42 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
   };
 
   // Delete Patron
-  const handleDeletePatron = async (id: string) => {
-    if (!homepage) return;
-
-    setError("");
-    setSuccess("");
-
-    const updatedHomepage: HomepageContent = {
-      ...homepage,
-      patrons: (homepage.patrons || []).filter((p) => p.id !== id)
-    };
-
-    try {
-      const res = await fetch("/api/homepage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Passcode": passcode
-        },
-        body: JSON.stringify(updatedHomepage)
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setHomepage(data.content);
-        setSuccess("College Patron removed.");
-      } else {
-        setError(data.error || "Failed to delete patron.");
+  const handleDeletePatron = (id: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Remove College Patron",
+      message: "Are you sure you want to remove this college patron/sponsor from the landing page list?",
+      onConfirm: async () => {
+        if (!homepage) return;
+        setError("");
+        setSuccess("");
+        const updatedHomepage: HomepageContent = {
+          ...homepage,
+          patrons: (homepage.patrons || []).filter((p) => p.id !== id)
+        };
+        try {
+          const res = await fetch("/api/homepage", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Admin-Passcode": passcode
+            },
+            body: JSON.stringify(updatedHomepage)
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setHomepage(data.content);
+            setSuccess("College Patron removed.");
+          } else {
+            setError(data.error || "Failed to delete patron.");
+          }
+        } catch (err) {
+          setError("Network error. Could not delete patron.");
+        } finally {
+          setDeleteConfirm(null);
+        }
       }
-    } catch (err) {
-      setError("Network error. Could not delete patron.");
-    }
+    });
   };
 
   // 3. Add SPOC Card (Student or College staff)
@@ -320,45 +334,50 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
   };
 
   // Delete SPOC Card
-  const handleDeleteSpoc = async (id: string, type: "student" | "college") => {
-    if (!homepage) return;
-
-    setError("");
-    setSuccess("");
-
-    let updatedHomepage: HomepageContent;
-    if (type === "student") {
-      updatedHomepage = {
-        ...homepage,
-        studentSpocs: homepage.studentSpocs.filter((s) => s.id !== id)
-      };
-    } else {
-      updatedHomepage = {
-        ...homepage,
-        collegeSpocs: homepage.collegeSpocs.filter((s) => s.id !== id)
-      };
-    }
-
-    try {
-      const res = await fetch("/api/homepage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Passcode": passcode
-        },
-        body: JSON.stringify(updatedHomepage)
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setHomepage(data.content);
-        setSuccess("SPOC profile removed successfully.");
-      } else {
-        setError(data.error || "Failed to delete SPOC profile.");
+  const handleDeleteSpoc = (id: string, type: "student" | "college") => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: `Remove ${type === "student" ? "Student" : "College"} SPOC Profile`,
+      message: "Are you sure you want to remove this SPOC profile from the contact cards list?",
+      onConfirm: async () => {
+        if (!homepage) return;
+        setError("");
+        setSuccess("");
+        let updatedHomepage: HomepageContent;
+        if (type === "student") {
+          updatedHomepage = {
+            ...homepage,
+            studentSpocs: homepage.studentSpocs.filter((s) => s.id !== id)
+          };
+        } else {
+          updatedHomepage = {
+            ...homepage,
+            collegeSpocs: homepage.collegeSpocs.filter((s) => s.id !== id)
+          };
+        }
+        try {
+          const res = await fetch("/api/homepage", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Admin-Passcode": passcode
+            },
+            body: JSON.stringify(updatedHomepage)
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setHomepage(data.content);
+            setSuccess("SPOC profile removed successfully.");
+          } else {
+            setError(data.error || "Failed to delete SPOC profile.");
+          }
+        } catch (err) {
+          setError("Network error. Could not delete SPOC profile.");
+        } finally {
+          setDeleteConfirm(null);
+        }
       }
-    } catch (err) {
-      setError("Network error. Could not delete SPOC profile.");
-    }
+    });
   };
 
   // 4. Add Gallery Photo
@@ -407,37 +426,42 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
   };
 
   // Delete Gallery Photo
-  const handleDeletePhoto = async (id: string) => {
-    if (!homepage) return;
-
-    setError("");
-    setSuccess("");
-
-    const updatedHomepage: HomepageContent = {
-      ...homepage,
-      previousPhotos: homepage.previousPhotos.filter((p) => p.id !== id)
-    };
-
-    try {
-      const res = await fetch("/api/homepage", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Admin-Passcode": passcode
-        },
-        body: JSON.stringify(updatedHomepage)
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setHomepage(data.content);
-        setSuccess("Gallery item removed successfully.");
-      } else {
-        setError(data.error || "Failed to delete photo.");
+  const handleDeletePhoto = (id: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Remove Gallery Photo",
+      message: "Are you sure you want to remove this memory photo from the event archive?",
+      onConfirm: async () => {
+        if (!homepage) return;
+        setError("");
+        setSuccess("");
+        const updatedHomepage: HomepageContent = {
+          ...homepage,
+          previousPhotos: homepage.previousPhotos.filter((p) => p.id !== id)
+        };
+        try {
+          const res = await fetch("/api/homepage", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Admin-Passcode": passcode
+            },
+            body: JSON.stringify(updatedHomepage)
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setHomepage(data.content);
+            setSuccess("Gallery item removed successfully.");
+          } else {
+            setError(data.error || "Failed to delete photo.");
+          }
+        } catch (err) {
+          setError("Network error. Could not delete gallery photo.");
+        } finally {
+          setDeleteConfirm(null);
+        }
       }
-    } catch (err) {
-      setError("Network error. Could not delete gallery photo.");
-    }
+    });
   };
 
   // 5. Save or Edit dynamic custom page
@@ -492,36 +516,39 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
   };
 
   // Delete Custom Page
-  const handleDeletePage = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this custom page? Any menu item pointing to this page slug will need to be reconfigured/removed.")) {
-      return;
-    }
-
-    setError("");
-    setSuccess("");
-
-    try {
-      const res = await fetch(`/api/custom-pages/${id}`, {
-        method: "DELETE",
-        headers: {
-          "X-Admin-Passcode": passcode
+  const handleDeletePage = (id: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Custom Page",
+      message: "Are you sure you want to delete this custom page? Any menu item pointing to this page slug will need to be reconfigured/removed.",
+      onConfirm: async () => {
+        setError("");
+        setSuccess("");
+        try {
+          const res = await fetch(`/api/custom-pages/${id}`, {
+            method: "DELETE",
+            headers: {
+              "X-Admin-Passcode": passcode
+            }
+          });
+          const data = await res.json();
+          if (res.ok) {
+            // Refresh pages list
+            const pagesRes = await fetch("/api/custom-pages");
+            if (pagesRes.ok) {
+              setPagesList(await pagesRes.json());
+            }
+            setSuccess("Custom page deleted successfully!");
+          } else {
+            setError(data.error || "Failed to delete custom page.");
+          }
+        } catch (err) {
+          setError("Network error. Could not delete custom page.");
+        } finally {
+          setDeleteConfirm(null);
         }
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        // Refresh pages list
-        const pagesRes = await fetch("/api/custom-pages");
-        if (pagesRes.ok) {
-          setPagesList(await pagesRes.json());
-        }
-        setSuccess("Custom page deleted successfully!");
-      } else {
-        setError(data.error || "Failed to delete custom page.");
       }
-    } catch (err) {
-      setError("Network error. Could not delete custom page.");
-    }
+    });
   };
 
   // Select page for editing
@@ -1521,6 +1548,64 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
           </div>
         </div>
       )}
+
+      {/* DELETE CONFIRMATION POPUP */}
+      <AnimatePresence>
+        {deleteConfirm && deleteConfirm.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirm(null)}
+              className="absolute inset-0 bg-slate-900 opacity-50"
+            ></motion.div>
+
+            {/* Modal container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden relative z-10 p-6 text-slate-800"
+            >
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-red-50 text-red-600 rounded-2xl shrink-0">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5 flex-1">
+                  <h3 className="font-bold font-display text-lg text-slate-900">
+                    {deleteConfirm.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    {deleteConfirm.message}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded-xl border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    deleteConfirm.onConfirm();
+                  }}
+                  className="px-5 py-2 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Confirm Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

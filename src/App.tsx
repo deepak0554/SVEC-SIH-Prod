@@ -21,6 +21,12 @@ export default function App() {
   const [homepageData, setHomepageData] = useState<HomepageContent | null>(null);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [publicSettings, setPublicSettings] = useState<{
+    portalTheme?: "light" | "dark";
+    logoUrl?: string;
+    portalTitle?: string;
+    portalCaption?: string;
+  } | null>(null);
 
   const [student, setStudent] = useState<{ id: string; email: string } | null>(() => {
     try {
@@ -34,11 +40,12 @@ export default function App() {
   // Fetch initial content, navigation links and lists
   const fetchAllInitialData = async () => {
     try {
-      const [psRes, homeRes, pagesRes, menuRes] = await Promise.all([
+      const [psRes, homeRes, pagesRes, menuRes, settingsRes] = await Promise.all([
         fetch("/api/problem-statements"),
         fetch("/api/homepage"),
         fetch("/api/custom-pages"),
-        fetch("/api/menu")
+        fetch("/api/menu"),
+        fetch("/api/settings/public")
       ]);
 
       if (psRes.ok) {
@@ -55,6 +62,10 @@ export default function App() {
 
       if (menuRes.ok) {
         setMenuItems(await menuRes.json());
+      }
+
+      if (settingsRes.ok) {
+        setPublicSettings(await settingsRes.json());
       }
     } catch (err) {
       console.error("Failed to load initial workspace data", err);
@@ -154,28 +165,28 @@ export default function App() {
       const trimmed = line.trim();
       if (trimmed.startsWith("### ")) {
         return (
-          <h3 key={idx} className="text-base sm:text-lg font-bold text-slate-800 mt-5 mb-2 first:mt-0 font-display">
+          <h3 key={idx} className={`text-base sm:text-lg font-bold mt-5 mb-2 first:mt-0 font-display ${isDark ? "text-slate-100" : "text-slate-800"}`}>
             {trimmed.replace("### ", "")}
           </h3>
         );
       }
       if (trimmed.startsWith("## ")) {
         return (
-          <h2 key={idx} className="text-lg sm:text-xl font-extrabold text-slate-800 mt-6 mb-3 first:mt-0 border-b border-slate-100 pb-1.5 font-display">
+          <h2 key={idx} className={`text-lg sm:text-xl font-extrabold mt-6 mb-3 first:mt-0 border-b pb-1.5 font-display ${isDark ? "text-slate-100 border-slate-800" : "text-slate-800 border-slate-100"}`}>
             {trimmed.replace("## ", "")}
           </h2>
         );
       }
       if (trimmed.startsWith("# ")) {
         return (
-          <h1 key={idx} className="text-xl sm:text-2xl font-black text-slate-900 mt-8 mb-4 first:mt-0 font-display">
+          <h1 key={idx} className={`text-xl sm:text-2xl font-black mt-8 mb-4 first:mt-0 font-display ${isDark ? "text-white" : "text-slate-900"}`}>
             {trimmed.replace("# ", "")}
           </h1>
         );
       }
       if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
         return (
-          <li key={idx} className="ml-5 list-disc text-slate-600 text-sm mb-1">
+          <li key={idx} className={`ml-5 list-disc text-sm mb-1 ${isDark ? "text-slate-300" : "text-slate-600"}`}>
             {trimmed.substring(2)}
           </li>
         );
@@ -184,7 +195,7 @@ export default function App() {
         return <div key={idx} className="h-2" />;
       }
       return (
-        <p key={idx} className="text-slate-600 text-sm leading-relaxed mb-3">
+        <p key={idx} className={`text-sm leading-relaxed mb-3 ${isDark ? "text-slate-300" : "text-slate-600"}`}>
           {trimmed}
         </p>
       );
@@ -227,29 +238,35 @@ export default function App() {
   // Find if current view is a custom page slug
   const currentCustomPage = customPages.find(p => p.slug === view && p.published);
 
+  const isDark = publicSettings?.portalTheme === "dark" && view !== "admin";
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
+    <div className={`min-h-screen flex flex-col transition-colors duration-300 ${isDark ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-850"}`}>
       {/* Top Universal Navbar */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs print:hidden">
+      <header className={`sticky top-0 z-30 shadow-xs print:hidden transition-colors duration-300 ${isDark ? "bg-slate-900 border-b border-slate-800 text-white" : "bg-white border-b border-slate-200"}`}>
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div 
             onClick={() => navigateTo("home")}
             className="flex items-center gap-3 cursor-pointer hover:opacity-90 transition-opacity"
             id="brand-header"
           >
-            <SvecLogo className="w-11 h-11" />
+            {publicSettings?.logoUrl ? (
+              <img src={publicSettings.logoUrl} className="w-11 h-11 object-contain rounded-lg" alt="Logo" referrerPolicy="no-referrer" />
+            ) : (
+              <SvecLogo className="w-11 h-11" />
+            )}
             <div>
-              <span className="font-bold text-slate-900 font-display tracking-tight text-xs sm:text-sm md:text-base block">
-                SVEC - SIH Internal Hackathon 2026
+              <span className={`font-bold font-display tracking-tight text-xs sm:text-sm md:text-base block ${isDark ? "text-white" : "text-slate-900"}`}>
+                {publicSettings?.portalTitle || "SVEC - SIH Internal Hackathon 2026"}
               </span>
-              <span className="text-[10px] text-slate-400 font-semibold block -mt-1 uppercase tracking-wider">
-                Sri Vasavi Engineering College
+              <span className={`text-[10px] font-semibold block -mt-1 uppercase tracking-wider ${isDark ? "text-slate-400" : "text-slate-400"}`}>
+                {publicSettings?.portalCaption || "Sri Vasavi Engineering College"}
               </span>
             </div>
           </div>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-1.5 bg-slate-100/70 border border-slate-200/40 p-1 rounded-xl">
+          <nav className={`hidden lg:flex items-center gap-1.5 p-1 rounded-xl transition-colors duration-300 ${isDark ? "bg-slate-800/80 border border-slate-700/50" : "bg-slate-100/70 border border-slate-200/40"}`}>
             {getRenderMenuItems().map((item) => {
               // Map display labels nicely
               let isActive = view === item.target;
@@ -263,8 +280,8 @@ export default function App() {
                   onClick={() => navigateTo(item.target)}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     isActive
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-600 hover:text-slate-950"
+                      ? (isDark ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-indigo-600 shadow-sm")
+                      : (isDark ? "text-slate-400 hover:text-white" : "text-slate-600 hover:text-slate-950")
                   }`}
                   id={`nav-link-${item.target}`}
                 >
@@ -277,15 +294,23 @@ export default function App() {
           {/* Right Controls Area (Student state, Mobile toggler) */}
           <div className="flex items-center gap-2">
             {student && (
-              <div className="hidden sm:flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600">
+              <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors duration-300 ${
+                isDark 
+                  ? "bg-slate-800/60 border border-slate-700 text-slate-300" 
+                  : "bg-slate-50 border border-slate-200/80 text-slate-600"
+              }`}>
                 <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                <span>Student: <span className="text-slate-800 font-mono">{student.email}</span></span>
+                <span>Student: <span className={`font-mono ${isDark ? "text-indigo-300" : "text-slate-800"}`}>{student.email}</span></span>
               </div>
             )}
             {student && hasExistingRegistration && view !== "receipt" && (
               <button
                 onClick={() => navigateTo("receipt")}
-                className="text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/50 text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer border border-indigo-100 hover:border-indigo-200"
+                className={`text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer border ${
+                  isDark
+                    ? "text-indigo-400 hover:text-indigo-350 hover:bg-indigo-950/40 border-indigo-900/60"
+                    : "text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/50 border-indigo-100 hover:border-indigo-200"
+                }`}
                 id="header-view-registration-btn"
               >
                 <FileText className="w-4 h-4 text-indigo-600" />
@@ -299,7 +324,11 @@ export default function App() {
                   setStudent(null);
                   setView("home");
                 }}
-                className="text-slate-600 hover:text-red-600 hover:bg-red-50/50 text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer border border-transparent hover:border-red-100"
+                className={`text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer border ${
+                  isDark
+                    ? "text-slate-400 hover:text-red-400 hover:bg-red-950/20 border-transparent hover:border-red-950"
+                    : "text-slate-600 hover:text-red-600 hover:bg-red-50/50 border-transparent hover:border-red-100"
+                }`}
                 id="header-logout-btn"
               >
                 <LogOut className="w-4 h-4" />
@@ -310,7 +339,7 @@ export default function App() {
             {/* Mobile Hamburger toggle */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="lg:hidden p-2 rounded-xl text-slate-500 hover:bg-slate-100 cursor-pointer"
+              className={`lg:hidden p-2 rounded-xl cursor-pointer transition-colors ${isDark ? "text-slate-400 hover:bg-slate-800" : "text-slate-500 hover:bg-slate-100"}`}
               aria-label="Toggle Menu"
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -326,7 +355,11 @@ export default function App() {
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            className="lg:hidden bg-white border-b border-slate-200 shadow-lg overflow-hidden relative z-20"
+            className={`lg:hidden shadow-lg overflow-hidden relative z-20 transition-colors duration-300 ${
+              isDark 
+                ? "bg-slate-900 border-b border-slate-800 text-white" 
+                : "bg-white border-b border-slate-200"
+            }`}
           >
             <div className="p-4 space-y-2">
               <span className="text-[9px] font-black tracking-widest text-slate-400 block uppercase mb-1">Navigation links</span>
@@ -334,10 +367,10 @@ export default function App() {
                 <button
                   key={item.id}
                   onClick={() => navigateTo(item.target)}
-                  className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer ${
+                  className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer transition-colors ${
                     view === item.target
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-slate-600 hover:bg-slate-50"
+                      ? (isDark ? "bg-indigo-950/60 text-indigo-300" : "bg-indigo-50 text-indigo-700")
+                      : (isDark ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-50")
                   }`}
                 >
                   <span>{item.label}</span>
@@ -346,9 +379,9 @@ export default function App() {
               ))}
 
               {student && (
-                <div className="pt-3 border-t border-slate-100">
-                  <div className="px-4 py-2 bg-slate-50 rounded-xl text-[10px] font-semibold text-slate-500 truncate">
-                    Vetted: <span className="font-mono text-slate-800">{student.email}</span>
+                <div className={`pt-3 border-t ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                  <div className={`px-4 py-2 rounded-xl text-[10px] font-semibold truncate ${isDark ? "bg-slate-800 text-slate-400" : "bg-slate-50 text-slate-500"}`}>
+                    Vetted: <span className="font-mono text-slate-300">{student.email}</span>
                   </div>
                 </div>
               )}
@@ -373,6 +406,7 @@ export default function App() {
                 homepageData={homepageData} 
                 onNavigate={navigateTo} 
                 customPages={customPages}
+                isDark={isDark}
               />
             </motion.div>
           )}
@@ -394,10 +428,13 @@ export default function App() {
                   onNavigateToAdmin={() => setView("admin")}
                 />
               ) : (
-                <StudentAuth onAuthSuccess={(s) => {
-                  localStorage.setItem("svec_sih_student", JSON.stringify(s));
-                  setStudent(s);
-                }} />
+                <StudentAuth 
+                  isDark={isDark}
+                  onAuthSuccess={(s) => {
+                    localStorage.setItem("svec_sih_student", JSON.stringify(s));
+                    setStudent(s);
+                  }} 
+                />
               )}
             </motion.div>
           )}
@@ -450,11 +487,11 @@ export default function App() {
               transition={{ duration: 0.2 }}
               className="max-w-4xl mx-auto px-4 py-8"
             >
-              <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-10 shadow-sm space-y-6">
-                <h1 className="text-2xl sm:text-3xl font-black font-display text-slate-800 border-b border-slate-100 pb-4">
+              <div className={`rounded-3xl border p-6 md:p-10 shadow-sm space-y-6 ${isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200"}`}>
+                <h1 className={`text-2xl sm:text-3xl font-black font-display border-b pb-4 ${isDark ? "text-white border-slate-800" : "text-slate-800 border-slate-100"}`}>
                   {currentCustomPage.title}
                 </h1>
-                <div className="prose max-w-none text-slate-600">
+                <div className={`prose max-w-none ${isDark ? "text-slate-300" : "text-slate-600"}`}>
                   {renderSimpleMarkdown(currentCustomPage.content)}
                 </div>
               </div>

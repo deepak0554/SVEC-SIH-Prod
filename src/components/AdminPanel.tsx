@@ -27,7 +27,15 @@ import {
   LogOut,
   UserPlus,
   ShieldAlert,
-  Send
+  Send,
+  Image,
+  MessageSquare,
+  MessageCircle,
+  Smartphone,
+  History,
+  Clock,
+  Check,
+  Shield
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -59,6 +67,13 @@ export default function AdminPanel({
   const [loginError, setLoginError] = useState("");
   const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast">("registrations");
 
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
   // Change own password states (Admins / Student SPOC)
   const [oldAdminPassword, setOldAdminPassword] = useState("");
   const [newAdminPasswordSelf, setNewAdminPasswordSelf] = useState("");
@@ -88,6 +103,157 @@ export default function AdminPanel({
   const [broadcastSuccess, setBroadcastSuccess] = useState("");
   const [broadcastError, setBroadcastError] = useState("");
   const [broadcastLoading, setBroadcastLoading] = useState(false);
+
+  // Channel Tab selection inside Broadcast
+  const [broadcastSubTab, setBroadcastSubTab] = useState<"email" | "sms" | "whatsapp">("email");
+
+  // SMS Broadcast state
+  const [smsMessage, setSmsMessage] = useState("");
+  const [smsRecipientGroup, setSmsRecipientGroup] = useState<"all_logins" | "team_leads" | "all_team_members" | "test_single">("test_single");
+  const [smsTestMobile, setSmsTestMobile] = useState("");
+  const [smsSuccess, setSmsSuccess] = useState("");
+  const [smsError, setSmsError] = useState("");
+  const [smsLoading, setSmsLoading] = useState(false);
+
+  // WhatsApp Broadcast state
+  const [whatsappTemplate, setWhatsappTemplate] = useState<"reg_confirmed" | "deadline_reminder" | "announcement">("reg_confirmed");
+  const [whatsappRecipientGroup, setWhatsappRecipientGroup] = useState<"all_logins" | "team_leads" | "all_team_members" | "test_single">("test_single");
+  const [whatsappTestMobile, setWhatsappTestMobile] = useState("");
+  const [whatsappVar1, setWhatsappVar1] = useState("");
+  const [whatsappVar2, setWhatsappVar2] = useState("");
+  const [whatsappVar3, setWhatsappVar3] = useState("");
+  const [whatsappSuccess, setWhatsappSuccess] = useState("");
+  const [whatsappError, setWhatsappError] = useState("");
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+
+  // Broadcast Logs state
+  const [broadcastLogs, setBroadcastLogs] = useState<any[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  const fetchBroadcastLogs = async () => {
+    setLogsLoading(true);
+    try {
+      const res = await fetch("/api/admin/broadcast-logs", {
+        headers: { "X-Admin-Passcode": passcode }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBroadcastLogs(data);
+      }
+    } catch (err) {
+      console.error("Error fetching broadcast logs:", err);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isLoggedIn && activeTab === "broadcast") {
+      fetchBroadcastLogs();
+    }
+  }, [isLoggedIn, activeTab]);
+
+  const getWhatsAppPreviewText = () => {
+    if (whatsappTemplate === "reg_confirmed") {
+      return `Hello *${whatsappVar1 || "[Student Name]"}*, your registration for SIH Hackathon under Team *${whatsappVar2 || "[Team Name]"}* is confirmed. Proceed to pay if applicable. Code: *${whatsappVar3 || "[REG-ID]"}*.`;
+    }
+    if (whatsappTemplate === "deadline_reminder") {
+      return `Dear Team Lead *${whatsappVar1 || "[Lead Name]"}*, this is a gentle reminder that your problem statement PPT submission is due on *${whatsappVar2 || "[Date]"}*. Please submit on the portal.`;
+    }
+    return `Attention SVEC Hackers: *${whatsappVar1 || "[Announcement Content]"}*. Check details on the portal!`;
+  };
+
+  // SMS Broadcast Handler
+  const handleSendSmsBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSmsError("");
+    setSmsSuccess("");
+
+    if (!smsMessage.trim()) {
+      setSmsError("SMS content cannot be empty.");
+      return;
+    }
+
+    if (smsRecipientGroup === "test_single" && (!smsTestMobile.trim() || smsTestMobile.trim().length < 10)) {
+      setSmsError("Please provide a valid 10-digit mobile number.");
+      return;
+    }
+
+    setSmsLoading(true);
+    try {
+      const res = await fetch("/api/admin/broadcast-sms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({
+          message: smsMessage,
+          recipientGroup: smsRecipientGroup,
+          testMobile: smsTestMobile
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setSmsSuccess(data.message || "SMS broadcast dispatched successfully!");
+        if (smsRecipientGroup !== "test_single") {
+          setSmsMessage("");
+        }
+        fetchBroadcastLogs();
+      } else {
+        setSmsError(data.error || "Failed to dispatch SMS broadcast.");
+      }
+    } catch (err) {
+      setSmsError("Network error. Could not dispatch SMS broadcast.");
+    } finally {
+      setSmsLoading(false);
+    }
+  };
+
+  // WhatsApp Broadcast Handler
+  const handleSendWhatsappBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWhatsappError("");
+    setWhatsappSuccess("");
+
+    if (whatsappRecipientGroup === "test_single" && (!whatsappTestMobile.trim() || whatsappTestMobile.trim().length < 10)) {
+      setWhatsappError("Please provide a valid 10-digit mobile number.");
+      return;
+    }
+
+    setWhatsappLoading(true);
+    try {
+      const res = await fetch("/api/admin/broadcast-whatsapp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({
+          templateName: whatsappTemplate,
+          variables: [whatsappVar1, whatsappVar2, whatsappVar3].filter(Boolean),
+          recipientGroup: whatsappRecipientGroup,
+          testMobile: whatsappTestMobile
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setWhatsappSuccess(data.message || "WhatsApp template broadcast dispatched successfully!");
+        setWhatsappVar1("");
+        setWhatsappVar2("");
+        setWhatsappVar3("");
+        fetchBroadcastLogs();
+      } else {
+        setWhatsappError(data.error || "Failed to dispatch WhatsApp broadcast.");
+      }
+    } catch (err) {
+      setWhatsappError("Network error. Could not dispatch WhatsApp broadcast.");
+    } finally {
+      setWhatsappLoading(false);
+    }
+  };
 
   const fetchAdminsList = async () => {
     setAdminsLoading(true);
@@ -149,27 +315,32 @@ export default function AdminPanel({
     }
   };
 
-  const handleDeleteAdmin = async (userToDelete: string) => {
-    if (!window.confirm(`Are you sure you want to delete admin account "${userToDelete}"?`)) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/admin/manage-admins/${userToDelete}`, {
-        method: "DELETE",
-        headers: {
-          "X-Admin-Passcode": passcode
+  const handleDeleteAdmin = (userToDelete: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Admin Account",
+      message: `Are you sure you want to delete admin account "${userToDelete}"? This will permanently remove their access credentials.`,
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/admin/manage-admins/${userToDelete}`, {
+            method: "DELETE",
+            headers: {
+              "X-Admin-Passcode": passcode
+            }
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            fetchAdminsList();
+          } else {
+            alert(data.error || "Failed to delete admin.");
+          }
+        } catch (err) {
+          alert("Network error. Failed to delete admin.");
+        } finally {
+          setDeleteConfirm(null);
         }
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        fetchAdminsList();
-      } else {
-        alert(data.error || "Failed to delete admin.");
       }
-    } catch (err) {
-      alert("Network error. Failed to delete admin.");
-    }
+    });
   };
 
   // Broadcast Email Handler
@@ -237,7 +408,11 @@ export default function AdminPanel({
     smtpPort: 587,
     smtpUser: "",
     smtpPass: "",
-    smtpFrom: ""
+    smtpFrom: "",
+    portalTheme: "light" as "light" | "dark",
+    logoUrl: "",
+    portalTitle: "",
+    portalCaption: ""
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -263,7 +438,11 @@ export default function AdminPanel({
           smtpPort: data.smtpPort || 587,
           smtpUser: data.smtpUser || "",
           smtpPass: data.smtpPass || "",
-          smtpFrom: data.smtpFrom || ""
+          smtpFrom: data.smtpFrom || "",
+          portalTheme: data.portalTheme || "light",
+          logoUrl: data.logoUrl || "",
+          portalTitle: data.portalTitle || "",
+          portalCaption: data.portalCaption || ""
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -401,28 +580,33 @@ export default function AdminPanel({
     }
   }, [isLoggedIn, activeTab]);
 
-  const handleDeleteStudent = async (studentId: string, email: string) => {
-    if (!window.confirm(`Are you sure you want to delete the student account for ${email}? This will delete their student login credentials.`)) {
-      return;
-    }
-
-    setStudentsError("");
-    setStudentsSuccess("");
-    try {
-      const res = await fetch(`/api/admin/students/${studentId}`, {
-        method: "DELETE",
-        headers: { "X-Admin-Passcode": passcode }
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStudentsSuccess(`Account for ${email} deleted successfully.`);
-        fetchStudents();
-      } else {
-        setStudentsError(data.error || "Failed to delete student account.");
+  const handleDeleteStudent = (studentId: string, email: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Student Account",
+      message: `Are you sure you want to delete the student account for ${email}? This will delete their student login credentials and access to registrations.`,
+      onConfirm: async () => {
+        setStudentsError("");
+        setStudentsSuccess("");
+        try {
+          const res = await fetch(`/api/admin/students/${studentId}`, {
+            method: "DELETE",
+            headers: { "X-Admin-Passcode": passcode }
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setStudentsSuccess(`Account for ${email} deleted successfully.`);
+            fetchStudents();
+          } else {
+            setStudentsError(data.error || "Failed to delete student account.");
+          }
+        } catch (err) {
+          setStudentsError("Network error. Could not delete student.");
+        } finally {
+          setDeleteConfirm(null);
+        }
       }
-    } catch (err) {
-      setStudentsError("Network error. Could not delete student.");
-    }
+    });
   };
 
   const handleResetPassword = async (studentId: string, email: string) => {
@@ -566,47 +750,57 @@ export default function AdminPanel({
     setShowPsFormModal(true);
   };
 
-  const handleDeletePS = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this Problem Statement? It may affect existing registrations mapped to it.")) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/problem-statements/${id}`, {
-        method: "DELETE",
-        headers: { "X-Admin-Passcode": passcode }
-      });
-      if (res.ok) {
-        onRefreshStatements();
-        setPsSuccess("Deleted successfully!");
-      } else {
-        const data = await res.json();
-        alert(data.error || "Failed to delete");
+  const handleDeletePS = (id: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Problem Statement",
+      message: "Are you sure you want to delete this Problem Statement? It may affect existing registrations mapped to it.",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/problem-statements/${id}`, {
+            method: "DELETE",
+            headers: { "X-Admin-Passcode": passcode }
+          });
+          if (res.ok) {
+            onRefreshStatements();
+            setPsSuccess("Deleted successfully!");
+          } else {
+            const data = await res.json();
+            alert(data.error || "Failed to delete");
+          }
+        } catch (err) {
+          alert("Network error.");
+        } finally {
+          setDeleteConfirm(null);
+        }
       }
-    } catch (err) {
-      alert("Network error.");
-    }
+    });
   };
 
-  const handleDeleteRegistration = async (id: string) => {
-    if (!window.confirm("Are you sure you want to delete this student team registration? This action is irreversible.")) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/registrations/${id}`, {
-        method: "DELETE",
-        headers: { "X-Admin-Passcode": passcode }
-      });
-      if (res.ok) {
-        fetchRegistrations();
-      } else {
-        const data = await res.json();
-        alert(data.error || "Failed to delete registration");
+  const handleDeleteRegistration = (id: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Team Registration",
+      message: "Are you sure you want to delete this student team registration? This action is irreversible and cannot be recovered.",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/registrations/${id}`, {
+            method: "DELETE",
+            headers: { "X-Admin-Passcode": passcode }
+          });
+          if (res.ok) {
+            fetchRegistrations();
+          } else {
+            const data = await res.json();
+            alert(data.error || "Failed to delete registration");
+          }
+        } catch (err) {
+          alert("Network error.");
+        } finally {
+          setDeleteConfirm(null);
+        }
       }
-    } catch (err) {
-      alert("Network error.");
-    }
+    });
   };
 
   const handleOpenEditReg = (reg: Registration) => {
@@ -1123,7 +1317,7 @@ export default function AdminPanel({
             }`}
             id="admin-tab-broadcast"
           >
-            Email Broadcast
+            Broadcast
           </button>
           {adminRole === "SPOC" && (
             <>
@@ -2026,6 +2220,128 @@ export default function AdminPanel({
                   )}
                 </AnimatePresence>
 
+                {/* Public Portal Customization & Branding */}
+                <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
+                  <div>
+                    <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-1">
+                      <Sparkles className="w-4 h-4 text-indigo-500" />
+                      Public Registration Portal Branding & Theme
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Customize the look, feel, title, logo, and caption of your public-facing student registration pages.
+                    </p>
+                  </div>
+
+                  {/* Toggle Theme Option */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Portal Theme Style
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm(prev => ({ ...prev, portalTheme: "light" }))}
+                        className={`border rounded-xl p-3 flex items-center justify-center gap-2 cursor-pointer transition-all font-bold text-xs ${settingsForm.portalTheme === "light" ? "border-indigo-600 bg-indigo-50/50 text-indigo-700" : "border-slate-200 hover:bg-slate-50 text-slate-600"}`}
+                      >
+                        <span className="w-2.5 h-2.5 bg-amber-500 rounded-full"></span>
+                        Light Theme
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm(prev => ({ ...prev, portalTheme: "dark" }))}
+                        className={`border rounded-xl p-3 flex items-center justify-center gap-2 cursor-pointer transition-all font-bold text-xs ${settingsForm.portalTheme === "dark" ? "border-indigo-600 bg-indigo-950/80 text-indigo-300" : "border-slate-200 hover:bg-slate-50 text-slate-600"}`}
+                      >
+                        <span className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-pulse"></span>
+                        Dark Theme (Premium)
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Title and Caption customization */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Portal Primary Header Title
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsForm.portalTitle}
+                        onChange={(e) => setSettingsForm(prev => ({ ...prev, portalTitle: e.target.value }))}
+                        placeholder="e.g. SVEC - SIH Internal Hackathon 2026"
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-bold"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Portal Subtitle / Caption
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsForm.portalCaption}
+                        onChange={(e) => setSettingsForm(prev => ({ ...prev, portalCaption: e.target.value }))}
+                        placeholder="e.g. Sri Vasavi Engineering College"
+                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Logo upload options */}
+                  <div className="space-y-2">
+                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                      Portal Custom Brand Logo (Backend upload)
+                    </label>
+                    <div className="flex flex-col sm:flex-row items-center gap-4">
+                      <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-center overflow-hidden shrink-0">
+                        {settingsForm.logoUrl ? (
+                          <img src={settingsForm.logoUrl} className="w-full h-full object-contain p-1" alt="Custom Logo Preview" referrerPolicy="no-referrer" />
+                        ) : (
+                          <div className="text-[10px] text-slate-400 text-center font-bold px-1">SVEC Logo</div>
+                        )}
+                      </div>
+                      <div className="flex-1 w-full space-y-2 text-left">
+                        <div className="flex flex-wrap gap-2">
+                          <label className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[11px] px-3 py-2 rounded-xl cursor-pointer transition-all shadow-xs flex items-center gap-1">
+                            <Image className="w-3.5 h-3.5 text-indigo-500" />
+                            <span>Upload New Custom Logo</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  if (file.size > 1.5 * 1024 * 1024) {
+                                    alert("Logo file must be less than 1.5MB.");
+                                    return;
+                                  }
+                                  const reader = new FileReader();
+                                  reader.onloadend = () => {
+                                    setSettingsForm(prev => ({ ...prev, logoUrl: reader.result as string }));
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                            />
+                          </label>
+                          {settingsForm.logoUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setSettingsForm(prev => ({ ...prev, logoUrl: "" }))}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 font-bold text-[11px] px-3 py-2 rounded-xl cursor-pointer transition-all flex items-center gap-1"
+                            >
+                              Reset to Default SVEC SVG Logo
+                            </button>
+                          )}
+                        </div>
+                        <p className="text-[9px] text-slate-400 font-medium">
+                          Supports PNG, JPG, WEBP, or SVG. Automatically optimized as a base64 asset on save.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
                   {adminRole === "Student SPOC" ? (
                     <span className="text-amber-600 text-xs font-semibold bg-amber-50 border border-amber-100 px-3 py-1.5 rounded-xl">
@@ -2555,204 +2871,877 @@ export default function AdminPanel({
         </div>
       )}
 
-      {/* EMAIL BROADCAST TAB */}
+      {/* BROADCAST TAB */}
       {activeTab === "broadcast" && (
-        <div className="max-w-4xl mx-auto space-y-6 animate-fade-in text-left">
+        <div className="max-w-5xl mx-auto space-y-6 animate-fade-in text-left">
+          {/* Header Banner */}
           <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-8 shadow-sm">
-            <div className="flex items-center gap-3 mb-6 pb-4 border-b border-slate-100">
-              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0">
-                <Mail className="w-5 h-5" />
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-100">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shrink-0">
+                  <Send className="w-6 h-6" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-black font-display text-slate-800">
+                    Institution Broadcast Hub
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Send real-time alerts, confirmations, and reminders to students. Managed by SPOC administrators.
+                  </p>
+                </div>
               </div>
-              <div>
-                <h2 className="text-xl font-extrabold font-display text-slate-800">
-                  Bulk Email Broadcast Portal
-                </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Send announcements, notifications, schedule updates, or reminders to students and team members.
-                </p>
+
+              {/* SPOC Management Authorization Badge */}
+              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3 flex items-center gap-3">
+                <Shield className="w-5 h-5 text-indigo-600 shrink-0" />
+                <div>
+                  <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-wide block">
+                    SPOC Authorized Channel
+                  </span>
+                  <span className="text-[10px] text-indigo-600 block leading-none">
+                    Admin role: {adminRole}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {!settingsForm.emailEnabled ? (
-              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-slate-700">
-                <div className="flex gap-3">
-                  <AlertCircle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+            {/* Inner Channel Selector Tabs */}
+            <div className="flex border-b border-slate-100 mt-6 p-1 bg-slate-50/50 rounded-2xl gap-1">
+              <button
+                type="button"
+                onClick={() => setBroadcastSubTab("email")}
+                className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  broadcastSubTab === "email"
+                    ? "bg-white text-indigo-600 shadow-sm border border-slate-100"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/50"
+                }`}
+              >
+                <Mail className="w-4 h-4 text-indigo-500" />
+                <span>Email Broadcast</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBroadcastSubTab("sms")}
+                className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  broadcastSubTab === "sms"
+                    ? "bg-white text-amber-600 shadow-sm border border-slate-100"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/50"
+                }`}
+              >
+                <Smartphone className="w-4 h-4 text-amber-500" />
+                <span>SMS Broadcast</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBroadcastSubTab("whatsapp")}
+                className={`flex-1 py-3 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                  broadcastSubTab === "whatsapp"
+                    ? "bg-white text-emerald-600 shadow-sm border border-slate-100"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-white/50"
+                }`}
+              >
+                <MessageCircle className="w-4 h-4 text-emerald-500" />
+                <span>WhatsApp Broadcast</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Form & Live Handset Preview Workspace */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            {/* Left Column: Form Editors */}
+            <div className="lg:col-span-3 bg-white rounded-3xl border border-slate-200 p-6 md:p-8 shadow-sm space-y-6">
+              {/* EMAIL CHANNEL FORM */}
+              {broadcastSubTab === "email" && (
+                <div className="space-y-6">
                   <div>
-                    <h4 className="text-sm font-bold text-amber-800">Email System is Offline</h4>
-                    <p className="text-xs text-amber-700 mt-1 leading-relaxed">
-                      The automatic & bulk email system is currently disabled or not configured. 
-                    </p>
-                    <p className="text-xs text-amber-600 mt-2 leading-relaxed">
-                      {adminRole === "SPOC" ? (
-                        <span>
-                          Please go to the <strong>Settings</strong> tab to enable the system and configure your institution's SMTP host credentials.
-                        </span>
-                      ) : (
-                        <span>
-                          Please request a <strong>Super Admin (SPOC)</strong> to navigate to the Settings tab, enable the email system, and configure valid institutional SMTP credentials.
-                        </span>
+                    <h3 className="text-lg font-bold text-slate-800 font-display">Email Announcement Creator</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Dispatches responsive HTML emails via SMTP server</p>
+                  </div>
+
+                  {!settingsForm.emailEnabled ? (
+                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 text-slate-700">
+                      <div className="flex gap-3">
+                        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <h4 className="text-xs font-bold text-amber-800">Email System is Offline</h4>
+                          <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
+                            The bulk email transmission system is currently disabled.
+                          </p>
+                          <p className="text-[11px] text-amber-600 mt-2 leading-relaxed font-semibold">
+                            {adminRole === "SPOC" ? (
+                              <span>Please go to the Settings tab to configure institutional SMTP credentials.</span>
+                            ) : (
+                              <span>Please request a Super Admin (SPOC) to configure SMTP credentials in Settings.</span>
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleSendBroadcast} className="space-y-5">
+                      {broadcastError && (
+                        <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-xs flex gap-2 font-medium animate-shake">
+                          <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                          <span>{broadcastError}</span>
+                        </div>
                       )}
+
+                      {broadcastSuccess && (
+                        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                          <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                          <span>{broadcastSuccess}</span>
+                        </div>
+                      )}
+
+                      {/* Recipient selection for Email */}
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          Recipient Audience
+                        </label>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${broadcastRecipientGroup === "test_single" ? "border-indigo-500 bg-indigo-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                            <input
+                              type="radio"
+                              name="emailRecipient"
+                              checked={broadcastRecipientGroup === "test_single"}
+                              onChange={() => setBroadcastRecipientGroup("test_single")}
+                              className="mt-0.5 accent-indigo-600"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-slate-700 block">Single Test Email</span>
+                              <span className="text-[9px] text-slate-400 block mt-0.5">Send formatted draft to a test inbox.</span>
+                            </div>
+                          </label>
+
+                          <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${broadcastRecipientGroup === "all_logins" ? "border-indigo-500 bg-indigo-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                            <input
+                              type="radio"
+                              name="emailRecipient"
+                              checked={broadcastRecipientGroup === "all_logins"}
+                              onChange={() => setBroadcastRecipientGroup("all_logins")}
+                              className="mt-0.5 accent-indigo-600"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-slate-700 block">All Student Logins</span>
+                              <span className="text-[9px] text-slate-400 block mt-0.5">All created logins in database.</span>
+                            </div>
+                          </label>
+
+                          <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${broadcastRecipientGroup === "team_leads" ? "border-indigo-500 bg-indigo-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                            <input
+                              type="radio"
+                              name="emailRecipient"
+                              checked={broadcastRecipientGroup === "team_leads"}
+                              onChange={() => setBroadcastRecipientGroup("team_leads")}
+                              className="mt-0.5 accent-indigo-600"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-slate-700 block">Team Leaders Only</span>
+                              <span className="text-[9px] text-slate-400 block mt-0.5">Dispatches to primary team leads.</span>
+                            </div>
+                          </label>
+
+                          <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${broadcastRecipientGroup === "all_team_members" ? "border-indigo-500 bg-indigo-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                            <input
+                              type="radio"
+                              name="emailRecipient"
+                              checked={broadcastRecipientGroup === "all_team_members"}
+                              onChange={() => setBroadcastRecipientGroup("all_team_members")}
+                              className="mt-0.5 accent-indigo-600"
+                            />
+                            <div>
+                              <span className="text-xs font-bold text-slate-700 block">All Roster Members</span>
+                              <span className="text-[9px] text-slate-400 block mt-0.5">To all team members' emails.</span>
+                            </div>
+                          </label>
+                        </div>
+                      </div>
+
+                      {broadcastRecipientGroup === "test_single" && (
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            Test Email Address
+                          </label>
+                          <input
+                            type="email"
+                            value={broadcastTestEmail}
+                            onChange={(e) => setBroadcastTestEmail(e.target.value)}
+                            placeholder="e.g. admin@college.edu"
+                            className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            required={broadcastRecipientGroup === "test_single"}
+                          />
+                        </div>
+                      )}
+
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          Subject Line
+                        </label>
+                        <input
+                          type="text"
+                          value={broadcastSubject}
+                          onChange={(e) => setBroadcastSubject(e.target.value)}
+                          placeholder="e.g. SVEC SIH 2026 - Abstract Presentation Schedule & Evaluation Matrix"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-bold"
+                          required
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          Announcement Body (Rich Text Support)
+                        </label>
+                        <textarea
+                          value={broadcastMessage}
+                          onChange={(e) => setBroadcastMessage(e.target.value)}
+                          placeholder="Type details, timings, guidelines or instructions..."
+                          rows={6}
+                          className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all leading-relaxed"
+                          required
+                        />
+                      </div>
+
+                      <div className="pt-2 flex justify-end">
+                        <button
+                          type="submit"
+                          disabled={broadcastLoading}
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+                        >
+                          {broadcastLoading ? (
+                            <>
+                              <span className="w-3.5 h-3.5 border-2 border-indigo-200 border-t-white rounded-full animate-spin inline-block"></span>
+                              <span>Sending...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Send className="w-3.5 h-3.5" />
+                              <span>Dispatch Email Broadcast</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
+
+              {/* SMS CHANNEL FORM */}
+              {broadcastSubTab === "sms" && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800 font-display">SMS Alert Creator</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Send high-priority SMS notifications straight to handsets</p>
+                  </div>
+
+                  <form onSubmit={handleSendSmsBroadcast} className="space-y-5">
+                    {smsError && (
+                      <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                        <span>{smsError}</span>
+                      </div>
+                    )}
+
+                    {smsSuccess && (
+                      <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <span>{smsSuccess}</span>
+                      </div>
+                    )}
+
+                    {/* Recipient selection for SMS */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Recipient Target Group
+                      </label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${smsRecipientGroup === "test_single" ? "border-amber-500 bg-amber-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="smsRecipient"
+                            checked={smsRecipientGroup === "test_single"}
+                            onChange={() => setSmsRecipientGroup("test_single")}
+                            className="mt-0.5 accent-amber-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">Single Mobile Number</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Send a test SMS to a custom handset.</span>
+                          </div>
+                        </label>
+
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${smsRecipientGroup === "all_logins" ? "border-amber-500 bg-amber-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="smsRecipient"
+                            checked={smsRecipientGroup === "all_logins"}
+                            onChange={() => setSmsRecipientGroup("all_logins")}
+                            className="mt-0.5 accent-amber-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">All Logined Students</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Broadcast to student mobile numbers.</span>
+                          </div>
+                        </label>
+
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${smsRecipientGroup === "team_leads" ? "border-amber-500 bg-amber-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="smsRecipient"
+                            checked={smsRecipientGroup === "team_leads"}
+                            onChange={() => setSmsRecipientGroup("team_leads")}
+                            className="mt-0.5 accent-amber-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">Team Leaders Only</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Target lead registration phones.</span>
+                          </div>
+                        </label>
+
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${smsRecipientGroup === "all_team_members" ? "border-amber-500 bg-amber-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="smsRecipient"
+                            checked={smsRecipientGroup === "all_team_members"}
+                            onChange={() => setSmsRecipientGroup("all_team_members")}
+                            className="mt-0.5 accent-amber-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">All Roster Members</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Target entire rosters of all teams.</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {smsRecipientGroup === "test_single" && (
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          Test Mobile Number
+                        </label>
+                        <input
+                          type="tel"
+                          value={smsTestMobile}
+                          onChange={(e) => setSmsTestMobile(e.target.value)}
+                          placeholder="e.g. 9876543210"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-amber-500 transition-all font-mono"
+                          required={smsRecipientGroup === "test_single"}
+                        />
+                      </div>
+                    )}
+
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          SMS Text Message
+                        </label>
+                        <span className="text-[10px] font-mono text-slate-400 font-bold bg-slate-100 px-1.5 py-0.5 rounded">
+                          {smsMessage.length} chars | {Math.ceil(smsMessage.length / 160) || 1} credit(s)
+                        </span>
+                      </div>
+                      <textarea
+                        value={smsMessage}
+                        onChange={(e) => setSmsMessage(e.target.value)}
+                        placeholder="Type short alert. SMS credit logic splits text per 160 characters. Standard DLT header applicable..."
+                        rows={5}
+                        className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none text-xs focus:border-amber-500 transition-all leading-relaxed"
+                        required
+                      />
+                    </div>
+
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={smsLoading}
+                        className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+                      >
+                        {smsLoading ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-amber-200 border-t-white rounded-full animate-spin inline-block"></span>
+                            <span>Sending SMS...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Dispatch SMS Broadcast</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* WHATSAPP CHANNEL FORM */}
+              {broadcastSubTab === "whatsapp" && (
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-800 font-display">WhatsApp Template Broadcast</h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Send Meta-approved interactive rich-template messages</p>
+                  </div>
+
+                  <form onSubmit={handleSendWhatsappBroadcast} className="space-y-5">
+                    {whatsappError && (
+                      <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                        <span>{whatsappError}</span>
+                      </div>
+                    )}
+
+                    {whatsappSuccess && (
+                      <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
+                        <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                        <span>{whatsappSuccess}</span>
+                      </div>
+                    )}
+
+                    {/* Template selection */}
+                    <div className="space-y-1.5">
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Approved Template Name
+                      </label>
+                      <select
+                        value={whatsappTemplate}
+                        onChange={(e) => {
+                          setWhatsappTemplate(e.target.value as any);
+                          setWhatsappVar1("");
+                          setWhatsappVar2("");
+                          setWhatsappVar3("");
+                        }}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-emerald-500 transition-all font-bold text-slate-700 bg-white"
+                      >
+                        <option value="reg_confirmed">svec_sih_registration_confirmed</option>
+                        <option value="deadline_reminder">svec_sih_deadline_reminder</option>
+                        <option value="announcement">svec_sih_general_announcement</option>
+                      </select>
+                    </div>
+
+                    {/* Recipient selection for WhatsApp */}
+                    <div className="space-y-2">
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Target Audience
+                      </label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${whatsappRecipientGroup === "test_single" ? "border-emerald-500 bg-emerald-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="whatsappRecipient"
+                            checked={whatsappRecipientGroup === "test_single"}
+                            onChange={() => setWhatsappRecipientGroup("test_single")}
+                            className="mt-0.5 accent-emerald-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">Single Handset (Test)</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Send a test to verify variables.</span>
+                          </div>
+                        </label>
+
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${whatsappRecipientGroup === "all_logins" ? "border-emerald-500 bg-emerald-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="whatsappRecipient"
+                            checked={whatsappRecipientGroup === "all_logins"}
+                            onChange={() => setWhatsappRecipientGroup("all_logins")}
+                            className="mt-0.5 accent-emerald-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">All Logined Students</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Broadcast template to students.</span>
+                          </div>
+                        </label>
+
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${whatsappRecipientGroup === "team_leads" ? "border-emerald-500 bg-emerald-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="whatsappRecipient"
+                            checked={whatsappRecipientGroup === "team_leads"}
+                            onChange={() => setWhatsappRecipientGroup("team_leads")}
+                            className="mt-0.5 accent-emerald-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">Team Leaders Only</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Target lead registration phones.</span>
+                          </div>
+                        </label>
+
+                        <label className={`border rounded-xl p-3 flex items-start gap-2.5 cursor-pointer transition-all ${whatsappRecipientGroup === "all_team_members" ? "border-emerald-500 bg-emerald-50/10" : "border-slate-200 hover:bg-slate-50"}`}>
+                          <input
+                            type="radio"
+                            name="whatsappRecipient"
+                            checked={whatsappRecipientGroup === "all_team_members"}
+                            onChange={() => setWhatsappRecipientGroup("all_team_members")}
+                            className="mt-0.5 accent-emerald-600"
+                          />
+                          <div>
+                            <span className="text-xs font-bold text-slate-700 block">All Roster Members</span>
+                            <span className="text-[9px] text-slate-400 block mt-0.5">Target every listed student phone.</span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+
+                    {whatsappRecipientGroup === "test_single" && (
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                          Test Mobile Number (WhatsApp)
+                        </label>
+                        <input
+                          type="tel"
+                          value={whatsappTestMobile}
+                          onChange={(e) => setWhatsappTestMobile(e.target.value)}
+                          placeholder="e.g. 9876543210"
+                          className="w-full px-4 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-emerald-500 transition-all font-mono"
+                          required={whatsappRecipientGroup === "test_single"}
+                        />
+                      </div>
+                    )}
+
+                    {/* Dynamic Variables based on Template */}
+                    <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-4">
+                      <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+                        Template Parameters (Variables)
+                      </span>
+
+                      {whatsappTemplate === "reg_confirmed" && (
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">{"{{1}}"} Student Name</label>
+                            <input
+                              type="text"
+                              value={whatsappVar1}
+                              onChange={(e) => setWhatsappVar1(e.target.value)}
+                              placeholder="e.g. Rohan Sharma"
+                              className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded-lg outline-none text-xs focus:border-emerald-500"
+                              required
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">{"{{2}}"} Team Name</label>
+                            <input
+                              type="text"
+                              value={whatsappVar2}
+                              onChange={(e) => setWhatsappVar2(e.target.value)}
+                              placeholder="e.g. CyberKnights"
+                              className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded-lg outline-none text-xs focus:border-emerald-500"
+                              required
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">{"{{3}}"} Reg Code</label>
+                            <input
+                              type="text"
+                              value={whatsappVar3}
+                              onChange={(e) => setWhatsappVar3(e.target.value)}
+                              placeholder="e.g. SIH-REG-1025"
+                              className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded-lg outline-none text-xs focus:border-emerald-500"
+                              required
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {whatsappTemplate === "deadline_reminder" && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">{"{{1}}"} Lead Name</label>
+                            <input
+                              type="text"
+                              value={whatsappVar1}
+                              onChange={(e) => setWhatsappVar1(e.target.value)}
+                              placeholder="e.g. Divya Teja"
+                              className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded-lg outline-none text-xs focus:border-emerald-500"
+                              required
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-500">{"{{2}}"} Deadline Date</label>
+                            <input
+                              type="text"
+                              value={whatsappVar2}
+                              onChange={(e) => setWhatsappVar2(e.target.value)}
+                              placeholder="e.g. Oct 25th, 11:59 PM"
+                              className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded-lg outline-none text-xs focus:border-emerald-500"
+                              required
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {whatsappTemplate === "announcement" && (
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-bold text-slate-500">{"{{1}}"} Announcement Content</label>
+                          <textarea
+                            value={whatsappVar1}
+                            onChange={(e) => setWhatsappVar1(e.target.value)}
+                            placeholder="e.g. PPT presentation begins tomorrow 9:00 AM in Room 402."
+                            rows={3}
+                            className="w-full px-3 py-1.5 border border-slate-200 bg-white rounded-lg outline-none text-xs focus:border-emerald-500"
+                            required
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={whatsappLoading}
+                        className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md cursor-pointer flex items-center gap-1.5"
+                      >
+                        {whatsappLoading ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-emerald-200 border-t-white rounded-full animate-spin inline-block"></span>
+                            <span>Sending WhatsApp...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Send className="w-3.5 h-3.5" />
+                            <span>Dispatch WhatsApp Broadcast</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column: Handset / Device Live Preview */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* WHATSAPP DEVICE PREVIEW */}
+              {broadcastSubTab === "whatsapp" && (
+                <div className="bg-slate-950 rounded-[40px] border-[10px] border-slate-800 shadow-2xl p-4 w-full relative overflow-hidden aspect-[9/18] text-left flex flex-col justify-between">
+                  {/* Speaker & Camera Notch */}
+                  <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-32 h-6 bg-slate-800 rounded-b-2xl z-20 flex items-center justify-center">
+                    <div className="w-12 h-1 bg-slate-900 rounded-full"></div>
+                  </div>
+
+                  {/* WhatsApp Chat Interface */}
+                  <div className="flex-1 flex flex-col justify-between pt-6">
+                    {/* Header bar */}
+                    <div className="bg-[#075e54] text-white py-2.5 px-3 flex items-center gap-2 -mx-4 -mt-2.5">
+                      <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-[#075e54] font-bold text-xs">
+                        SV
+                      </div>
+                      <div className="flex-1">
+                        <span className="text-[11px] font-bold flex items-center gap-1">
+                          SVEC SIH Office
+                          <span className="w-3 h-3 bg-blue-500 rounded-full flex items-center justify-center text-[7px] text-white font-bold">✓</span>
+                        </span>
+                        <span className="text-[8px] text-emerald-100/80 block">Official Business Account</span>
+                      </div>
+                    </div>
+
+                    {/* Chat Area */}
+                    <div className="flex-1 bg-[#efeae2] -mx-4 p-3 overflow-y-auto flex flex-col justify-end gap-2 text-slate-800">
+                      {/* Interactive Verified Notification */}
+                      <div className="bg-amber-100/80 text-amber-900 border border-amber-200/50 text-[8px] py-1.5 px-2.5 rounded-lg text-center leading-normal max-w-[85%] mx-auto">
+                        🔒 Messages are end-to-end encrypted. No one outside this chat can read them.
+                      </div>
+
+                      {/* Live WhatsApp Bubble */}
+                      <div className="bg-white rounded-xl rounded-tr-none p-2.5 shadow-sm max-w-[85%] self-end relative border-l-4 border-emerald-500">
+                        {/* Meta Approved Template Header banner */}
+                        <div className="bg-emerald-50 text-[#128c7e] text-[8px] font-bold px-1.5 py-0.5 rounded mb-1.5 inline-block uppercase tracking-wider">
+                          Official Template Alert
+                        </div>
+
+                        {/* Substitution text */}
+                        <p className="text-[10px] leading-relaxed text-slate-700 font-sans whitespace-pre-wrap">
+                          {getWhatsAppPreviewText()}
+                        </p>
+
+                        <div className="text-right text-[7px] text-slate-400 mt-1 block">
+                          {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Input Area */}
+                    <div className="bg-[#f0f0f0] p-2 -mx-4 -mb-4 flex items-center gap-1.5">
+                      <div className="flex-1 bg-white rounded-full px-3 py-1 text-[9px] text-slate-400">
+                        Type a reply...
+                      </div>
+                      <div className="w-6 h-6 rounded-full bg-[#128c7e] flex items-center justify-center text-white">
+                        <Send className="w-3 h-3" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* SMS DEVICE PREVIEW */}
+              {broadcastSubTab === "sms" && (
+                <div className="bg-slate-950 rounded-[40px] border-[10px] border-slate-800 shadow-2xl p-4 w-full relative overflow-hidden aspect-[9/18] text-left flex flex-col justify-between">
+                  {/* Speaker & Camera Notch */}
+                  <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-32 h-6 bg-slate-800 rounded-b-2xl z-20"></div>
+
+                  <div className="flex-1 flex flex-col justify-between pt-6">
+                    {/* Header bar */}
+                    <div className="bg-slate-900 text-slate-200 py-3 px-3 border-b border-slate-800 flex items-center justify-between -mx-4 -mt-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-full bg-slate-800 text-slate-300 font-bold text-[10px] flex items-center justify-center">
+                          SV
+                        </div>
+                        <div>
+                          <span className="text-[11px] font-bold block">SV-SIHACK</span>
+                          <span className="text-[7px] text-slate-500 block">Institutional SMS Header</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* SMS Bubble display */}
+                    <div className="flex-1 bg-slate-950 -mx-4 p-3 flex flex-col justify-end gap-2">
+                      <div className="bg-slate-900 rounded-2xl rounded-tr-none p-3 shadow-md max-w-[85%] self-end">
+                        <p className="text-[10px] leading-relaxed text-slate-300 font-mono">
+                          {smsMessage || "Type your short alert text in the editor to preview your live SMS transmission layout here..."}
+                        </p>
+                        <div className="text-right text-[7px] text-slate-500 mt-1 block">
+                          SMS Channel • {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* SMS Footer */}
+                    <div className="bg-slate-900 border-t border-slate-800 p-2.5 -mx-4 -mb-4 flex items-center gap-2">
+                      <div className="flex-1 bg-slate-950 border border-slate-800 rounded-full px-3 py-1.5 text-[8px] text-slate-500 font-mono">
+                        Text Message
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* EMAIL DEVICE PREVIEW */}
+              {broadcastSubTab === "email" && (
+                <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-sm text-left space-y-4">
+                  <div className="border-b border-slate-100 pb-3">
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-2">
+                      Live HTML Email Layout Preview
+                    </span>
+                    <div className="bg-slate-50 rounded-xl p-3 text-xs space-y-1 font-sans">
+                      <p><strong className="text-slate-500">From:</strong> {settingsForm.smtpFrom || "sih-support@college.edu"}</p>
+                      <p><strong className="text-slate-500">To:</strong> {broadcastRecipientGroup === "test_single" ? (broadcastTestEmail || "[Test Email]") : `[${broadcastRecipientGroup.replace('_', ' ')}]`}</p>
+                      <p><strong className="text-slate-500">Subject:</strong> {broadcastSubject || "[Announcement Subject Line]"}</p>
+                    </div>
+                  </div>
+
+                  {/* Simulated Mail Body */}
+                  <div className="border border-slate-200 rounded-2xl p-4 bg-white shadow-sm font-sans max-h-96 overflow-y-auto">
+                    <div className="border-b-2 border-indigo-600 pb-2 mb-4">
+                      <h2 className="text-sm font-black text-indigo-600 tracking-tight">SVEC SIH Hackathon Updates</h2>
+                      <span className="text-[8px] text-slate-400 uppercase tracking-wider font-bold">Official Announcement</span>
+                    </div>
+
+                    <div className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">
+                      {broadcastMessage || "Provide announcement text inside the editor on the left to review the responsive email layout..."}
+                    </div>
+
+                    <hr className="border-slate-100 my-4" />
+                    <p className="text-[9px] text-slate-400 text-center">
+                      This is an official announcement from SVEC Smart India Hackathon Administration.
                     </p>
                   </div>
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* BROADCAST TRANSMISSION HISTORY LOGS */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-8 shadow-sm">
+            <div className="flex items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <History className="w-5 h-5 text-indigo-500" />
+                <h3 className="text-base font-extrabold font-display text-slate-800">
+                  Recent Broadcast Transmission Logs
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={fetchBroadcastLogs}
+                className="text-xs font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+              >
+                Refresh Log
+              </button>
+            </div>
+
+            {logsLoading ? (
+              <div className="py-8 text-center space-y-2">
+                <div className="w-6 h-6 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto"></div>
+                <p className="text-xs text-slate-400">Loading audit log stream...</p>
+              </div>
+            ) : broadcastLogs.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 space-y-2">
+                <div className="w-10 h-10 bg-slate-50 text-slate-300 rounded-2xl flex items-center justify-center mx-auto">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <h4 className="text-xs font-bold text-slate-600">No transmissions logged yet</h4>
+                <p className="text-[10px] text-slate-400 max-w-xs mx-auto">
+                  Broadcasts dispatched across Email, SMS, or WhatsApp will be fully logged and audited here.
+                </p>
               </div>
             ) : (
-              <form onSubmit={handleSendBroadcast} className="space-y-6">
-                {broadcastError && (
-                  <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
-                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                    <span>{broadcastError}</span>
-                  </div>
-                )}
-
-                {broadcastSuccess && (
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-4 text-xs flex gap-2 font-medium">
-                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                    <span>{broadcastSuccess}</span>
-                  </div>
-                )}
-
-                {/* Recipient Selection */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Recipient Target Group
-                  </label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "test_single" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
-                      <input
-                        type="radio"
-                        name="recipientGroup"
-                        checked={broadcastRecipientGroup === "test_single"}
-                        onChange={() => setBroadcastRecipientGroup("test_single")}
-                        className="mt-1 accent-indigo-600"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-700 block">Single Test Email</span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Send a test to a single email to verify SMTP configuration and formatting.</span>
-                      </div>
-                    </label>
-
-                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "all_logins" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
-                      <input
-                        type="radio"
-                        name="recipientGroup"
-                        checked={broadcastRecipientGroup === "all_logins"}
-                        onChange={() => setBroadcastRecipientGroup("all_logins")}
-                        className="mt-1 accent-indigo-600"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-700 block">All Registered Student Logins</span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Broadcasts to all student email accounts who created a portal login profile.</span>
-                      </div>
-                    </label>
-
-                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "team_leads" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
-                      <input
-                        type="radio"
-                        name="recipientGroup"
-                        checked={broadcastRecipientGroup === "team_leads"}
-                        onChange={() => setBroadcastRecipientGroup("team_leads")}
-                        className="mt-1 accent-indigo-600"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-700 block">Team Leaders Only</span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Dispatches only to primary team submitters/leaders.</span>
-                      </div>
-                    </label>
-
-                    <label className={`border rounded-xl p-3 flex items-start gap-3 cursor-pointer transition-all ${broadcastRecipientGroup === "all_team_members" ? "border-indigo-500 bg-indigo-50/20" : "border-slate-200 hover:bg-slate-50"}`}>
-                      <input
-                        type="radio"
-                        name="recipientGroup"
-                        checked={broadcastRecipientGroup === "all_team_members"}
-                        onChange={() => setBroadcastRecipientGroup("all_team_members")}
-                        className="mt-1 accent-indigo-600"
-                      />
-                      <div>
-                        <span className="text-xs font-bold text-slate-700 block">All Roster Members</span>
-                        <span className="text-[10px] text-slate-400 block mt-0.5">Dispatches to all listed team members on every registered team's complete roster.</span>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Conditional Single Test Email Input */}
-                <AnimatePresence>
-                  {broadcastRecipientGroup === "test_single" && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="space-y-1.5 overflow-hidden"
-                    >
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                        Test Email Recipient
-                      </label>
-                      <input
-                        type="email"
-                        value={broadcastTestEmail}
-                        onChange={(e) => setBroadcastTestEmail(e.target.value)}
-                        placeholder="e.g. administrator@example.com"
-                        className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
-                        required={broadcastRecipientGroup === "test_single"}
-                      />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                {/* Email Subject */}
-                <div className="space-y-1.5">
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                    Email Subject
-                  </label>
-                  <input
-                    type="text"
-                    value={broadcastSubject}
-                    onChange={(e) => setBroadcastSubject(e.target.value)}
-                    placeholder="e.g. SVEC SIH Hackathon - Mandatory PPT Template & Submission Deadline"
-                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-bold"
-                    required
-                  />
-                </div>
-
-                {/* Email Message Content */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between items-center">
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                      Email Message Body
-                    </label>
-                    <span className="text-[10px] text-slate-400 font-medium font-bold">Text wraps automatically</span>
-                  </div>
-                  <textarea
-                    value={broadcastMessage}
-                    onChange={(e) => setBroadcastMessage(e.target.value)}
-                    placeholder="Type your official announcement here..."
-                    rows={8}
-                    className="w-full px-4 py-3 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all leading-relaxed"
-                    required
-                  />
-                </div>
-
-                <div className="pt-4 border-t border-slate-100 flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={broadcastLoading}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md hover:shadow-lg cursor-pointer flex items-center gap-1.5"
-                  >
-                    {broadcastLoading ? (
-                      <>
-                        <span className="w-4 h-4 border-2 border-indigo-200 border-t-white rounded-full animate-spin inline-block"></span>
-                        <span>Sending Broadcast...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-4 h-4" />
-                        <span>Send Official Broadcast</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs text-slate-600 border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-slate-400 font-bold uppercase tracking-wider text-[9px]">
+                      <th className="pb-3 pr-4 font-bold">Channel</th>
+                      <th className="pb-3 pr-4 font-bold">Target Group</th>
+                      <th className="pb-3 pr-4 font-bold">Recipients</th>
+                      <th className="pb-3 pr-4 font-bold">Content Snippet</th>
+                      <th className="pb-3 pr-4 font-bold">Dispatched By</th>
+                      <th className="pb-3 pr-4 font-bold">Date & Time</th>
+                      <th className="pb-3 font-bold">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {broadcastLogs.map((log) => (
+                      <tr key={log.id} className="border-b border-slate-50 last:border-none hover:bg-slate-50/50 transition-all">
+                        <td className="py-3.5 pr-4">
+                          <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                            log.channel === "Email"
+                              ? "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                              : log.channel === "SMS"
+                              ? "bg-amber-50 text-amber-700 border border-amber-100"
+                              : "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                          }`}>
+                            {log.channel === "Email" && <Mail className="w-3 h-3" />}
+                            {log.channel === "SMS" && <Smartphone className="w-3 h-3" />}
+                            {log.channel === "WhatsApp" && <MessageCircle className="w-3 h-3" />}
+                            {log.channel}
+                          </span>
+                        </td>
+                        <td className="py-3.5 pr-4 font-semibold text-slate-700">
+                          {log.recipientGroup.replace("_", " ")}
+                        </td>
+                        <td className="py-3.5 pr-4 font-mono font-bold text-slate-500">
+                          {log.recipientCount} target(s)
+                        </td>
+                        <td className="py-3.5 pr-4 text-[11px] max-w-xs truncate text-slate-500" title={log.message}>
+                          {log.subject ? `[${log.subject}] ` : ""}{log.message}
+                        </td>
+                        <td className="py-3.5 pr-4 text-slate-500 font-semibold">
+                          {log.sender}
+                        </td>
+                        <td className="py-3.5 pr-4 text-slate-400 font-medium">
+                          {new Date(log.timestamp).toLocaleString([], {
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit"
+                          })}
+                        </td>
+                        <td className="py-3.5">
+                          <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[10px] bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
+                            <Check className="w-3 h-3" />
+                            Success
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
@@ -2902,6 +3891,64 @@ export default function AdminPanel({
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* DELETE CONFIRMATION POPUP */}
+      <AnimatePresence>
+        {deleteConfirm && deleteConfirm.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteConfirm(null)}
+              className="absolute inset-0 bg-slate-900 opacity-50"
+            ></motion.div>
+
+            {/* Modal container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden relative z-10 p-6 text-slate-800"
+            >
+              <div className="flex items-start gap-4">
+                <div className="p-3 bg-red-50 text-red-600 rounded-2xl shrink-0">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5 flex-1">
+                  <h3 className="font-bold font-display text-lg text-slate-900">
+                    {deleteConfirm.title}
+                  </h3>
+                  <p className="text-sm text-slate-600 leading-relaxed">
+                    {deleteConfirm.message}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirm(null)}
+                  className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded-xl border border-slate-200 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    deleteConfirm.onConfirm();
+                  }}
+                  className="px-5 py-2 text-xs font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl shadow-md cursor-pointer flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  Confirm Delete
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

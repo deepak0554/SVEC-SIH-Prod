@@ -4,9 +4,10 @@ import { Mail, Lock, LogIn, UserPlus, AlertCircle, CheckCircle2, GraduationCap, 
 
 interface StudentAuthProps {
   onAuthSuccess: (student: { id: string; email: string; gender?: string; department?: string; mobile?: string; token?: string }) => void;
+  isDark?: boolean;
 }
 
-export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
+export default function StudentAuth({ onAuthSuccess, isDark = false }: StudentAuthProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -91,17 +92,17 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="bg-white rounded-3xl border border-slate-200 p-8 shadow-sm"
+        className={`${isDark ? "bg-slate-900 border-slate-800 text-white shadow-xl" : "bg-white border-slate-200"} rounded-3xl border p-8 shadow-sm`}
         id="student-auth-card"
       >
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl mb-4 border border-indigo-100">
+          <div className={`inline-flex items-center justify-center w-14 h-14 rounded-2xl mb-4 border ${isDark ? "bg-slate-800 border-slate-700 text-indigo-400" : "bg-indigo-50 border-indigo-100 text-indigo-600"}`}>
             <GraduationCap className="w-8 h-8" />
           </div>
-          <h2 className="text-2xl font-bold font-display text-slate-900 tracking-tight">
+          <h2 className={`text-2xl font-bold font-display tracking-tight ${isDark ? "text-white" : "text-slate-900"}`}>
             {isLogin ? "Student Login" : "Create Student Account"}
           </h2>
-          <p className="text-slate-500 text-xs mt-2 max-w-xs mx-auto leading-relaxed">
+          <p className={`${isDark ? "text-slate-400" : "text-slate-500"} text-xs mt-2 max-w-xs mx-auto leading-relaxed`}>
             {isLogin 
               ? "Sign in to your SVEC student account to register your team for the SIH Internal Hackathon"
               : "Register your student email and create a password before initiating team registration"
@@ -110,22 +111,22 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-800 rounded-2xl p-4 text-xs flex gap-2.5 mb-6 font-medium">
-            <AlertCircle className="w-4.5 h-4.5 text-red-600 shrink-0 mt-0.5" />
+          <div className={`${isDark ? "bg-red-950/40 border-red-900/50 text-red-300" : "bg-red-50 border-red-200 text-red-800"} rounded-2xl p-4 text-xs flex gap-2.5 mb-6 font-medium`}>
+            <AlertCircle className="w-4.5 h-4.5 text-red-500 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
         )}
 
         {success && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl p-4 text-xs flex gap-2.5 mb-6 font-medium">
-            <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 shrink-0 mt-0.5" />
+          <div className={`${isDark ? "bg-emerald-950/40 border-emerald-900/50 text-emerald-300" : "bg-emerald-50 border-emerald-200 text-emerald-800"} rounded-2xl p-4 text-xs flex gap-2.5 mb-6 font-medium`}>
+            <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 shrink-0 mt-0.5" />
             <span>{success}</span>
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 block uppercase tracking-wider">
+            <label className={`text-xs font-bold block uppercase tracking-wider ${isDark ? "text-slate-400" : "text-slate-500"}`}>
               Student Email ID
             </label>
             <div className="relative">
@@ -136,14 +137,14 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
                 placeholder="e.g., student@svec.edu.in"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded-2xl text-slate-800 text-sm outline-hidden transition-all placeholder:text-slate-400 font-medium"
+                className={`w-full pl-11 pr-4 py-3 border rounded-2xl text-sm outline-hidden transition-all font-medium ${isDark ? "bg-slate-800 border-slate-700 focus:border-indigo-500 focus:bg-slate-850 text-white placeholder:text-slate-500" : "bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white text-slate-800 placeholder:text-slate-400"}`}
                 required
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs font-bold text-slate-500 block uppercase tracking-wider">
+            <label className={`text-xs font-bold block uppercase tracking-wider ${isDark ? "text-slate-400" : "text-slate-500"}`}>
               {isLogin ? "Password" : "Create Password"}
             </label>
             <div className="relative">
@@ -154,13 +155,13 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
                 placeholder={isLogin ? "Enter password" : "Min 6 characters"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded-2xl text-slate-800 text-sm outline-hidden transition-all placeholder:text-slate-400 font-medium"
+                className={`w-full pl-11 pr-4 py-3 border rounded-2xl text-sm outline-hidden transition-all font-medium ${isDark ? "bg-slate-800 border-slate-700 focus:border-indigo-500 focus:bg-slate-850 text-white placeholder:text-slate-500" : "bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white text-slate-800 placeholder:text-slate-400"}`}
                 required
               />
             </div>
             {isLogin && (
-              <p className="text-[11px] text-slate-500 mt-1.5 pl-1 leading-normal" id="password-reset-help-text">
-                Forgot password? Please contact your college <span className="font-semibold text-slate-700">SPOC</span> or <span className="font-semibold text-slate-700">Student Coordinator</span> to reset it.
+              <p className={`text-[11px] mt-1.5 pl-1 leading-normal ${isDark ? "text-slate-400" : "text-slate-500"}`} id="password-reset-help-text">
+                Forgot password? Please contact your college <span className={`font-semibold ${isDark ? "text-slate-200" : "text-slate-700"}`}>SPOC</span> or <span className={`font-semibold ${isDark ? "text-slate-200" : "text-slate-700"}`}>Student Coordinator</span> to reset it.
               </p>
             )}
           </div>
@@ -168,7 +169,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
           {!isLogin && (
             <>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 block uppercase tracking-wider">
+                <label className={`text-xs font-bold block uppercase tracking-wider ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                   Gender
                 </label>
                 <div className="relative">
@@ -177,7 +178,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
                     id="auth-gender-select"
                     value={gender}
                     onChange={(e) => setGender(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded-2xl text-slate-800 text-sm outline-hidden transition-all appearance-none font-medium cursor-pointer"
+                    className={`w-full pl-11 pr-4 py-3 border rounded-2xl text-sm outline-hidden transition-all appearance-none font-medium cursor-pointer ${isDark ? "bg-slate-800 border-slate-700 focus:border-indigo-500 focus:bg-slate-850 text-white" : "bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white text-slate-800"}`}
                     required
                   >
                     <option value="" disabled>Select Gender</option>
@@ -189,7 +190,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 block uppercase tracking-wider">
+                <label className={`text-xs font-bold block uppercase tracking-wider ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                   Department
                 </label>
                 <div className="relative">
@@ -198,7 +199,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
                     id="auth-dept-select"
                     value={department}
                     onChange={(e) => setDepartment(e.target.value)}
-                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded-2xl text-slate-800 text-sm outline-hidden transition-all appearance-none font-medium cursor-pointer"
+                    className={`w-full pl-11 pr-4 py-3 border rounded-2xl text-sm outline-hidden transition-all appearance-none font-medium cursor-pointer ${isDark ? "bg-slate-800 border-slate-700 focus:border-indigo-500 focus:bg-slate-850 text-white" : "bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white text-slate-800"}`}
                     required
                   >
                     <option value="" disabled>Select Department</option>
@@ -216,7 +217,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 block uppercase tracking-wider">
+                <label className={`text-xs font-bold block uppercase tracking-wider ${isDark ? "text-slate-400" : "text-slate-500"}`}>
                   Mobile Number
                 </label>
                 <div className="relative">
@@ -228,7 +229,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
                     maxLength={10}
                     value={mobile}
                     onChange={(e) => setMobile(e.target.value.replace(/\D/g, ""))}
-                    className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded-2xl text-slate-800 text-sm outline-hidden transition-all placeholder:text-slate-400 font-medium"
+                    className={`w-full pl-11 pr-4 py-3 border rounded-2xl text-sm outline-hidden transition-all font-medium ${isDark ? "bg-slate-800 border-slate-700 focus:border-indigo-500 focus:bg-slate-850 text-white placeholder:text-slate-500" : "bg-slate-50 border-slate-200 hover:border-slate-300 focus:border-indigo-500 focus:bg-white text-slate-800 placeholder:text-slate-400"}`}
                     required
                   />
                 </div>
@@ -240,7 +241,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
             id="auth-submit-button"
             type="submit"
             disabled={isLoading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm py-3.5 px-4 rounded-2xl shadow-md shadow-indigo-100 hover:shadow-indigo-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer glow-btn mt-2"
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm py-3.5 px-4 rounded-2xl shadow-md shadow-indigo-150 hover:shadow-indigo-250 transition-all flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer glow-btn mt-2"
           >
             {isLoading ? (
               <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
@@ -258,7 +259,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
           </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-slate-100 text-center">
+        <div className={`mt-8 pt-6 border-t text-center ${isDark ? "border-slate-800" : "border-slate-100"}`}>
           <button
             id="auth-toggle-button"
             type="button"
@@ -267,7 +268,7 @@ export default function StudentAuth({ onAuthSuccess }: StudentAuthProps) {
               setError("");
               setSuccess("");
             }}
-            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 transition-colors cursor-pointer"
+            className="text-xs font-bold text-indigo-500 hover:text-indigo-400 transition-colors cursor-pointer"
           >
             {isLogin 
               ? "New here? Create a student account" 
