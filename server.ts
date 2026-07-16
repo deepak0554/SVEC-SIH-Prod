@@ -11,7 +11,7 @@ import { ProblemStatement, Registration, Student, FeeConfig, HomepageContent, Cu
 const JWT_SECRET = process.env.JWT_SECRET || "svec_sih_hackathon_jwt_secret_2026";
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: "50mb" })); // Allow larger payloads for base64 images/PPT
 
