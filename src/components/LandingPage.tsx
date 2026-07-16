@@ -15,6 +15,18 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
   // Simple and robust parser for custom page content / markdown
   const renderSimpleMarkdown = (text: string) => {
     if (!text) return null;
+    
+    // Check if the content is rich HTML
+    const isHtml = /<[a-z][\s\S]*>/i.test(text) || text.includes("</") || text.includes("<img") || text.includes("<div");
+    if (isHtml) {
+      return (
+        <div 
+          dangerouslySetInnerHTML={{ __html: text }} 
+          className="rich-html-container max-w-none break-words"
+        />
+      );
+    }
+
     return text.split("\n").map((line, idx) => {
       const trimmed = line.trim();
       if (trimmed.startsWith("### ")) {

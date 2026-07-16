@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { HomepageContent, CustomPage, MenuItem, Sponsor, Patron, TeamSpoc, PreviousPhoto } from "../types";
 import { 
   Plus, Trash2, Edit2, CheckCircle, AlertCircle, Save, Layers, List, Link as LinkIcon, 
   UserPlus, Image as ImageIcon, Sparkles, FileText, LayoutGrid, Eye, ArrowUp, ArrowDown,
-  ShieldAlert
+  ShieldAlert, Shield, Bold, Italic, Heading1, Heading2, HelpCircle, Code, ExternalLink, FileJson
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -13,12 +13,32 @@ interface PageMenuCustomizerProps {
 
 export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps) {
   // Global tab within customizer
-  const [activeSubTab, setActiveSubTab] = useState<"details" | "sponsors" | "spocs" | "photos" | "pages" | "menu">("details");
+  const [activeSubTab, setActiveSubTab] = useState<"details" | "guidelines" | "sponsors" | "spocs" | "photos" | "pages" | "menu">("details");
 
   // State variables
   const [homepage, setHomepage] = useState<HomepageContent | null>(null);
   const [pagesList, setPagesList] = useState<CustomPage[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  
+  // Guidelines form state
+  const [guidelinesPageId, setGuidelinesPageId] = useState<string>("");
+  const [guidelinesTitle, setGuidelinesTitle] = useState<string>("Guidelines & Rules");
+  const [guidelinesContent, setGuidelinesContent] = useState<string>("");
+  const [guidelinesPublished, setGuidelinesPublished] = useState<boolean>(true);
+  
+  // Rich HTML Guidelines editor variables
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [editorPreviewTheme, setEditorPreviewTheme] = useState<"light" | "dark">("light");
+  const [insertImageUrl, setInsertImageUrl] = useState("");
+  const [insertImageAlt, setInsertImageAlt] = useState("Hackathon Event Banner");
+  const [insertImageSize, setInsertImageSize] = useState("max-w-xl");
+  const [insertImageRounded, setInsertImageRounded] = useState("rounded-2xl");
+  const [insertImageShadow, setInsertImageShadow] = useState("shadow-md");
+  const [showImageModal, setShowImageModal] = useState(false);
+  
+  const [insertLinkUrl, setInsertLinkUrl] = useState("");
+  const [insertLinkText, setInsertLinkText] = useState("");
+  const [showLinkModal, setShowLinkModal] = useState(false);
   
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -96,6 +116,15 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
       if (pagesRes.ok) {
         const pagesData: CustomPage[] = await pagesRes.json();
         setPagesList(pagesData);
+        
+        // Find guidelines page
+        const guidelinesPage = pagesData.find(p => p.slug === "guidelines");
+        if (guidelinesPage) {
+          setGuidelinesPageId(guidelinesPage.id);
+          setGuidelinesTitle(guidelinesPage.title);
+          setGuidelinesContent(guidelinesPage.content);
+          setGuidelinesPublished(guidelinesPage.published);
+        }
       }
 
       if (menuRes.ok) {
@@ -515,6 +544,134 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     }
   };
 
+  // Save Guidelines and Rules custom page directly
+  const handleSaveGuidelines = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!guidelinesTitle.trim()) {
+      setError("Guidelines title is required.");
+      return;
+    }
+
+    setError("");
+    setSuccess("");
+
+    const payload = {
+      id: guidelinesPageId || undefined,
+      title: guidelinesTitle.trim(),
+      slug: "guidelines",
+      content: guidelinesContent,
+      published: guidelinesPublished
+    };
+
+    try {
+      const res = await fetch("/api/custom-pages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        // Refresh pages list
+        const pagesRes = await fetch("/api/custom-pages");
+        if (pagesRes.ok) {
+          const updatedPages: CustomPage[] = await pagesRes.json();
+          setPagesList(updatedPages);
+          const guidelinesPage = updatedPages.find(p => p.slug === "guidelines");
+          if (guidelinesPage) {
+            setGuidelinesPageId(guidelinesPage.id);
+            setGuidelinesTitle(guidelinesPage.title);
+            setGuidelinesContent(guidelinesPage.content);
+            setGuidelinesPublished(guidelinesPage.published);
+          }
+        }
+        setSuccess("Guidelines & Rules updated successfully!");
+      } else {
+        setError(data.error || "Failed to update Guidelines & Rules.");
+      }
+    } catch (err) {
+      setError("Network error. Could not save guidelines.");
+    }
+  };
+
+  // Helper to insert HTML markup or tags at the textarea cursor
+  const insertHtmlAtCursor = (before: string, after: string = "") => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selected = text.substring(start, end);
+    const replacement = before + selected + after;
+
+    setGuidelinesContent(
+      text.substring(0, start) + replacement + text.substring(end)
+    );
+
+    // Maintain focus and reset selection bounds
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + before.length, start + before.length + selected.length);
+    }, 10);
+  };
+
+  // Helper to insert whole pre-designed layout blocks/templates
+  const insertHtmlTemplate = (templateName: string) => {
+    let template = "";
+
+    switch (templateName) {
+      case "alert-yellow":
+        template = `\n<div class="bg-amber-50 border-l-4 border-amber-500 p-4 rounded-r-2xl my-4 shadow-xs">\n  <h4 class="text-xs font-bold text-amber-800 uppercase tracking-wide">⚠️ Key Notice / Disclaimer</h4>\n  <p class="text-xs text-amber-700 mt-1 leading-relaxed">Please ensure all team registrations contain valid contact details. Registrations with incorrect data will be disqualified.</p>\n</div>\n`;
+        break;
+      case "alert-green":
+        template = `\n<div class="bg-emerald-50 border-l-4 border-emerald-500 p-4 rounded-r-2xl my-4 shadow-xs">\n  <h4 class="text-xs font-bold text-emerald-800 uppercase tracking-wide">📅 Important Timeline & Date</h4>\n  <p class="text-xs text-emerald-700 mt-1 leading-relaxed">Internal evaluation round begins on August 10th. Make sure your submissions are uploaded before 6:00 PM IST.</p>\n</div>\n`;
+        break;
+      case "alert-blue":
+        template = `\n<div class="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded-r-2xl my-4 shadow-xs">\n  <h4 class="text-xs font-bold text-indigo-800 uppercase tracking-wide">💡 Useful Hackathon Tip</h4>\n  <p class="text-xs text-indigo-700 mt-1 leading-relaxed">Focus on solving high-impact problem statements with clean proof-of-concept prototypes to score maximum points.</p>\n</div>\n`;
+        break;
+      case "cards":
+        template = `\n<div class="grid grid-cols-1 md:grid-cols-3 gap-6 my-6">\n  <div class="border border-slate-100 bg-slate-50/50 rounded-2xl p-4 shadow-xs hover:border-indigo-200 transition-colors">\n    <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Step 1: Idea Pitching</h3>\n    <p class="text-xs text-slate-500 leading-relaxed">Form a team of 6 students with at least 1 female member and submit your presentation abstract.</p>\n  </div>\n  <div class="border border-slate-100 bg-slate-50/50 rounded-2xl p-4 shadow-xs hover:border-indigo-200 transition-colors">\n    <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Step 2: Prototyping</h3>\n    <p class="text-xs text-slate-500 leading-relaxed">Develop a minimal working solution during the 24-hour internal development hackathon.</p>\n  </div>\n  <div class="border border-slate-100 bg-slate-50/50 rounded-2xl p-4 shadow-xs hover:border-indigo-200 transition-colors">\n    <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Step 3: Presentation</h3>\n    <p class="text-xs text-slate-500 leading-relaxed">Demonstrate your working software to the vetting panel of external experts and industrial spocs.</p>\n  </div>\n</div>\n`;
+        break;
+      case "key-dates":
+        template = `\n<div class="bg-slate-50 border border-slate-200 rounded-3xl p-5 my-6 space-y-3 shadow-xs">\n  <h3 class="text-xs font-black text-slate-800 uppercase tracking-widest border-b border-slate-200 pb-2">Important Deadlines & Schedule</h3>\n  <div class="space-y-2.5">\n    <div class="flex justify-between text-xs font-semibold">\n      <span class="text-slate-600">Team Registration Closes</span>\n      <span class="text-indigo-600 font-bold">Aug 05, 2026</span>\n    </div>\n    <div class="flex justify-between text-xs font-semibold border-t border-slate-100 pt-2">\n      <span class="text-slate-600">Abstract Submission Deadline</span>\n      <span class="text-indigo-600 font-bold">Aug 08, 2026</span>\n    </div>\n    <div class="flex justify-between text-xs font-semibold border-t border-slate-100 pt-2">\n      <span class="text-slate-600">Internal Hackathon Round</span>\n      <span class="text-emerald-600 font-bold">Aug 10-11, 2026</span>\n    </div>\n  </div>\n</div>\n`;
+        break;
+      case "full-sample":
+        template = `\n<div class="space-y-6">\n  <h2 class="text-lg sm:text-xl font-extrabold mt-6 mb-3 border-b pb-1.5 font-display text-indigo-700 border-indigo-100">Smart India Hackathon - SVEC Internal Round Guidelines</h2>\n  <p class="text-sm text-slate-600 leading-relaxed mb-4">Welcome to the SVEC Internal selections portal. This portal manages registrations, ideas tracking, and announcements for the Sri Vasavi Engineering College Hackathon Center.</p>\n  \n  <div class="bg-indigo-50/30 border border-indigo-100 rounded-3xl p-5 my-6 flex flex-col md:flex-row gap-6 items-center">\n    <img src="https://images.unsplash.com/photo-1504384308090-c894fdcc538d?auto=format&fit=crop&w=800&q=80" alt="Hackathon Event Banner" class="w-full md:w-1/3 rounded-2xl border shadow-sm h-32 object-cover" />\n    <div class="flex-1 space-y-2">\n      <h3 class="text-xs font-bold text-slate-800 uppercase tracking-widest">General Rules of Formations</h3>\n      <p class="text-xs text-slate-500 leading-relaxed">Each team must comprise exactly 6 student members. It is strictly mandatory to include at least 1 female team member in each roster to satisfy SIH selection parameters.</p>\n    </div>\n  </div>\n\n  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">\n    <div class="border border-slate-200 rounded-2xl p-4 bg-white shadow-xs">\n      <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Team Eligibility</h4>\n      <ul class="list-disc pl-5 space-y-1.5 text-xs text-slate-500">\n        <li>Open to B.Tech, M.Tech, MCA and Diploma students.</li>\n        <li>A student can be a member of only ONE team.</li>\n        <li>Multiple departments can collaborate in a single team.</li>\n      </ul>\n    </div>\n    <div class="border border-slate-200 rounded-2xl p-4 bg-white shadow-xs">\n      <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Vetting Process</h4>\n      <ul class="list-disc pl-5 space-y-1.5 text-xs text-slate-500">\n        <li>Abstract submissions will be screened initially.</li>\n        <li>Shortlisted ideas must present active prototypes.</li>\n        <li>Top selected teams proceed to national nominations.</li>\n      </ul>\n    </div>\n  </div>\n</div>\n`;
+        break;
+      default:
+        break;
+    }
+
+    if (!template) return;
+    insertHtmlAtCursor(template);
+  };
+
+  const handleInsertImageSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!insertImageUrl.trim()) return;
+
+    const imgTag = `<img src="${insertImageUrl.trim()}" alt="${insertImageAlt.trim() || 'Hackathon Image'}" class="${insertImageSize} ${insertImageRounded} ${insertImageShadow} h-auto object-cover my-5 mx-auto block max-w-full" referrerPolicy="no-referrer" />\n`;
+    insertHtmlAtCursor(imgTag);
+    setInsertImageUrl("");
+    setShowImageModal(false);
+  };
+
+  const handleInsertLinkSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!insertLinkUrl.trim()) return;
+
+    const linkText = insertLinkText.trim() || insertLinkUrl.trim();
+    const linkTag = `<a href="${insertLinkUrl.trim()}" target="_blank" rel="noopener noreferrer" class="text-indigo-600 hover:text-indigo-800 font-bold underline transition-colors inline-flex items-center gap-1">${linkText} <span class="text-[10px]">↗</span></a>`;
+    insertHtmlAtCursor(linkTag);
+    setInsertLinkUrl("");
+    setInsertLinkText("");
+    setShowLinkModal(false);
+  };
+
   // Delete Custom Page
   const handleDeletePage = (id: string) => {
     setDeleteConfirm({
@@ -690,6 +847,15 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
           SIH Banner Details
         </button>
         <button
+          onClick={() => { setActiveSubTab("guidelines"); setError(""); setSuccess(""); }}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+            activeSubTab === "guidelines" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <Shield className="w-4 h-4" />
+          Guidelines & Rules
+        </button>
+        <button
           onClick={() => { setActiveSubTab("sponsors"); setError(""); setSuccess(""); }}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
             activeSubTab === "sponsors" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:text-slate-800"
@@ -737,6 +903,507 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
       </div>
 
       {/* SUB-TAB CONTENTS */}
+
+      {/* GUIDELINES & RULES HOME BODY CONTENT HTML DESIGNER */}
+      {activeSubTab === "guidelines" && (
+        <div className="space-y-6">
+          {/* Header block with statistics and short description */}
+          <div className="bg-gradient-to-r from-indigo-900 to-slate-900 rounded-2xl p-6 text-white shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-indigo-500/20 border border-indigo-400/30 rounded-full text-[10px] font-bold uppercase tracking-wider text-indigo-300">
+                <Sparkles className="w-3 h-3 text-indigo-300" />
+                <span>Rich Layout Designer</span>
+              </div>
+              <h2 className="text-lg font-black font-display tracking-tight flex items-center gap-2">
+                <Shield className="w-5 h-5 text-emerald-400" />
+                Home Page HTML body customizer
+              </h2>
+              <p className="text-xs text-slate-300">
+                Design and format your Internal Hackathon Guidelines, add images, links, highlight notices and build custom visual blocks.
+              </p>
+            </div>
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => insertHtmlTemplate("full-sample")}
+                className="px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-200 text-[11px] font-bold rounded-xl cursor-pointer transition-all flex items-center gap-1"
+                title="Loads a highly styled sample template to get you started immediately"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                Load Sample Template
+              </button>
+            </div>
+          </div>
+
+          {/* DUAL WORKSPACE LAYOUT */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            {/* LEFT WORKSPACE: THE DESIGN EDITOR (7 cols) */}
+            <form onSubmit={handleSaveGuidelines} className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-widest flex items-center gap-1.5">
+                  <Code className="w-4 h-4 text-indigo-500" />
+                  HTML Content & Design Tools
+                </h3>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="guidelinesPublished"
+                    className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                    checked={guidelinesPublished}
+                    onChange={(e) => setGuidelinesPublished(e.target.checked)}
+                  />
+                  <label htmlFor="guidelinesPublished" className="text-xs font-bold text-slate-600 cursor-pointer select-none">
+                    Visible on main page
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {/* Title */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Landing Section Title *</label>
+                  <input
+                    type="text"
+                    required
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                    value={guidelinesTitle}
+                    onChange={(e) => setGuidelinesTitle(e.target.value)}
+                    placeholder="e.g. Guidelines, Selection Criteria & Rules"
+                  />
+                </div>
+
+                {/* HTML VISUAL FORMATTING ACTIONS */}
+                <div className="space-y-2 bg-slate-50 border border-slate-200 p-3 rounded-xl">
+                  <div className="flex flex-wrap items-center gap-1.5 border-b border-slate-200 pb-2 mb-2">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Formats:</span>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor('<h1 class="text-3xl font-black text-slate-900 dark:text-white mt-6 mb-4 font-display">', "</h1>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 text-xs font-bold font-mono transition-colors cursor-pointer"
+                      title="Insert Main Title (H1)"
+                    >
+                      H1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor('<h2 class="text-xl font-bold text-indigo-700 dark:text-indigo-400 mt-5 mb-2.5 font-display border-b pb-1">', "</h2>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 text-xs font-bold font-mono transition-colors cursor-pointer"
+                      title="Insert Sub Title (H2)"
+                    >
+                      H2
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor('<h3 class="text-base font-bold text-slate-800 dark:text-slate-200 mt-4 mb-2">', "</h3>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 text-xs font-bold font-mono transition-colors cursor-pointer"
+                      title="Insert Mini Title (H3)"
+                    >
+                      H3
+                    </button>
+                    <div className="h-4 w-[1px] bg-slate-200 mx-1" />
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor('<p class="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mb-4">', "</p>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 text-xs font-mono transition-colors cursor-pointer"
+                      title="Insert Paragraph Tag"
+                    >
+                      Paragraph
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor("<strong>", "</strong>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
+                      title="Make Text Bold"
+                    >
+                      <Bold className="w-3.5 h-3.5 text-slate-600" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor("<em>", "</em>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 cursor-pointer"
+                      title="Make Text Italic"
+                    >
+                      <Italic className="w-3.5 h-3.5 text-slate-600" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlAtCursor("<br/>")}
+                      className="p-1.5 hover:bg-slate-200 rounded text-slate-700 text-[10px] font-bold font-mono transition-colors cursor-pointer"
+                      title="Insert Line Break"
+                    >
+                      LineBreak
+                    </button>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Insert:</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowImageModal(true)}
+                      className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-lg text-[10px] font-bold text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5 text-emerald-500" />
+                      Add Custom Image
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowLinkModal(true)}
+                      className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-lg text-[10px] font-bold text-slate-700 transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <LinkIcon className="w-3.5 h-3.5 text-indigo-500" />
+                      Add Button / Link
+                    </button>
+
+                    <div className="h-4 w-[1px] bg-slate-200 mx-1" />
+                    <span className="text-[10px] font-bold text-slate-400 uppercase mr-1">Blocks:</span>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlTemplate("alert-yellow")}
+                      className="px-2 py-0.5 bg-amber-100 hover:bg-amber-200 border border-amber-200 text-amber-800 text-[9px] font-bold rounded-md cursor-pointer transition-all"
+                      title="Yellow notice panel"
+                    >
+                      Notice
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlTemplate("alert-green")}
+                      className="px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 border border-emerald-200 text-emerald-800 text-[9px] font-bold rounded-md cursor-pointer transition-all"
+                      title="Green calendar timeline alert box"
+                    >
+                      Timeline Box
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlTemplate("alert-blue")}
+                      className="px-2 py-0.5 bg-indigo-100 hover:bg-indigo-200 border border-indigo-200 text-indigo-800 text-[9px] font-bold rounded-md cursor-pointer transition-all"
+                      title="Blue informative tips bar"
+                    >
+                      Tip Banner
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlTemplate("key-dates")}
+                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-[9px] font-bold rounded-md cursor-pointer transition-all"
+                      title="Insert a nice structured Key Deadlines table block"
+                    >
+                      Deadlines Table
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertHtmlTemplate("cards")}
+                      className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 text-indigo-700 text-[9px] font-bold rounded-md cursor-pointer transition-all"
+                      title="Three-column step grid container"
+                    >
+                      3-Step Cards
+                    </button>
+                  </div>
+                </div>
+
+                {/* Main Textarea input */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">HTML Source Code & Markup Content *</label>
+                    <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
+                      <HelpCircle className="w-3 h-3 text-slate-400" />
+                      Any Tailwind classes will work!
+                    </span>
+                  </div>
+                  <textarea
+                    ref={textareaRef}
+                    required
+                    rows={18}
+                    className="w-full px-4 py-3 border border-slate-200 rounded-xl text-xs font-mono focus:outline-none focus:border-indigo-500 leading-relaxed bg-slate-900 text-slate-100 selection:bg-indigo-500 selection:text-white"
+                    value={guidelinesContent}
+                    onChange={(e) => setGuidelinesContent(e.target.value)}
+                    placeholder="<!-- Write rich HTML code here -->&#10;<div class='space-y-4'>&#10;  <h2 class='text-xl font-bold text-indigo-600'>SIH rules</h2>&#10;</div>"
+                  />
+                </div>
+              </div>
+
+              {/* Action save bar */}
+              <div className="pt-3 border-t border-slate-100 flex justify-end">
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-sm transition-all hover:scale-[1.01]"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Landing Content
+                </button>
+              </div>
+            </form>
+
+            {/* RIGHT WORKSPACE: DYNAMIC REAL-TIME CANVAS PREVIEW (5 cols) */}
+            <div className="lg:col-span-5 space-y-4">
+              <div className="bg-slate-100 border border-slate-200 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                    <Eye className="w-4 h-4 text-emerald-500" />
+                    Live Canvas Preview
+                  </h3>
+                  {/* Theme Switcher Toggle */}
+                  <div className="flex items-center bg-slate-200 p-0.5 rounded-lg border border-slate-300">
+                    <button
+                      type="button"
+                      onClick={() => setEditorPreviewTheme("light")}
+                      className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        editorPreviewTheme === "light"
+                          ? "bg-white text-slate-800 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Light Preview
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditorPreviewTheme("dark")}
+                      className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        editorPreviewTheme === "dark"
+                          ? "bg-slate-900 text-white shadow-xs"
+                          : "text-slate-500 hover:text-slate-300"
+                      }`}
+                    >
+                      Dark Preview
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-slate-500">
+                  This preview renders the code in real-time. Verify how images, borders, alignments, and spacings appear in light or dark modes.
+                </p>
+
+                {/* THE PREVIEW CANVAS CONTAINER */}
+                <div 
+                  className={`border rounded-xl p-5 min-h-[460px] max-h-[580px] overflow-y-auto transition-all duration-300 ${
+                    editorPreviewTheme === "dark" 
+                      ? "bg-slate-950 border-slate-800 text-slate-200" 
+                      : "bg-white border-slate-200 text-slate-700"
+                  }`}
+                >
+                  {/* Custom Page Header Preview */}
+                  <div className={`flex items-center gap-2 pb-3 border-b mb-4 ${
+                    editorPreviewTheme === "dark" ? "border-slate-850" : "border-slate-100"
+                  }`}>
+                    <div className={`p-1.5 rounded-lg text-xs ${
+                      editorPreviewTheme === "dark" ? "bg-slate-900 text-emerald-400" : "bg-emerald-50 text-emerald-600"
+                    }`}>
+                      <Shield className="w-4 h-4" />
+                    </div>
+                    <h2 className="text-sm font-bold">
+                      {guidelinesTitle || "Guidelines & Rules"}
+                    </h2>
+                  </div>
+
+                  {/* Render guidelines HTML content */}
+                  {guidelinesContent ? (
+                    <div 
+                      dangerouslySetInnerHTML={{ __html: guidelinesContent }}
+                      className="prose prose-sm max-w-none break-words leading-relaxed text-xs space-y-3"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
+                      <Code className="w-8 h-8 opacity-30" />
+                      <p className="text-center text-xs">No body content written yet.</p>
+                      <button 
+                        type="button" 
+                        onClick={() => insertHtmlTemplate("full-sample")}
+                        className="text-indigo-500 hover:underline text-[10px] font-bold"
+                      >
+                        Load full sample guidelines template
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Instructions and help card */}
+              <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4 text-xs text-indigo-950 space-y-1.5">
+                <h4 className="font-bold flex items-center gap-1 text-indigo-900">
+                  <HelpCircle className="w-4 h-4 text-indigo-600" />
+                  Visual Editor Instructions
+                </h4>
+                <ul className="list-disc pl-4 space-y-1 text-[11px] text-indigo-900/80 leading-relaxed">
+                  <li>You can type standard text, or use our toolbar buttons to wrap selected words inside HTML tags.</li>
+                  <li>Click <strong>Add Custom Image</strong> to construct image codes linking to Unsplash or college servers.</li>
+                  <li>Use <strong>Insert Blocks</strong> to instantly add pre-designed alert boxes, deadlines lists, or column matrices.</li>
+                  <li>All styles are styled dynamically via Tailwind CSS, which handles high-contrast display perfectly.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          {/* IMAGE INSERTION FLOATING POPUP DIALOG */}
+          {showImageModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs" onClick={() => setShowImageModal(false)} />
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-md relative z-10 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <ImageIcon className="w-4 h-4 text-emerald-500" />
+                    Configure Custom Image Tag
+                  </h3>
+                  <button 
+                    type="button" 
+                    onClick={() => setShowImageModal(false)}
+                    className="text-slate-400 hover:text-slate-600 text-xs font-bold font-mono"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleInsertImageSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Image Web Address (URL) *</label>
+                    <input
+                      type="url"
+                      required
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                      value={insertImageUrl}
+                      onChange={(e) => setInsertImageUrl(e.target.value)}
+                      placeholder="e.g. https://images.unsplash.com/photo-..."
+                    />
+                    <span className="text-[9px] text-slate-400 mt-0.5 block">Use any public hotlink or cloud image URL</span>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Alternate Description</label>
+                    <input
+                      type="text"
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                      value={insertImageAlt}
+                      onChange={(e) => setInsertImageAlt(e.target.value)}
+                      placeholder="e.g. Hackathon Banner Image"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-600 uppercase mb-1">Max Width</label>
+                      <select
+                        className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs"
+                        value={insertImageSize}
+                        onChange={(e) => setInsertImageSize(e.target.value)}
+                      >
+                        <option value="max-w-xs">Small (320px)</option>
+                        <option value="max-w-md">Medium (448px)</option>
+                        <option value="max-w-xl">Large (576px)</option>
+                        <option value="max-w-full">Full Width (100%)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-600 uppercase mb-1">Corners</label>
+                      <select
+                        className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs"
+                        value={insertImageRounded}
+                        onChange={(e) => setInsertImageRounded(e.target.value)}
+                      >
+                        <option value="rounded-none">Square</option>
+                        <option value="rounded-xl">Rounded XL</option>
+                        <option value="rounded-2xl">Rounded 2XL</option>
+                        <option value="rounded-full">Circle</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[9px] font-bold text-slate-600 uppercase mb-1">Shadow</label>
+                      <select
+                        className="w-full px-2 py-1.5 border border-slate-200 rounded-lg text-xs"
+                        value={insertImageShadow}
+                        onChange={(e) => setInsertImageShadow(e.target.value)}
+                      >
+                        <option value="shadow-none">No shadow</option>
+                        <option value="shadow-sm">Small</option>
+                        <option value="shadow-md">Medium</option>
+                        <option value="shadow-xl">Extra Large</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowImageModal(false)}
+                      className="px-3 py-1.5 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-500 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      Insert Image Code
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {/* LINK INSERTION FLOATING POPUP DIALOG */}
+          {showLinkModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs" onClick={() => setShowLinkModal(false)} />
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 w-full max-w-md relative z-10 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b">
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
+                    <LinkIcon className="w-4 h-4 text-indigo-500" />
+                    Configure Link Button
+                  </h3>
+                  <button 
+                    type="button" 
+                    onClick={() => setShowLinkModal(false)}
+                    className="text-slate-400 hover:text-slate-600 text-xs font-bold font-mono"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <form onSubmit={handleInsertLinkSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Target Address (URL) *</label>
+                    <input
+                      type="text"
+                      required
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                      value={insertLinkUrl}
+                      onChange={(e) => setInsertLinkUrl(e.target.value)}
+                      placeholder="e.g. https://sih.gov.in/ or /register"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Button / Link Display Text *</label>
+                    <input
+                      type="text"
+                      required
+                      className="w-full px-3 py-1.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
+                      value={insertLinkText}
+                      onChange={(e) => setInsertLinkText(e.target.value)}
+                      placeholder="e.g. Visit Official SIH Site"
+                    />
+                  </div>
+
+                  <div className="pt-3 border-t flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowLinkModal(false)}
+                      className="px-3 py-1.5 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-500 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg cursor-pointer"
+                    >
+                      Insert Link Code
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 1. DETAILS FORM */}
       {activeSubTab === "details" && homepage && (

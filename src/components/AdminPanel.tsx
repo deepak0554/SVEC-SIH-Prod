@@ -35,7 +35,9 @@ import {
   History,
   Clock,
   Check,
-  Shield
+  Shield,
+  ChevronDown,
+  ChevronUp
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -66,6 +68,7 @@ export default function AdminPanel({
   });
   const [loginError, setLoginError] = useState("");
   const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast">("registrations");
+  const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
@@ -1381,17 +1384,6 @@ export default function AdminPanel({
             </button>
           )}
           <button
-            onClick={() => setActiveTab("students")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "students"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-            id="admin-tab-students"
-          >
-            Student Logins
-          </button>
-          <button
             onClick={() => setActiveTab("broadcast")}
             className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
               activeTab === "broadcast"
@@ -1403,42 +1395,92 @@ export default function AdminPanel({
             Broadcast
           </button>
           {adminRole === "SPOC" && (
-            <>
-              <button
-                onClick={() => setActiveTab("admins")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "admins"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-                id="admin-tab-admins"
-              >
-                Manage Admin Users
-              </button>
-              <button
-                onClick={() => setActiveTab("customizer")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "customizer"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-                id="admin-tab-customizer"
-              >
-                Landing Page & Menus
-              </button>
-            </>
+            <button
+              onClick={() => setActiveTab("customizer")}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeTab === "customizer"
+                  ? "bg-white text-indigo-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              id="admin-tab-customizer"
+            >
+              Landing Page & Menus
+            </button>
           )}
-          <button
-            onClick={() => setActiveTab("security")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "security"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-            id="admin-tab-security"
-          >
-            Change Password
-          </button>
+
+          {/* User & Security Grouped Dropdown */}
+          <div className="relative inline-block">
+            <button
+              onClick={() => setIsUserDropdownOpen(prev => !prev)}
+              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === "students" || activeTab === "admins" || activeTab === "security"
+                  ? "bg-white text-indigo-600 shadow-sm"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <span>User & Security</span>
+              {isUserDropdownOpen ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+            </button>
+
+            {isUserDropdownOpen && (
+              <>
+                <div 
+                  className="fixed inset-0 z-40" 
+                  onClick={() => setIsUserDropdownOpen(false)}
+                />
+                <div
+                  className="absolute right-0 mt-1.5 w-52 bg-white rounded-xl border border-slate-200 shadow-xl py-1 z-50 overflow-hidden"
+                >
+                  <button
+                    onClick={() => {
+                      setActiveTab("students");
+                      setIsUserDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors flex items-center gap-2 ${
+                      activeTab === "students"
+                        ? "bg-indigo-50 text-indigo-600 font-bold"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <Users className="w-3.5 h-3.5 text-indigo-500" />
+                    Student Logins
+                  </button>
+
+                  {adminRole === "SPOC" && (
+                    <button
+                      onClick={() => {
+                        setActiveTab("admins");
+                        setIsUserDropdownOpen(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors flex items-center gap-2 ${
+                        activeTab === "admins"
+                          ? "bg-indigo-50 text-indigo-600 font-bold"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      }`}
+                    >
+                      <Shield className="w-3.5 h-3.5 text-emerald-500" />
+                      Manage Admin Users
+                    </button>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      setActiveTab("security");
+                      setIsUserDropdownOpen(false);
+                    }}
+                    className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors flex items-center gap-2 ${
+                      activeTab === "security"
+                        ? "bg-indigo-50 text-indigo-600 font-bold"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                    }`}
+                  >
+                    <Lock className="w-3.5 h-3.5 text-amber-500" />
+                    Change Password
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

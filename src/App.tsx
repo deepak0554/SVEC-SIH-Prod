@@ -425,7 +425,6 @@ export default function App() {
                   student={student}
                   problemStatements={problemStatements}
                   onSuccess={handleRegistrationSuccess}
-                  onNavigateToAdmin={() => setView("admin")}
                 />
               ) : (
                 <StudentAuth 

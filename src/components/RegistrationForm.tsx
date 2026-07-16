@@ -24,14 +24,12 @@ interface RegistrationFormProps {
   student: { id: string; email: string; gender?: string; department?: string; mobile?: string };
   onSuccess: (registration: Registration) => void;
   problemStatements: ProblemStatement[];
-  onNavigateToAdmin: () => void;
 }
 
 export default function RegistrationForm({
   student,
   onSuccess,
-  problemStatements,
-  onNavigateToAdmin
+  problemStatements
 }: RegistrationFormProps) {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
@@ -406,15 +404,6 @@ export default function RegistrationForm({
             <div className="bg-white/15 backdrop-blur-md p-3 rounded-2xl border border-white/25 shadow-inner flex items-center justify-center">
               <SvecLogo className="w-20 h-20 filter drop-shadow-md" />
             </div>
-            <button
-              type="button"
-              onClick={onNavigateToAdmin}
-              className="text-indigo-100 hover:text-white text-xs font-semibold flex items-center gap-1.5 bg-white/10 hover:bg-white/20 transition-all px-4 py-2.5 rounded-xl backdrop-blur-sm border border-white/10 shadow-xs cursor-pointer"
-              id="admin-login-btn"
-            >
-              <ShieldCheck className="w-4 h-4 text-indigo-300" />
-              Admin Portal
-            </button>
           </div>
         </div>
       </div>
