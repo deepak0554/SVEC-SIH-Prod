@@ -71,7 +71,13 @@ export default function AdminPanel({
     return !!sessionStorage.getItem("svec_sih_admin_token");
   });
   const [loginError, setLoginError] = useState("");
-  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast" | "evaluation" | "evaluation-selection">("registrations");
+  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast" | "evaluation" | "evaluation-selection">(() => {
+    return (sessionStorage.getItem("svec_sih_admin_active_tab") as any) || "registrations";
+  });
+
+  useEffect(() => {
+    sessionStorage.setItem("svec_sih_admin_active_tab", activeTab);
+  }, [activeTab]);
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -1574,6 +1580,7 @@ export default function AdminPanel({
               sessionStorage.removeItem("svec_sih_admin_token");
               sessionStorage.removeItem("svec_sih_admin_role");
               sessionStorage.removeItem("svec_sih_admin_username");
+              sessionStorage.removeItem("svec_sih_admin_active_tab");
               setPasscode("");
               setAdminRole(null);
               setIsLoggedIn(false);

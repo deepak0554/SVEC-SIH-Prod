@@ -10,7 +10,12 @@ import SvecLogo from "./components/SvecLogo";
 import LandingPage from "./components/LandingPage";
 
 export default function App() {
-  const [view, setView] = useState<string>("home");
+  const [view, setView] = useState<string>(() => {
+    if (sessionStorage.getItem("svec_sih_admin_token")) {
+      return "admin";
+    }
+    return "home";
+  });
   const [problemStatements, setProblemStatements] = useState<ProblemStatement[]>([]);
   const [latestRegistration, setLatestRegistration] = useState<Registration | null>(null);
   const [loading, setLoading] = useState(true);
