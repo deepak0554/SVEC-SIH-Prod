@@ -34,6 +34,9 @@ export default function App() {
   } | null>(null);
 
   const [student, setStudent] = useState<{ id: string; email: string } | null>(() => {
+    if (sessionStorage.getItem("svec_sih_admin_token")) {
+      return null;
+    }
     try {
       const saved = localStorage.getItem("svec_sih_student");
       return saved ? JSON.parse(saved) : null;
@@ -98,7 +101,9 @@ export default function App() {
         if (data.found && data.registration) {
           setHasExistingRegistration(data.registration);
           setLatestRegistration(data.registration);
-          setView("receipt");
+          if (!sessionStorage.getItem("svec_sih_admin_token")) {
+            setView("receipt");
+          }
         } else {
           setHasExistingRegistration(null);
         }

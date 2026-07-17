@@ -6292,10 +6292,10 @@ export default function AdminPanel({
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden relative z-10 no-print"
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden relative z-10"
             >
               {/* Modal Header */}
-              <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+              <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0 no-print">
                 <div className="flex items-center gap-2">
                   <Printer className="w-5 h-5 text-indigo-400" />
                   <h3 className="font-bold font-display text-base">Print Evaluation Marks Report</h3>

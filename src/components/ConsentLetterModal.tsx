@@ -311,13 +311,43 @@ export default function ConsentLetterModal({
                         top: 0 !important;
                         width: 100% !important;
                         margin: 0 !important;
-                        padding: 20mm 20mm 20mm 20mm !important;
+                        padding: 12mm 15mm 12mm 15mm !important;
                         border: none !important;
                         box-shadow: none !important;
                         background: white !important;
                         color: black !important;
-                        font-size: 11pt !important;
+                        font-size: 10pt !important;
                         box-sizing: border-box !important;
+                        page-break-inside: avoid !important;
+                      }
+                      /* Compact layout spacing on paper */
+                      #printable-consent-letter {
+                        gap: 12px !important;
+                      }
+                      #printable-consent-letter .pt-4 {
+                        padding-top: 6px !important;
+                      }
+                      #printable-consent-letter .pb-4 {
+                        padding-bottom: 6px !important;
+                      }
+                      #printable-consent-letter .mt-3 {
+                        margin-top: 6px !important;
+                      }
+                      #printable-consent-letter .mt-4 {
+                        margin-top: 6px !important;
+                      }
+                      #printable-consent-letter .pt-10 {
+                        padding-top: 15px !important;
+                      }
+                      #printable-consent-letter .mt-12 {
+                        margin-top: 20px !important;
+                      }
+                      #printable-consent-letter table {
+                        margin-top: 4px !important;
+                      }
+                      #printable-consent-letter th, #printable-consent-letter td {
+                        padding: 4px 6px !important;
+                        font-size: 8.5pt !important;
                       }
                       /* Ensure fields display clean without inputs */
                       .print-no-border {
