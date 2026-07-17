@@ -264,6 +264,8 @@ function readSettings(): FeeConfig {
       logoUrl: parsed.logoUrl ?? "",
       portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
       portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College",
+      teamMembersCount: parsed.teamMembersCount ?? 5,
+      genderDiversityRequired: parsed.genderDiversityRequired ?? true,
 
       // SMS config
       smsEnabled: parsed.smsEnabled ?? false,
@@ -307,6 +309,8 @@ function readSettings(): FeeConfig {
       logoUrl: "",
       portalTitle: "SVEC - SIH Internal Hackathon 2026",
       portalCaption: "Sri Vasavi Engineering College",
+      teamMembersCount: 5,
+      genderDiversityRequired: true,
 
       smsEnabled: false,
       smsProvider: "twilio",
@@ -897,7 +901,9 @@ app.get("/api/settings/public", (req, res) => {
     portalTheme: settings.portalTheme || "light",
     logoUrl: settings.logoUrl || "",
     portalTitle: settings.portalTitle || "SVEC - SIH Internal Hackathon 2026",
-    portalCaption: settings.portalCaption || "Sri Vasavi Engineering College"
+    portalCaption: settings.portalCaption || "Sri Vasavi Engineering College",
+    teamMembersCount: settings.teamMembersCount ?? 5,
+    genderDiversityRequired: settings.genderDiversityRequired !== undefined ? settings.genderDiversityRequired : true
   });
 });
 
@@ -931,6 +937,8 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     logoUrl,
     portalTitle,
     portalCaption,
+    teamMembersCount,
+    genderDiversityRequired,
 
     // SMS variables
     smsEnabled,
@@ -978,6 +986,8 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     logoUrl: (logoUrl || "").trim(),
     portalTitle: (portalTitle || "SVEC - SIH Internal Hackathon 2026").trim(),
     portalCaption: (portalCaption || "Sri Vasavi Engineering College").trim(),
+    teamMembersCount: teamMembersCount !== undefined ? Number(teamMembersCount) : 5,
+    genderDiversityRequired: genderDiversityRequired !== undefined ? !!genderDiversityRequired : true,
 
     // SMS properties
     smsEnabled: !!smsEnabled,
@@ -1937,17 +1947,18 @@ app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
 
   const current = registrations[idx];
 
-  // Under SIH guidelines, check if at least one female member is present in the team
-  const hasFemale = 
-    (leadGender || current.leadGender || "").toLowerCase() === "female" ||
-    (member1Gender || current.member1Gender || "").toLowerCase() === "female" ||
-    (member2Gender || current.member2Gender || "").toLowerCase() === "female" ||
-    (member3Gender || current.member3Gender || "").toLowerCase() === "female" ||
-    (member4Gender || current.member4Gender || "").toLowerCase() === "female" ||
-    (member5Gender || current.member5Gender || "").toLowerCase() === "female";
+  const count = settings.teamMembersCount ?? 5;
 
-  if (!hasFemale) {
-    return res.status(400).json({ error: "SIH guidelines require at least one female student in each 6-member team. Please ensure at least one member has gender set to Female." });
+  // Under SIH guidelines, check if at least one female member is present in the team
+  let hasFemale = (leadGender || current.leadGender || "").toLowerCase() === "female";
+  if (count >= 1 && (member1Gender || current.member1Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 2 && (member2Gender || current.member2Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 3 && (member3Gender || current.member3Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 4 && (member4Gender || current.member4Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 5 && (member5Gender || current.member5Gender || "").toLowerCase() === "female") hasFemale = true;
+
+  if (settings.genderDiversityRequired && count > 0 && !hasFemale) {
+    return res.status(400).json({ error: `SIH guidelines require at least one female student in each ${count + 1}-member team. Please ensure at least one member has gender set to Female.` });
   }
 
   registrations[idx] = {
@@ -1955,26 +1966,26 @@ app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
     leadName: leadName !== undefined ? leadName.trim() : current.leadName,
     leadMobile: leadMobile !== undefined ? leadMobile.trim() : current.leadMobile,
     leadGender: leadGender !== undefined ? leadGender : current.leadGender,
-    member1: member1 !== undefined ? member1.trim() : current.member1,
-    member1Gender: member1Gender !== undefined ? member1Gender : current.member1Gender,
-    member1Email: member1Email !== undefined ? member1Email.trim() : current.member1Email,
-    member1Phone: member1Phone !== undefined ? member1Phone.trim() : current.member1Phone,
-    member2: member2 !== undefined ? member2.trim() : current.member2,
-    member2Gender: member2Gender !== undefined ? member2Gender : current.member2Gender,
-    member2Email: member2Email !== undefined ? member2Email.trim() : current.member2Email,
-    member2Phone: member2Phone !== undefined ? member2Phone.trim() : current.member2Phone,
-    member3: member3 !== undefined ? member3.trim() : current.member3,
-    member3Gender: member3Gender !== undefined ? member3Gender : current.member3Gender,
-    member3Email: member3Email !== undefined ? member3Email.trim() : current.member3Email,
-    member3Phone: member3Phone !== undefined ? member3Phone.trim() : current.member3Phone,
-    member4: member4 !== undefined ? member4.trim() : current.member4,
-    member4Gender: member4Gender !== undefined ? member4Gender : current.member4Gender,
-    member4Email: member4Email !== undefined ? member4Email.trim() : current.member4Email,
-    member4Phone: member4Phone !== undefined ? member4Phone.trim() : current.member4Phone,
-    member5: member5 !== undefined ? member5.trim() : current.member5,
-    member5Gender: member5Gender !== undefined ? member5Gender : current.member5Gender,
-    member5Email: member5Email !== undefined ? member5Email.trim() : current.member5Email,
-    member5Phone: member5Phone !== undefined ? member5Phone.trim() : current.member5Phone,
+    member1: count >= 1 ? (member1 !== undefined ? member1.trim() : current.member1) : "",
+    member1Gender: count >= 1 ? (member1Gender !== undefined ? member1Gender : current.member1Gender) : "",
+    member1Email: count >= 1 ? (member1Email !== undefined ? member1Email.trim() : current.member1Email) : "",
+    member1Phone: count >= 1 ? (member1Phone !== undefined ? member1Phone.trim() : current.member1Phone) : "",
+    member2: count >= 2 ? (member2 !== undefined ? member2.trim() : current.member2) : "",
+    member2Gender: count >= 2 ? (member2Gender !== undefined ? member2Gender : current.member2Gender) : "",
+    member2Email: count >= 2 ? (member2Email !== undefined ? member2Email.trim() : current.member2Email) : "",
+    member2Phone: count >= 2 ? (member2Phone !== undefined ? member2Phone.trim() : current.member2Phone) : "",
+    member3: count >= 3 ? (member3 !== undefined ? member3.trim() : current.member3) : "",
+    member3Gender: count >= 3 ? (member3Gender !== undefined ? member3Gender : current.member3Gender) : "",
+    member3Email: count >= 3 ? (member3Email !== undefined ? member3Email.trim() : current.member3Email) : "",
+    member3Phone: count >= 3 ? (member3Phone !== undefined ? member3Phone.trim() : current.member3Phone) : "",
+    member4: count >= 4 ? (member4 !== undefined ? member4.trim() : current.member4) : "",
+    member4Gender: count >= 4 ? (member4Gender !== undefined ? member4Gender : current.member4Gender) : "",
+    member4Email: count >= 4 ? (member4Email !== undefined ? member4Email.trim() : current.member4Email) : "",
+    member4Phone: count >= 4 ? (member4Phone !== undefined ? member4Phone.trim() : current.member4Phone) : "",
+    member5: count >= 5 ? (member5 !== undefined ? member5.trim() : current.member5) : "",
+    member5Gender: count >= 5 ? (member5Gender !== undefined ? member5Gender : current.member5Gender) : "",
+    member5Email: count >= 5 ? (member5Email !== undefined ? member5Email.trim() : current.member5Email) : "",
+    member5Phone: count >= 5 ? (member5Phone !== undefined ? member5Phone.trim() : current.member5Phone) : "",
     mentorName: mentorName !== undefined ? mentorName.trim() : current.mentorName
   };
 
@@ -2148,17 +2159,15 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     signature
   } = req.body;
 
+  const settings = readSettings();
+  const count = settings.teamMembersCount ?? 5;
+
   // Validation
   if (
     !teamName ||
     !leadName ||
     !leadDepartment ||
     !leadMobile ||
-    !member1 ||
-    !member2 ||
-    !member3 ||
-    !member4 ||
-    !member5 ||
     hasFemaleMember === undefined ||
     !mentorName ||
     !problemStatementId
@@ -2166,7 +2175,13 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     return res.status(400).json({ error: "Please fill in all required fields." });
   }
 
-  const settings = readSettings();
+  // Validate only the configured number of members are provided
+  if (count >= 1 && !member1) return res.status(400).json({ error: "Member 1 Name is required." });
+  if (count >= 2 && !member2) return res.status(400).json({ error: "Member 2 Name is required." });
+  if (count >= 3 && !member3) return res.status(400).json({ error: "Member 3 Name is required." });
+  if (count >= 4 && !member4) return res.status(400).json({ error: "Member 4 Name is required." });
+  if (count >= 5 && !member5) return res.status(400).json({ error: "Member 5 Name is required." });
+
   if (settings.jwtEnabled) {
     const tokenEmail = (req as any).studentUser?.email;
     if (tokenEmail && tokenEmail.toLowerCase() !== studentEmail.trim().toLowerCase()) {
@@ -2175,16 +2190,15 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
   }
 
   // Validate that there is at least one female student in the team based on gender fields
-  const hasFemale = 
-    (leadGender || "").toLowerCase() === "female" ||
-    (member1Gender || "").toLowerCase() === "female" ||
-    (member2Gender || "").toLowerCase() === "female" ||
-    (member3Gender || "").toLowerCase() === "female" ||
-    (member4Gender || "").toLowerCase() === "female" ||
-    (member5Gender || "").toLowerCase() === "female";
+  let hasFemale = (leadGender || "").toLowerCase() === "female";
+  if (count >= 1 && (member1Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 2 && (member2Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 3 && (member3Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 4 && (member4Gender || "").toLowerCase() === "female") hasFemale = true;
+  if (count >= 5 && (member5Gender || "").toLowerCase() === "female") hasFemale = true;
 
-  if (!hasFemale) {
-    return res.status(400).json({ error: "SIH guidelines require at least one female student in each 6-member team. Please check your team roster gender fields." });
+  if (settings.genderDiversityRequired && count > 0 && !hasFemale) {
+    return res.status(400).json({ error: `SIH guidelines require at least one female student in each ${count + 1}-member team. Please check your team roster gender fields.` });
   }
 
   const registrations = readRegistrations();
@@ -2255,26 +2269,26 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     leadDepartment: leadDepartment.trim(),
     leadMobile: leadMobile.trim(),
     leadGender: leadGender || "",
-    member1: member1.trim(),
-    member1Gender: member1Gender || "",
-    member1Email: member1Email || "",
-    member1Phone: member1Phone || "",
-    member2: member2.trim(),
-    member2Gender: member2Gender || "",
-    member2Email: member2Email || "",
-    member2Phone: member2Phone || "",
-    member3: member3.trim(),
-    member3Gender: member3Gender || "",
-    member3Email: member3Email || "",
-    member3Phone: member3Phone || "",
-    member4: member4.trim(),
-    member4Gender: member4Gender || "",
-    member4Email: member4Email || "",
-    member4Phone: member4Phone || "",
-    member5: member5.trim(),
-    member5Gender: member5Gender || "",
-    member5Email: member5Email || "",
-    member5Phone: member5Phone || "",
+    member1: count >= 1 ? (member1 || "").trim() : "",
+    member1Gender: count >= 1 ? (member1Gender || "") : "",
+    member1Email: count >= 1 ? (member1Email || "") : "",
+    member1Phone: count >= 1 ? (member1Phone || "") : "",
+    member2: count >= 2 ? (member2 || "").trim() : "",
+    member2Gender: count >= 2 ? (member2Gender || "") : "",
+    member2Email: count >= 2 ? (member2Email || "") : "",
+    member2Phone: count >= 2 ? (member2Phone || "") : "",
+    member3: count >= 3 ? (member3 || "").trim() : "",
+    member3Gender: count >= 3 ? (member3Gender || "") : "",
+    member3Email: count >= 3 ? (member3Email || "") : "",
+    member3Phone: count >= 3 ? (member3Phone || "") : "",
+    member4: count >= 4 ? (member4 || "").trim() : "",
+    member4Gender: count >= 4 ? (member4Gender || "") : "",
+    member4Email: count >= 4 ? (member4Email || "") : "",
+    member4Phone: count >= 4 ? (member4Phone || "") : "",
+    member5: count >= 5 ? (member5 || "").trim() : "",
+    member5Gender: count >= 5 ? (member5Gender || "") : "",
+    member5Email: count >= 5 ? (member5Email || "") : "",
+    member5Phone: count >= 5 ? (member5Phone || "") : "",
     hasFemaleMember: !!hasFemaleMember,
     mentorName: mentorName.trim(),
     problemStatementId,
@@ -2308,6 +2322,14 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
 
     if (uniqueTeamEmails.length > 0) {
       const confirmSubject = `SIH Hackathon Registration Confirmed - Team: ${teamName}`;
+      let rosterHtml = `<strong>Team Members roster:</strong><br/>`;
+      rosterHtml += `1. ${leadName} (Leader, Mobile: ${leadMobile})<br/>`;
+      if (count >= 1 && member1) rosterHtml += `2. ${member1} (${member1Email || "No Email"})<br/>`;
+      if (count >= 2 && member2) rosterHtml += `3. ${member2} (${member2Email || "No Email"})<br/>`;
+      if (count >= 3 && member3) rosterHtml += `4. ${member3} (${member3Email || "No Email"})<br/>`;
+      if (count >= 4 && member4) rosterHtml += `5. ${member4} (${member4Email || "No Email"})<br/>`;
+      if (count >= 5 && member5) rosterHtml += `6. ${member5} (${member5Email || "No Email"})`;
+
       const confirmHtml = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
           <div style="text-align: center; margin-bottom: 24px;">
@@ -2350,13 +2372,7 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
           </div>
 
           <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 14px; border-radius: 8px; margin-bottom: 24px; font-size: 12px; color: #1e40af; line-height: 1.5;">
-            <strong>Team Members roster:</strong><br/>
-            1. ${leadName} (Leader, Mobile: ${leadMobile})<br/>
-            2. ${member1} (${member1Email || "No Email"})<br/>
-            3. ${member2} (${member2Email || "No Email"})<br/>
-            4. ${member3} (${member3Email || "No Email"})<br/>
-            5. ${member4} (${member4Email || "No Email"})<br/>
-            6. ${member5} (${member5Email || "No Email"})
+            ${rosterHtml}
           </div>
 
           <p style="font-size: 14px; color: #334155; line-height: 1.6;">You can log in to the portal at any time to view your confirmation slip, upload your project proposal PPT/abstract, or update your team profile.</p>

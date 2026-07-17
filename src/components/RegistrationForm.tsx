@@ -70,6 +70,8 @@ export default function RegistrationForm({
   const [selectedCategory, setSelectedCategory] = useState<"All" | "Software" | "Hardware">("All");
 
   const [feeSettings, setFeeSettings] = useState<{ feeEnabled: boolean; feeAmount: number; razorpayKeyId: string } | null>(null);
+  const [teamMembersCount, setTeamMembersCount] = useState<number>(5);
+  const [genderDiversityRequired, setGenderDiversityRequired] = useState<boolean>(true);
   const [paymentStatusMessage, setPaymentStatusMessage] = useState("");
 
   // Fetch public settings on mount
@@ -78,6 +80,12 @@ export default function RegistrationForm({
       .then(res => res.json())
       .then(data => {
         setFeeSettings(data);
+        if (data.teamMembersCount !== undefined) {
+          setTeamMembersCount(data.teamMembersCount);
+        }
+        if (data.genderDiversityRequired !== undefined) {
+          setGenderDiversityRequired(data.genderDiversityRequired);
+        }
       })
       .catch(err => console.error("Error loading public settings", err));
   }, []);
@@ -131,6 +139,8 @@ export default function RegistrationForm({
       }
       if (formData.hasFemaleMember === null) {
         newErrors.hasFemaleMember = "Please indicate if your team has at least one female member.";
+      } else if (genderDiversityRequired && formData.hasFemaleMember === false) {
+        newErrors.hasFemaleMember = "Gender diversity criteria is active for this event. At least one compulsory female member is required.";
       }
     }
 
@@ -152,7 +162,7 @@ export default function RegistrationForm({
     }
 
     if (currentStep === 3) {
-      for (let i = 1; i <= 5; i++) {
+      for (let i = 1; i <= teamMembersCount; i++) {
         const nameKey = `member${i}`;
         const genderKey = `member${i}Gender`;
         const emailKey = `member${i}Email`;
@@ -181,11 +191,11 @@ export default function RegistrationForm({
         }
       }
 
-      // Check for at least one female student based on entered gender fields (Team Lead + Members 1 to 5)
+      // Check for at least one female student based on entered gender fields (Team Lead + Members 1 to teamMembersCount)
       const leadGenderLower = (formData.leadGender || "").trim().toLowerCase();
       let hasFemale = leadGenderLower === "female";
 
-      for (let i = 1; i <= 5; i++) {
+      for (let i = 1; i <= teamMembersCount; i++) {
         const genderKey = `member${i}Gender`;
         const genderVal = (formData[genderKey as keyof typeof formData] as string || "").trim().toLowerCase();
         if (genderVal === "female") {
@@ -193,8 +203,8 @@ export default function RegistrationForm({
         }
       }
 
-      if (!hasFemale) {
-        newErrors.femaleRepresentation = "SIH guidelines mandate at least one female student in every 6-member team. Please check the gender field of the Team Lead or Team Members to ensure at least one female member is registered.";
+      if (genderDiversityRequired && teamMembersCount > 0 && !hasFemale) {
+        newErrors.femaleRepresentation = `SIH guidelines mandate at least one female student in every ${teamMembersCount + 1}-member team. Please check the gender field of the Team Lead or Team Members to ensure at least one female member is registered.`;
       }
     }
 
@@ -397,7 +407,7 @@ export default function RegistrationForm({
               Team Registration Portal
             </h1>
             <p className="text-indigo-100 text-sm md:text-base max-w-xl font-light leading-relaxed">
-              Register your team of 6 members to represent Sri Vasavi Engineering College in the upcoming Smart India Hackathon. Ensure all fields are filled accurately.
+              Register your team of {teamMembersCount + 1} student{teamMembersCount > 0 ? "s" : ""} to represent Sri Vasavi Engineering College in the upcoming Smart India Hackathon. Ensure all fields are filled accurately.
             </p>
           </div>
           <div className="flex flex-col sm:flex-row md:flex-col items-center gap-4 w-full md:w-auto self-stretch md:self-auto justify-between md:justify-center border-t border-white/10 md:border-t-0 pt-4 md:pt-0">
@@ -707,7 +717,11 @@ export default function RegistrationForm({
                   <div className="bg-amber-50 rounded-xl p-3 border border-amber-200 flex gap-2 text-xs text-amber-800 leading-snug">
                     <HelpCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                     <span>
-                      <strong>SIH Recommendation:</strong> Having at least one female member is highly encouraged by SIH regulations to promote gender diversity.
+                      {genderDiversityRequired ? (
+                        <span><strong>SIH Mandate:</strong> Having at least one female member is compulsory for this event to satisfy SIH regulations and promote gender diversity.</span>
+                      ) : (
+                        <span><strong>SIH Recommendation:</strong> Having at least one female member is highly encouraged by SIH regulations to promote gender diversity, but not compulsory for this specific event.</span>
+                      )}
                     </span>
                   </div>
 
@@ -874,15 +888,29 @@ export default function RegistrationForm({
                 <div>
                   <h2 className="text-xl font-bold text-slate-800 font-display flex items-center gap-2 mb-1">
                     <Users className="text-indigo-500 w-5 h-5" />
-                    Team Members Information
+                    {teamMembersCount > 0 ? "Team Members Information" : "Solo Registration Details"}
                   </h2>
                   <p className="text-sm text-slate-500">
-                    Enter the details of the other 5 team members to complete the 6-person roster.
+                    {teamMembersCount > 0 
+                      ? `Enter the details of the other ${teamMembersCount} team members to complete the ${teamMembersCount + 1}-person roster.`
+                      : "You are registering as a solo participant. No additional team members are required."}
                   </p>
                 </div>
 
                 <div className="space-y-6">
-                  {[1, 2, 3, 4, 5].map((num) => {
+                  {teamMembersCount === 0 && (
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 text-center space-y-3">
+                      <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto text-xl">
+                        ✨
+                      </div>
+                      <h3 className="font-bold text-slate-800 text-sm">Single User Participation Active</h3>
+                      <p className="text-xs text-slate-600 max-w-md mx-auto leading-relaxed">
+                        The administrator has enabled solo student participation. Since you are registered as the Team Lead, you can directly submit the registration form.
+                      </p>
+                    </div>
+                  )}
+
+                  {Array.from({ length: teamMembersCount }, (_, idx) => idx + 1).map((num) => {
                     const fieldName = `member${num}`;
                     const hasError = !!errors[fieldName];
                     return (

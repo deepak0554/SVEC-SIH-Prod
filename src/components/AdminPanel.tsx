@@ -401,6 +401,7 @@ export default function AdminPanel({
 
   // State for Settings & Fees
   const [settingsForm, setSettingsForm] = useState({
+    teamMembersCount: 5,
     feeEnabled: false,
     feeAmount: 0,
     razorpayKeyId: "",
@@ -416,6 +417,7 @@ export default function AdminPanel({
     logoUrl: "",
     portalTitle: "",
     portalCaption: "",
+    genderDiversityRequired: true,
 
     // SMS Configuration
     smsEnabled: false,
@@ -456,6 +458,7 @@ export default function AdminPanel({
       if (res.ok) {
         const data = await res.json();
         setSettingsForm({
+          teamMembersCount: data.teamMembersCount !== undefined ? data.teamMembersCount : 5,
           feeEnabled: data.feeEnabled || false,
           feeAmount: data.feeAmount || 0,
           razorpayKeyId: data.razorpayKeyId || "",
@@ -471,6 +474,7 @@ export default function AdminPanel({
           logoUrl: data.logoUrl || "",
           portalTitle: data.portalTitle || "",
           portalCaption: data.portalCaption || "",
+          genderDiversityRequired: data.genderDiversityRequired !== undefined ? data.genderDiversityRequired : true,
 
           // SMS Gateway Config
           smsEnabled: data.smsEnabled || false,
@@ -2141,6 +2145,63 @@ export default function AdminPanel({
                     <span>{settingsSuccess}</span>
                   </div>
                 )}
+
+                {/* Team Composition & Size Config */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-3">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-indigo-500" />
+                      Dynamic Team Size Settings
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      Adjust the number of additional group members allowed/required in each registered team. (Default: 5 team members + 1 lead)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <label htmlFor="team-members-count" className="text-xs font-semibold text-slate-600">
+                      Number of Team Members:
+                    </label>
+                    <input
+                      type="number"
+                      id="team-members-count"
+                      min="0"
+                      max="5"
+                      disabled={adminRole === "Student SPOC"}
+                      value={settingsForm.teamMembersCount}
+                      onChange={(e) => {
+                        const val = Math.max(0, Math.min(5, parseInt(e.target.value, 10) ?? 0));
+                        setSettingsForm(prev => ({ ...prev, teamMembersCount: val }));
+                      }}
+                      className="w-20 px-2.5 py-1.5 border border-slate-200 bg-white rounded-xl outline-none text-xs text-center focus:border-indigo-500 font-bold font-mono transition-all"
+                    />
+                    <span className="text-[11px] text-slate-500 font-medium">
+                      (Total Team Size: {settingsForm.teamMembersCount + 1} students)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Toggle Gender Diversity Criteria */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-pink-500" />
+                      Gender Diversity Criteria (Compulsory Female Member)
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      Toggle whether each team must contain at least one female student (SIH standards require a female member by default).
+                    </span>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={settingsForm.genderDiversityRequired}
+                      disabled={adminRole !== "SPOC"}
+                      onChange={(e) => setSettingsForm(prev => ({ ...prev, genderDiversityRequired: e.target.checked }))}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
+                  </label>
+                </div>
 
                 {/* Toggle Fee Requirement */}
                 <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
@@ -4646,7 +4707,7 @@ export default function AdminPanel({
                 <div className="space-y-4 pt-2">
                   <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-wider border-b border-slate-100 pb-1 text-left">Team Member Roster</h4>
                   <div className="space-y-4 text-left">
-                    {[1, 2, 3, 4, 5].map((num) => (
+                    {Array.from({ length: settingsForm.teamMembersCount || 5 }, (_, i) => i + 1).map((num) => (
                       <div key={num} className="bg-slate-50 border border-slate-150 rounded-2xl p-4 space-y-3 text-left">
                         <span className="text-[10px] font-extrabold text-indigo-600 block">Member {num} details</span>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -81,6 +81,22 @@ export default function Receipt({
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamSuccess, setTeamSuccess] = useState("");
   const [teamError, setTeamError] = useState("");
+  const [teamMembersCount, setTeamMembersCount] = useState<number>(5);
+  const [genderDiversityRequired, setGenderDiversityRequired] = useState<boolean>(true);
+
+  useEffect(() => {
+    fetch("/api/settings/public")
+      .then(res => res.json())
+      .then(data => {
+        if (data.teamMembersCount !== undefined) {
+          setTeamMembersCount(data.teamMembersCount);
+        }
+        if (data.genderDiversityRequired !== undefined) {
+          setGenderDiversityRequired(data.genderDiversityRequired);
+        }
+      })
+      .catch(err => console.error("Error loading public settings in Receipt", err));
+  }, []);
 
   const [leadName, setLeadName] = useState(registration.leadName || "");
   const [leadMobile, setLeadMobile] = useState(registration.leadMobile || "");
@@ -569,14 +585,24 @@ export default function Receipt({
                 <div className="flex justify-between items-center bg-indigo-50/50 rounded-xl p-4 border border-indigo-100">
                   <div className="text-xs">
                     <p className="font-semibold text-slate-800">Gender Diversity Criteria</p>
-                    <p className="text-[11px] text-slate-500 mt-0.5">At least one female member included in the team roster?</p>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {genderDiversityRequired 
+                        ? "At least one female member is compulsory for this event." 
+                        : "Optional for this event. Encouraged but not compulsory."}
+                    </p>
                   </div>
                   <div className={`px-3 py-1 rounded-full text-xs font-bold border ${
                     registration.hasFemaleMember
                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : "bg-amber-50 text-amber-700 border-amber-200"
+                      : genderDiversityRequired
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : "bg-slate-50 text-slate-600 border-slate-200"
                   }`}>
-                    {registration.hasFemaleMember ? "Yes (Compliant)" : "No"}
+                    {registration.hasFemaleMember 
+                      ? "Yes (Compliant)" 
+                      : genderDiversityRequired 
+                        ? "No (Non-compliant)" 
+                        : "No (Optional)"}
                   </div>
                 </div>
 
@@ -1138,7 +1164,7 @@ export default function Receipt({
                     Manage Team Roster & Details
                   </h2>
                   <p className="text-slate-500 text-xs mt-1">
-                    Update phone numbers, names, email IDs and genders of your 6-member team.
+                    Update phone numbers, names, email IDs and genders of your {teamMembersCount + 1}-member team.
                   </p>
                 </div>
                 <span className="font-mono text-xs bg-slate-100 text-slate-800 px-3 py-1 rounded-lg font-bold border border-slate-200">
@@ -1262,208 +1288,220 @@ export default function Receipt({
                 {/* Team Members Section */}
                 <div className="space-y-4">
                   <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider border-b border-slate-100 pb-2">
-                    Team Members (5 additional students required)
+                    {teamMembersCount > 0 
+                      ? `Team Members (${teamMembersCount} additional students required)` 
+                      : "Solo Registration (No additional members required)"}
                   </h3>
 
                   {/* Member 1 */}
-                  <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
-                    <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 1</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={member1}
-                        onChange={(e) => setMember1(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
-                        required
-                      />
-                      <input
-                        type="email"
-                        placeholder="College Email ID"
-                        value={member1Email}
-                        onChange={(e) => setMember1Email(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <input
-                        type="text"
-                        placeholder="Phone Number"
-                        value={member1Phone}
-                        onChange={(e) => setMember1Phone(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <select
-                        value={member1Gender}
-                        onChange={(e) => setMember1Gender(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                        required
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
+                  {teamMembersCount >= 1 && (
+                    <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
+                      <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 1</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={member1}
+                          onChange={(e) => setMember1(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
+                          required
+                        />
+                        <input
+                          type="email"
+                          placeholder="College Email ID"
+                          value={member1Email}
+                          onChange={(e) => setMember1Email(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <input
+                          type="text"
+                          placeholder="Phone Number"
+                          value={member1Phone}
+                          onChange={(e) => setMember1Phone(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <select
+                          value={member1Gender}
+                          onChange={(e) => setMember1Gender(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                          required
+                        >
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Member 2 */}
-                  <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
-                    <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 2</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={member2}
-                        onChange={(e) => setMember2(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
-                        required
-                      />
-                      <input
-                        type="email"
-                        placeholder="College Email ID"
-                        value={member2Email}
-                        onChange={(e) => setMember2Email(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <input
-                        type="text"
-                        placeholder="Phone Number"
-                        value={member2Phone}
-                        onChange={(e) => setMember2Phone(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <select
-                        value={member2Gender}
-                        onChange={(e) => setMember2Gender(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                        required
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
+                  {teamMembersCount >= 2 && (
+                    <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
+                      <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 2</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={member2}
+                          onChange={(e) => setMember2(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
+                          required
+                        />
+                        <input
+                          type="email"
+                          placeholder="College Email ID"
+                          value={member2Email}
+                          onChange={(e) => setMember2Email(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <input
+                          type="text"
+                          placeholder="Phone Number"
+                          value={member2Phone}
+                          onChange={(e) => setMember2Phone(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <select
+                          value={member2Gender}
+                          onChange={(e) => setMember2Gender(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                          required
+                        >
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Member 3 */}
-                  <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
-                    <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 3</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={member3}
-                        onChange={(e) => setMember3(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
-                        required
-                      />
-                      <input
-                        type="email"
-                        placeholder="College Email ID"
-                        value={member3Email}
-                        onChange={(e) => setMember3Email(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <input
-                        type="text"
-                        placeholder="Phone Number"
-                        value={member3Phone}
-                        onChange={(e) => setMember3Phone(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <select
-                        value={member3Gender}
-                        onChange={(e) => setMember3Gender(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                        required
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
+                  {teamMembersCount >= 3 && (
+                    <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
+                      <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 3</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={member3}
+                          onChange={(e) => setMember3(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
+                          required
+                        />
+                        <input
+                          type="email"
+                          placeholder="College Email ID"
+                          value={member3Email}
+                          onChange={(e) => setMember3Email(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <input
+                          type="text"
+                          placeholder="Phone Number"
+                          value={member3Phone}
+                          onChange={(e) => setMember3Phone(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <select
+                          value={member3Gender}
+                          onChange={(e) => setMember3Gender(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                          required
+                        >
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Member 4 */}
-                  <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
-                    <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 4</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={member4}
-                        onChange={(e) => setMember4(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
-                        required
-                      />
-                      <input
-                        type="email"
-                        placeholder="College Email ID"
-                        value={member4Email}
-                        onChange={(e) => setMember4Email(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <input
-                        type="text"
-                        placeholder="Phone Number"
-                        value={member4Phone}
-                        onChange={(e) => setMember4Phone(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <select
-                        value={member4Gender}
-                        onChange={(e) => setMember4Gender(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                        required
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
+                  {teamMembersCount >= 4 && (
+                    <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
+                      <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 4</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={member4}
+                          onChange={(e) => setMember4(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
+                          required
+                        />
+                        <input
+                          type="email"
+                          placeholder="College Email ID"
+                          value={member4Email}
+                          onChange={(e) => setMember4Email(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <input
+                          type="text"
+                          placeholder="Phone Number"
+                          value={member4Phone}
+                          onChange={(e) => setMember4Phone(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <select
+                          value={member4Gender}
+                          onChange={(e) => setMember4Gender(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                          required
+                        >
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* Member 5 */}
-                  <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
-                    <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 5</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                      <input
-                        type="text"
-                        placeholder="Name"
-                        value={member5}
-                        onChange={(e) => setMember5(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
-                        required
-                      />
-                      <input
-                        type="email"
-                        placeholder="College Email ID"
-                        value={member5Email}
-                        onChange={(e) => setMember5Email(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <input
-                        type="text"
-                        placeholder="Phone Number"
-                        value={member5Phone}
-                        onChange={(e) => setMember5Phone(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
-                        required
-                      />
-                      <select
-                        value={member5Gender}
-                        onChange={(e) => setMember5Gender(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                        required
-                      >
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
+                  {teamMembersCount >= 5 && (
+                    <div className="bg-white border border-slate-100 rounded-xl p-4 hover:border-slate-200 transition-all space-y-3">
+                      <span className="text-[11px] font-bold text-slate-600 uppercase block">Team Member 5</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <input
+                          type="text"
+                          placeholder="Name"
+                          value={member5}
+                          onChange={(e) => setMember5(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500"
+                          required
+                        />
+                        <input
+                          type="email"
+                          placeholder="College Email ID"
+                          value={member5Email}
+                          onChange={(e) => setMember5Email(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <input
+                          type="text"
+                          placeholder="Phone Number"
+                          value={member5Phone}
+                          onChange={(e) => setMember5Phone(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
+                          required
+                        />
+                        <select
+                          value={member5Gender}
+                          onChange={(e) => setMember5Gender(e.target.value)}
+                          className="px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                          required
+                        >
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
+                        </select>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Mentor Section */}

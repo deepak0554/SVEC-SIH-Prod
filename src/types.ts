@@ -76,6 +76,8 @@ export interface FeeConfig {
   logoUrl?: string;
   portalTitle?: string;
   portalCaption?: string;
+  teamMembersCount?: number;
+  genderDiversityRequired?: boolean;
 
   // SMS Gateway config
   smsEnabled?: boolean;
