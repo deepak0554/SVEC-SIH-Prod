@@ -39,7 +39,7 @@ export interface Registration {
   problemStatementId: string;
   submittedAt: string;
   studentEmail?: string;
-  paymentStatus?: "free" | "paid";
+  paymentStatus?: "free" | "paid" | "pending";
   paymentId?: string;
   orderId?: string;
   amountPaid?: number;
@@ -48,6 +48,19 @@ export interface Registration {
   pptFileName?: string;
   pptBase64?: string;
   proposalStatus?: "saved" | "submitted";
+  assignedEvaluator?: string;
+  evaluatorScores?: Record<string, number>;
+  evaluationNotes?: string;
+  evaluationStatus?: "pending" | "completed";
+  isFinalSelected?: boolean;
+  selectionNotes?: string;
+}
+
+export interface EvaluationCriterion {
+  id: string;
+  name: string;
+  maxScore: number;
+  description?: string;
 }
 
 export interface Student {
@@ -103,6 +116,17 @@ export interface FeeConfig {
   whatsappCustomMethod?: "GET" | "POST";
   whatsappCustomHeaders?: string;
   whatsappCustomPayload?: string;
+
+  // External DB Configuration
+  dbEnabled?: boolean;
+  dbType?: "none" | "mongodb" | "sql";
+  dbHost?: string;
+  dbPort?: number;
+  dbName?: string;
+  dbUsername?: string;
+  dbPassword?: string;
+  dbCollectionOrTable?: string;
+  dbStatus?: string;
 }
 
 
@@ -112,6 +136,10 @@ export interface Stats {
   femaleCount: number;
   hardwareCount: number;
   softwareCount: number;
+  totalMaleStudents?: number;
+  totalFemaleStudents?: number;
+  totalMaleMembers?: number;
+  totalFemaleMembers?: number;
 }
 
 export interface Sponsor {

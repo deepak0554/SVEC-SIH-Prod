@@ -6,6 +6,7 @@ import {
   Edit2,
   Trash2,
   Download,
+  Printer,
   Search,
   Filter,
   CheckCircle,
@@ -37,11 +38,14 @@ import {
   Check,
   Shield,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Database
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
 import PageMenuCustomizer from "./PageMenuCustomizer";
+import SvecLogo from "./SvecLogo";
+import ConsentLetterModal from "./ConsentLetterModal";
 
 interface AdminPanelProps {
   onBackToPortal: () => void;
@@ -56,10 +60,10 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [adminRole, setAdminRole] = useState<"SPOC" | "Student SPOC" | null>(() => {
+  const [adminRole, setAdminRole] = useState<"SPOC" | "Student SPOC" | "Evaluator" | null>(() => {
     return (sessionStorage.getItem("svec_sih_admin_role") as any) || null;
   });
-  const [selectedRole, setSelectedRole] = useState<"SPOC" | "Student SPOC">("SPOC");
+  const [selectedRole, setSelectedRole] = useState<"SPOC" | "Student SPOC" | "Evaluator">("SPOC");
   const [passcode, setPasscode] = useState(() => {
     return sessionStorage.getItem("svec_sih_admin_token") || "";
   });
@@ -67,7 +71,7 @@ export default function AdminPanel({
     return !!sessionStorage.getItem("svec_sih_admin_token");
   });
   const [loginError, setLoginError] = useState("");
-  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast">("registrations");
+  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast" | "evaluation" | "evaluation-selection">("registrations");
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -90,11 +94,11 @@ export default function AdminPanel({
   const [newAdminPassword, setNewAdminPassword] = useState("");
 
   // Admins management state
-  const [adminsList, setAdminsList] = useState<{ username: string; role: "SPOC" | "Student SPOC" }[]>([]);
+  const [adminsList, setAdminsList] = useState<{ username: string; role: "SPOC" | "Student SPOC" | "Evaluator" }[]>([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [newAdminUser, setNewAdminUser] = useState("");
   const [newAdminPass, setNewAdminPass] = useState("");
-  const [newAdminRole, setNewAdminRole] = useState<"SPOC" | "Student SPOC">("Student SPOC");
+  const [newAdminRole, setNewAdminRole] = useState<"SPOC" | "Student SPOC" | "Evaluator">("Student SPOC");
   const [adminAddError, setAdminAddError] = useState("");
   const [adminAddSuccess, setAdminAddSuccess] = useState("");
 
@@ -258,6 +262,26 @@ export default function AdminPanel({
     }
   };
 
+  const [evaluationCriteria, setEvaluationCriteria] = useState<any[]>([]);
+  const [criteriaLoading, setCriteriaLoading] = useState(false);
+
+  const fetchCriteria = async () => {
+    setCriteriaLoading(true);
+    try {
+      const res = await fetch("/api/admin/evaluation-criteria", {
+        headers: { "X-Admin-Passcode": passcode }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setEvaluationCriteria(data);
+      }
+    } catch (err) {
+      console.error("Error fetching criteria:", err);
+    } finally {
+      setCriteriaLoading(false);
+    }
+  };
+
   const fetchAdminsList = async () => {
     setAdminsLoading(true);
     try {
@@ -276,10 +300,13 @@ export default function AdminPanel({
   };
 
   useEffect(() => {
-    if (isLoggedIn && activeTab === "admins" && adminRole === "SPOC") {
-      fetchAdminsList();
+    if (isLoggedIn) {
+      fetchCriteria();
+      if (adminRole === "SPOC" || adminRole === "Student SPOC") {
+        fetchAdminsList();
+      }
     }
-  }, [isLoggedIn, activeTab, adminRole]);
+  }, [isLoggedIn, adminRole]);
 
   const handleCreateAdmin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -442,11 +469,27 @@ export default function AdminPanel({
     whatsappCustomUrl: "",
     whatsappCustomMethod: "POST" as "GET" | "POST",
     whatsappCustomHeaders: "",
-    whatsappCustomPayload: ""
+    whatsappCustomPayload: "",
+
+    // External DB Configuration
+    dbEnabled: false,
+    dbType: "none" as "none" | "mongodb" | "sql",
+    dbHost: "",
+    dbPort: "" as any,
+    dbName: "",
+    dbUsername: "",
+    dbPassword: "",
+    dbCollectionOrTable: "registrations",
+    dbStatus: "Not Connected"
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsSuccess, setSettingsSuccess] = useState("");
+
+  // DB test state
+  const [dbTesting, setDbTesting] = useState(false);
+  const [dbTestMessage, setDbTestMessage] = useState("");
+  const [dbTestError, setDbTestError] = useState("");
 
   const fetchSettings = async () => {
     setSettingsLoading(true);
@@ -499,7 +542,18 @@ export default function AdminPanel({
           whatsappCustomUrl: data.whatsappCustomUrl || "",
           whatsappCustomMethod: data.whatsappCustomMethod || "POST",
           whatsappCustomHeaders: data.whatsappCustomHeaders || "",
-          whatsappCustomPayload: data.whatsappCustomPayload || ""
+          whatsappCustomPayload: data.whatsappCustomPayload || "",
+
+          // External DB Config
+          dbEnabled: data.dbEnabled || false,
+          dbType: data.dbType || "none",
+          dbHost: data.dbHost || "",
+          dbPort: data.dbPort !== undefined ? data.dbPort : "",
+          dbName: data.dbName || "",
+          dbUsername: data.dbUsername || "",
+          dbPassword: data.dbPassword || "",
+          dbCollectionOrTable: data.dbCollectionOrTable || "registrations",
+          dbStatus: data.dbStatus || "Not Connected"
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -593,6 +647,52 @@ export default function AdminPanel({
     }
   };
 
+  const handleTestDBConnection = async () => {
+    setDbTesting(true);
+    setDbTestMessage("");
+    setDbTestError("");
+    try {
+      const res = await fetch("/api/settings/test-db", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({
+          dbType: settingsForm.dbType,
+          dbHost: settingsForm.dbHost,
+          dbPort: settingsForm.dbPort,
+          dbName: settingsForm.dbName,
+          dbUsername: settingsForm.dbUsername,
+          dbPassword: settingsForm.dbPassword,
+          dbCollectionOrTable: settingsForm.dbCollectionOrTable
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDbTestMessage(data.message);
+        setSettingsForm(prev => ({
+          ...prev,
+          dbStatus: `Connected Successfully (${new Date().toLocaleTimeString()})`
+        }));
+      } else {
+        setDbTestError(data.error || "Database connection test failed.");
+        setSettingsForm(prev => ({
+          ...prev,
+          dbStatus: `Connection Failed: ${data.error || "Unknown Error"}`
+        }));
+      }
+    } catch (err: any) {
+      setDbTestError("Network error. Could not reach database test endpoint.");
+      setSettingsForm(prev => ({
+        ...prev,
+        dbStatus: `Connection Failed: Network Error`
+      }));
+    } finally {
+      setDbTesting(false);
+    }
+  };
+
   // State for registrations
   const [registrations, setRegistrations] = useState<Registration[]>([]);
   const [regSearchTerm, setRegSearchTerm] = useState("");
@@ -644,6 +744,32 @@ export default function AdminPanel({
   const [selectedStudentForReset, setSelectedStudentForReset] = useState<string | null>(null);
   const [newStudentPassword, setNewStudentPassword] = useState("");
 
+  // Evaluation Workflow States
+  const [activeEvalTeam, setActiveEvalTeam] = useState<Registration | null>(null);
+  const [activeScores, setActiveScores] = useState<{[key: string]: number}>({});
+  const [activeNotes, setActiveNotes] = useState("");
+  const [evaluationError, setEvaluationError] = useState("");
+  const [evaluationSuccess, setEvaluationSuccess] = useState("");
+  const [showPrintModal, setShowPrintModal] = useState(false);
+
+  // Criteria Editing States (for Super Admin management)
+  const [newCriterionName, setNewCriterionName] = useState("");
+  const [newCriterionDesc, setNewCriterionDesc] = useState("");
+  const [newCriterionMaxScore, setNewCriterionMaxScore] = useState(10);
+
+  const [editingCriterionId, setEditingCriterionId] = useState<string | null>(null);
+  const [editingCriterionName, setEditingCriterionName] = useState("");
+  const [editingCriterionDesc, setEditingCriterionDesc] = useState("");
+  const [editingCriterionMaxScore, setEditingCriterionMaxScore] = useState(10);
+
+  const [deletingCriterionId, setDeletingCriterionId] = useState<string | null>(null);
+
+  const [selectingTeamId, setSelectingTeamId] = useState<string | null>(null);
+  const [selectionFeedbackNotes, setSelectionFeedbackNotes] = useState("");
+
+  const [evaluationSelectionFilter, setEvaluationSelectionFilter] = useState<"all" | "selected">("all");
+  const [selectedRegForLetter, setSelectedRegForLetter] = useState<Registration | null>(null);
+
   const fetchStudents = async () => {
     setStudentsLoading(true);
     setStudentsError("");
@@ -665,7 +791,7 @@ export default function AdminPanel({
   };
 
   useEffect(() => {
-    if (isLoggedIn && activeTab === "students") {
+    if (isLoggedIn && (activeTab === "students" || activeTab === "stats")) {
       fetchStudents();
     }
   }, [isLoggedIn, activeTab]);
@@ -748,11 +874,71 @@ export default function AdminPanel({
     }
   };
 
+  const handleAssignEvaluator = async (registrationId: string, evaluatorUsername: string) => {
+    try {
+      const res = await fetch(`/api/admin/registrations/${registrationId}/assign-evaluator`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({ evaluatorUsername })
+      });
+      if (res.ok) {
+        fetchRegistrations();
+      }
+    } catch (err) {
+      console.error("Failed to assign evaluator", err);
+    }
+  };
+
+  const handleFinalizeSelection = async (registrationId: string, isSelected: boolean, selectionNotes: string) => {
+    try {
+      const res = await fetch(`/api/admin/registrations/${registrationId}/finalize-selection`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({ isSelected, selectionNotes })
+      });
+      if (res.ok) {
+        fetchRegistrations();
+      }
+    } catch (err) {
+      console.error("Failed to finalize selection", err);
+    }
+  };
+
+  const handleUpdateCriteria = async (updatedCriteria: any[]) => {
+    try {
+      const res = await fetch("/api/admin/evaluation-criteria", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({ criteria: updatedCriteria })
+      });
+      if (res.ok) {
+        fetchCriteria();
+      }
+    } catch (err) {
+      console.error("Failed to update criteria", err);
+    }
+  };
+
   useEffect(() => {
     if (isLoggedIn) {
       fetchRegistrations();
     }
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (adminRole === "Evaluator") {
+      setActiveTab("evaluation");
+    }
+  }, [adminRole]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1173,6 +1359,38 @@ export default function AdminPanel({
   // Calculate stats
   const uniqueDepartments = Array.from(new Set(registrations.map(r => r.leadDepartment.trim())));
   
+  // Calculate team members gender stats
+  let calculatedMaleMembers = 0;
+  let calculatedFemaleMembers = 0;
+  registrations.forEach(r => {
+    if (r.leadGender?.toLowerCase() === "male") calculatedMaleMembers++;
+    else if (r.leadGender?.toLowerCase() === "female") calculatedFemaleMembers++;
+
+    if (r.member1?.trim()) {
+      if (r.member1Gender?.toLowerCase() === "male") calculatedMaleMembers++;
+      else if (r.member1Gender?.toLowerCase() === "female") calculatedFemaleMembers++;
+    }
+    if (r.member2?.trim()) {
+      if (r.member2Gender?.toLowerCase() === "male") calculatedMaleMembers++;
+      else if (r.member2Gender?.toLowerCase() === "female") calculatedFemaleMembers++;
+    }
+    if (r.member3?.trim()) {
+      if (r.member3Gender?.toLowerCase() === "male") calculatedMaleMembers++;
+      else if (r.member3Gender?.toLowerCase() === "female") calculatedFemaleMembers++;
+    }
+    if (r.member4?.trim()) {
+      if (r.member4Gender?.toLowerCase() === "male") calculatedMaleMembers++;
+      else if (r.member4Gender?.toLowerCase() === "female") calculatedFemaleMembers++;
+    }
+    if (r.member5?.trim()) {
+      if (r.member5Gender?.toLowerCase() === "male") calculatedMaleMembers++;
+      else if (r.member5Gender?.toLowerCase() === "female") calculatedFemaleMembers++;
+    }
+  });
+
+  const calculatedMaleStudents = students.filter(s => s.gender?.toLowerCase() === "male").length;
+  const calculatedFemaleStudents = students.filter(s => s.gender?.toLowerCase() === "female").length;
+
   const stats: Stats = {
     totalTeams: registrations.length,
     departmentCounts: registrations.reduce((acc, r) => {
@@ -1188,7 +1406,11 @@ export default function AdminPanel({
     softwareCount: registrations.filter(r => {
       const ps = problemStatements.find(p => p.id === r.problemStatementId);
       return ps?.category === "Software";
-    }).length
+    }).length,
+    totalMaleStudents: calculatedMaleStudents,
+    totalFemaleStudents: calculatedFemaleStudents,
+    totalMaleMembers: calculatedMaleMembers,
+    totalFemaleMembers: calculatedFemaleMembers
   };
 
   if (!isLoggedIn) {
@@ -1224,6 +1446,7 @@ export default function AdminPanel({
               >
                 <option value="SPOC">SPOC (Super Admin)</option>
                 <option value="Student SPOC">Student SPOC</option>
+                <option value="Evaluator">Evaluator</option>
               </select>
             </div>
 
@@ -1287,6 +1510,7 @@ export default function AdminPanel({
     );
   }
 
+
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       
@@ -1345,96 +1569,119 @@ export default function AdminPanel({
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-2">
         {/* Tab Selection */}
         <div className="flex flex-wrap gap-1 bg-slate-200/60 p-1.5 rounded-xl self-start md:self-center">
-          <button
-            onClick={() => setActiveTab("registrations")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "registrations"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            Team Submissions ({registrations.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("statements")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "statements"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            Problem Statements ({problemStatements.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("stats")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "stats"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-          >
-            Analytics & Metrics
-          </button>
-          {adminRole !== "Student SPOC" && (
+          {adminRole === "Evaluator" ? (
             <button
-              onClick={() => setActiveTab("settings")}
+              onClick={() => setActiveTab("evaluation")}
               className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === "settings"
+                activeTab === "evaluation"
                   ? "bg-white text-indigo-600 shadow-sm"
                   : "text-slate-600 hover:text-slate-900"
               }`}
             >
-              Settings
+              My Evaluation Workspace
             </button>
-          )}
-          <button
-            onClick={() => setActiveTab("broadcast")}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              activeTab === "broadcast"
-                ? "bg-white text-indigo-600 shadow-sm"
-                : "text-slate-600 hover:text-slate-900"
-            }`}
-            id="admin-tab-broadcast"
-          >
-            Broadcast
-          </button>
-          {adminRole === "SPOC" && (
-            <button
-              onClick={() => setActiveTab("customizer")}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === "customizer"
-                  ? "bg-white text-indigo-600 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-              id="admin-tab-customizer"
-            >
-              Landing Page & Menus
-            </button>
-          )}
-
-          {/* User & Security Grouped Dropdown */}
-          <div className="relative inline-block">
-            <button
-              onClick={() => setIsUserDropdownOpen(prev => !prev)}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTab === "students" || activeTab === "admins" || activeTab === "security"
-                  ? "bg-white text-indigo-600 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              <span>User & Security</span>
-              {isUserDropdownOpen ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
-            </button>
-
-            {isUserDropdownOpen && (
-              <>
-                <div 
-                  className="fixed inset-0 z-40" 
-                  onClick={() => setIsUserDropdownOpen(false)}
-                />
-                <div
-                  className="absolute right-0 mt-1.5 w-52 bg-white rounded-xl border border-slate-200 shadow-xl py-1 z-50 overflow-hidden"
+          ) : (
+            <>
+              <button
+                onClick={() => setActiveTab("registrations")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "registrations"
+                    ? "bg-white text-indigo-600 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Team Submissions ({registrations.length})
+              </button>
+              <button
+                onClick={() => setActiveTab("statements")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "statements"
+                    ? "bg-white text-indigo-600 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Problem Statements ({problemStatements.length})
+              </button>
+              <button
+                onClick={() => setActiveTab("stats")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "stats"
+                    ? "bg-white text-indigo-600 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Analytics & Metrics
+              </button>
+              <button
+                onClick={() => setActiveTab("evaluation-selection")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "evaluation-selection"
+                    ? "bg-white text-indigo-600 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Evaluation & Selection
+              </button>
+              {adminRole !== "Student SPOC" && (
+                <button
+                  onClick={() => setActiveTab("settings")}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === "settings"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
                 >
+                  Settings
+                </button>
+              )}
+              <button
+                onClick={() => setActiveTab("broadcast")}
+                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  activeTab === "broadcast"
+                    ? "bg-white text-indigo-600 shadow-sm"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+                id="admin-tab-broadcast"
+              >
+                Broadcast
+              </button>
+              {adminRole === "SPOC" && (
+                <button
+                  onClick={() => setActiveTab("customizer")}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === "customizer"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  id="admin-tab-customizer"
+                >
+                  Landing Page & Menus
+                </button>
+              )}
+
+              {/* User & Security Grouped Dropdown */}
+              <div className="relative inline-block">
+                <button
+                  onClick={() => setIsUserDropdownOpen(prev => !prev)}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    activeTab === "students" || activeTab === "admins" || activeTab === "security"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <span>User & Security</span>
+                  {isUserDropdownOpen ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+                </button>
+
+                {isUserDropdownOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setIsUserDropdownOpen(false)}
+                    />
+                    <div
+                      className="absolute right-0 mt-1.5 w-52 bg-white rounded-xl border border-slate-200 shadow-xl py-1 z-50 overflow-hidden"
+                    >
                   <button
                     onClick={() => {
                       setActiveTab("students");
@@ -1485,6 +1732,8 @@ export default function AdminPanel({
               </>
             )}
           </div>
+          </>
+          )}
         </div>
       </div>
 
@@ -1577,7 +1826,8 @@ export default function AdminPanel({
                       <th className="py-4 px-6">Roster Details</th>
                       <th className="py-4 px-6">Mentor</th>
                       <th className="py-4 px-6">Female Ratio</th>
-                      <th className="py-4 px-6">Payment</th>
+                      <th className="py-4 px-6 font-semibold text-slate-800">Payment</th>
+                      <th className="py-4 px-6 font-semibold text-slate-800">Assigned Evaluator</th>
                       <th className="py-4 px-6 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -1679,6 +1929,32 @@ export default function AdminPanel({
                               <CreditCard className="w-3.5 h-3.5" />
                               <span className="capitalize">{reg.paymentStatus || "Free"}</span>
                             </button>
+                          </td>
+                          <td className="py-4 px-6 whitespace-nowrap">
+                            <div className="flex flex-col gap-1">
+                              <select
+                                value={reg.assignedEvaluator || ""}
+                                onChange={(e) => handleAssignEvaluator(reg.id, e.target.value)}
+                                className="px-2 py-1 border border-slate-200 bg-white rounded-lg text-[11px] outline-none focus:border-indigo-500 cursor-pointer font-medium max-w-[150px]"
+                              >
+                                <option value="">-- Unassigned --</option>
+                                {adminsList
+                                  .filter(a => a.role === "Evaluator")
+                                  .map(a => (
+                                    <option key={a.username} value={a.username}>{a.username}</option>
+                                  ))
+                                }
+                              </select>
+                              {reg.evaluationStatus === "completed" ? (
+                                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 mt-1 self-start">
+                                  Scored: {Object.values(reg.evaluatorScores || {}).reduce((a: number, b: any) => a + (b as number), 0)} pts
+                                </span>
+                              ) : reg.assignedEvaluator ? (
+                                <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 mt-1 self-start">
+                                  Pending score
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="py-4 px-6 text-right whitespace-nowrap">
                             <div className="flex items-center justify-end gap-2">
@@ -2043,6 +2319,117 @@ export default function AdminPanel({
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Hardware Track</span>
                 <span className="text-2xl font-extrabold text-slate-800 font-display">{stats.hardwareCount}</span>
                 <span className="text-[10px] text-slate-400 block mt-0.5">MAPPED TO HARDWARE PS</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Gender Demographics Section */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Student Accounts Demographics */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+              <h3 className="text-sm font-bold text-slate-800 font-display mb-4 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-indigo-500" />
+                  Registered Student Accounts
+                </span>
+                <span className="text-xs text-slate-400 font-normal">
+                  Total: {students.length}
+                </span>
+              </h3>
+              
+              {studentsLoading ? (
+                <div className="flex justify-center py-6">
+                  <span className="w-6 h-6 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></span>
+                </div>
+              ) : (
+                <div className="space-y-5">
+                  {/* Cards inside the block */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="p-3.5 bg-sky-50/50 border border-sky-100 rounded-xl">
+                      <span className="text-[10px] font-bold text-sky-700 uppercase tracking-wider block mb-1">Male Students</span>
+                      <span className="text-xl font-extrabold text-sky-900">{stats.totalMaleStudents || 0}</span>
+                    </div>
+                    <div className="p-3.5 bg-rose-50/50 border border-rose-100 rounded-xl">
+                      <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block mb-1">Female Students</span>
+                      <span className="text-xl font-extrabold text-rose-900">{stats.totalFemaleStudents || 0}</span>
+                    </div>
+                  </div>
+
+                  {/* Visual Progress/Ratio Bar */}
+                  {students.length > 0 ? (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs text-slate-500 font-medium">
+                        <span>Male: {Math.round(((stats.totalMaleStudents || 0) / (students.length || 1)) * 100)}%</span>
+                        <span>Female: {Math.round(((stats.totalFemaleStudents || 0) / (students.length || 1)) * 100)}%</span>
+                      </div>
+                      <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
+                        <div 
+                          className="h-full bg-sky-500 transition-all duration-500" 
+                          style={{ width: `${((stats.totalMaleStudents || 0) / (students.length || 1)) * 100}%` }}
+                          title={`Male: ${stats.totalMaleStudents}`}
+                        ></div>
+                        <div 
+                          className="h-full bg-rose-500 transition-all duration-500" 
+                          style={{ width: `${((stats.totalFemaleStudents || 0) / (students.length || 1)) * 100}%` }}
+                          title={`Female: ${stats.totalFemaleStudents}`}
+                        ></div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-400 text-center py-2">No student logins registered yet</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Participating Members Demographics */}
+            <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+              <h3 className="text-sm font-bold text-slate-800 font-display mb-4 flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <PieChart className="w-4 h-4 text-violet-500" />
+                  Team Roster Demographics
+                </span>
+                <span className="text-xs text-slate-400 font-normal">
+                  Total Active Members: {(stats.totalMaleMembers || 0) + (stats.totalFemaleMembers || 0)}
+                </span>
+              </h3>
+
+              <div className="space-y-5">
+                {/* Cards inside the block */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="p-3.5 bg-blue-50/50 border border-blue-100 rounded-xl">
+                    <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block mb-1">Male Members</span>
+                    <span className="text-xl font-extrabold text-blue-900">{stats.totalMaleMembers || 0}</span>
+                  </div>
+                  <div className="p-3.5 bg-fuchsia-50/50 border border-fuchsia-100 rounded-xl">
+                    <span className="text-[10px] font-bold text-fuchsia-700 uppercase tracking-wider block mb-1">Female Members</span>
+                    <span className="text-xl font-extrabold text-fuchsia-900">{stats.totalFemaleMembers || 0}</span>
+                  </div>
+                </div>
+
+                {/* Visual Progress/Ratio Bar */}
+                {((stats.totalMaleMembers || 0) + (stats.totalFemaleMembers || 0)) > 0 ? (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-xs text-slate-500 font-medium">
+                      <span>Male: {Math.round(((stats.totalMaleMembers || 0) / (((stats.totalMaleMembers || 0) + (stats.totalFemaleMembers || 0)) || 1)) * 100)}%</span>
+                      <span>Female: {Math.round(((stats.totalFemaleMembers || 0) / (((stats.totalMaleMembers || 0) + (stats.totalFemaleMembers || 0)) || 1)) * 100)}%</span>
+                    </div>
+                    <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
+                      <div 
+                        className="h-full bg-blue-500 transition-all duration-500" 
+                        style={{ width: `${((stats.totalMaleMembers || 0) / (((stats.totalMaleMembers || 0) + (stats.totalFemaleMembers || 0)) || 1)) * 100}%` }}
+                        title={`Male: ${stats.totalMaleMembers}`}
+                      ></div>
+                      <div 
+                        className="h-full bg-fuchsia-500 transition-all duration-500" 
+                        style={{ width: `${((stats.totalFemaleMembers || 0) / (((stats.totalMaleMembers || 0) + (stats.totalFemaleMembers || 0)) || 1)) * 100}%` }}
+                        title={`Female: ${stats.totalFemaleMembers}`}
+                      ></div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-slate-400 text-center py-2">No team registration roster available yet</p>
+                )}
               </div>
             </div>
           </div>
@@ -2724,6 +3111,192 @@ export default function AdminPanel({
                   )}
                 </AnimatePresence>
 
+                {/* External Database Sync Configuration (MongoDB / SQL) */}
+                <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-1">
+                        <Database className="w-4 h-4 text-indigo-500" />
+                        External Database Synchronization
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Automatically sync registrations to your external MongoDB or PostgreSQL SQL database in real-time, auto-installing all required schemas.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-slate-500">Sync Enabled</span>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.dbEnabled}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, dbEnabled: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {settingsForm.dbEnabled && (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Database Type</label>
+                          <select
+                            value={settingsForm.dbType}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, dbType: e.target.value as any }))}
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all bg-white font-medium text-slate-700"
+                          >
+                            <option value="none">-- Select DB Engine --</option>
+                            <option value="mongodb">MongoDB (NoSQL Document Store)</option>
+                            <option value="sql">SQL (PostgreSQL Relational DB)</option>
+                          </select>
+                        </div>
+
+                        <div className="sm:col-span-2 space-y-1.5">
+                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                            {settingsForm.dbType === "mongodb" ? "MongoDB Connection URL / Server Host" : "SQL Server Host Address"}
+                          </label>
+                          <input
+                            type="text"
+                            value={settingsForm.dbHost}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, dbHost: e.target.value }))}
+                            placeholder={settingsForm.dbType === "mongodb" ? "e.g. localhost or mongodb+srv://cluster.mongodb.net" : "e.g. pg-instance-svec.sih.gcp.com"}
+                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                            required={settingsForm.dbEnabled && settingsForm.dbType !== "none"}
+                          />
+                        </div>
+                      </div>
+
+                      {settingsForm.dbType !== "none" && (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Port</label>
+                              <input
+                                type="text"
+                                value={settingsForm.dbPort}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, dbPort: e.target.value }))}
+                                placeholder={settingsForm.dbType === "mongodb" ? "27017" : "5432"}
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Database Name</label>
+                              <input
+                                type="text"
+                                value={settingsForm.dbName}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, dbName: e.target.value }))}
+                                placeholder="e.g. svec_sih_db"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                                required={settingsForm.dbEnabled}
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                {settingsForm.dbType === "mongodb" ? "Collection Name" : "Table Name"}
+                              </label>
+                              <input
+                                type="text"
+                                value={settingsForm.dbCollectionOrTable}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, dbCollectionOrTable: e.target.value }))}
+                                placeholder="registrations"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                                required={settingsForm.dbEnabled}
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">DB Status</label>
+                              <div className={`w-full px-4 py-2.5 rounded-xl text-xs font-bold border flex items-center gap-1.5 break-words ${
+                                settingsForm.dbStatus?.includes("Successfully")
+                                  ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                                  : settingsForm.dbStatus?.includes("Failed")
+                                  ? "bg-rose-50 text-rose-700 border-rose-100 animate-pulse"
+                                  : "bg-slate-50 text-slate-600 border-slate-100"
+                              }`}>
+                                <span className={`w-2 h-2 rounded-full ${
+                                  settingsForm.dbStatus?.includes("Successfully")
+                                    ? "bg-emerald-500 animate-ping"
+                                    : settingsForm.dbStatus?.includes("Failed")
+                                    ? "bg-rose-500"
+                                    : "bg-slate-400"
+                                }`}></span>
+                                <span className="truncate max-w-full">{settingsForm.dbStatus || "Not Connected"}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">DB Username (Optional)</label>
+                              <input
+                                type="text"
+                                value={settingsForm.dbUsername}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, dbUsername: e.target.value }))}
+                                placeholder="e.g. sih_admin"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">DB Password (Optional)</label>
+                              <input
+                                type="password"
+                                value={settingsForm.dbPassword}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, dbPassword: e.target.value }))}
+                                placeholder="••••••••••••"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Test DB Connection Action Button */}
+                          <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                            <p className="text-[11px] text-slate-400">
+                              * Click below to test credentials and dynamically compile schemas/tables in your destination database.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={handleTestDBConnection}
+                              disabled={dbTesting || !settingsForm.dbHost || !settingsForm.dbName}
+                              className="px-5 py-2 text-xs font-bold text-white bg-slate-800 hover:bg-slate-900 rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shrink-0 cursor-pointer"
+                            >
+                              {dbTesting ? (
+                                <>
+                                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                                  Testing Connection...
+                                </>
+                              ) : (
+                                <>
+                                  <Database className="w-3.5 h-3.5" />
+                                  Test Connection & Install Schemas
+                                </>
+                              )}
+                            </button>
+                          </div>
+
+                          {dbTestError && (
+                            <div className="p-3 text-xs rounded-xl bg-rose-50 border border-rose-100 text-rose-700 flex items-start gap-2 animate-fade-in font-mono break-all whitespace-pre-wrap">
+                              <span className="font-bold text-sm leading-none">⚠️</span>
+                              <span>{dbTestError}</span>
+                            </div>
+                          )}
+
+                          {dbTestMessage && (
+                            <div className="p-3 text-xs rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-700 flex items-start gap-2 animate-fade-in">
+                              <span className="font-bold text-sm leading-none">✅</span>
+                              <span>{dbTestMessage}</span>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Public Portal Customization & Branding */}
                 <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
                   <div>
@@ -3091,6 +3664,7 @@ export default function AdminPanel({
                     >
                       <option value="Student SPOC">Student SPOC (Restricted / Read-only except Student Reset/Delete)</option>
                       <option value="SPOC">SPOC (Super Admin)</option>
+                      <option value="Evaluator">Evaluator (Scores teams based on Criteria)</option>
                     </select>
                   </div>
 
@@ -3371,6 +3945,711 @@ export default function AdminPanel({
                 )}
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* EVALUATOR WORKSPACE TAB */}
+      {activeTab === "evaluation" && adminRole === "Evaluator" && (
+        <div className="max-w-5xl mx-auto space-y-6 animate-fade-in text-left">
+          {/* Header Banner */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-8 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shrink-0">
+                <Layers className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black font-display text-slate-800">
+                  Evaluator Dashboard
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  View and score team ideas assigned to you by the SPOC administration.
+                </p>
+              </div>
+            </div>
+
+            {/* Print/Download Marks Table Button */}
+            <button
+              onClick={() => setShowPrintModal(true)}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 self-start md:self-auto"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print Marks Report (PDF)</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Left side: list of assigned teams */}
+            <div className="md:col-span-1 space-y-4">
+              <h3 className="font-bold font-display text-sm text-slate-700 uppercase tracking-wider px-1">
+                Your Assigned Teams
+              </h3>
+              {registrations.filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin")).length === 0 ? (
+                <div className="bg-slate-50 border border-dashed border-slate-200 p-6 rounded-2xl text-center text-slate-400">
+                  <p className="text-xs">No teams assigned to you yet.</p>
+                </div>
+              ) : (
+                registrations
+                  .filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin"))
+                  .map(reg => {
+                    const ps = problemStatements.find(p => p.id === reg.problemStatementId);
+                    const isCompleted = reg.evaluationStatus === "completed";
+                    const totalScore = isCompleted ? Object.values(reg.evaluatorScores || {}).reduce((a: number, b: any) => a + (b as number), 0) : 0;
+                    return (
+                      <div
+                        key={reg.id}
+                        onClick={() => {
+                          setActiveEvalTeam(reg);
+                          setActiveScores(reg.evaluatorScores || {});
+                          setActiveNotes(reg.evaluationNotes || "");
+                          setEvaluationError("");
+                          setEvaluationSuccess("");
+                        }}
+                        className={`p-4 rounded-2xl border transition-all cursor-pointer text-left ${
+                          activeEvalTeam?.id === reg.id
+                            ? "bg-indigo-50/50 border-indigo-400 shadow-sm"
+                            : "bg-white border-slate-200 hover:border-slate-300"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-[10px] font-mono font-bold text-slate-400">
+                            {reg.registrationId}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold border ${
+                            isCompleted
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                              : "bg-amber-50 text-amber-700 border-amber-100"
+                          }`}>
+                            {isCompleted ? `Scored: ${totalScore} pts` : "Pending"}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-slate-800 text-xs line-clamp-1">
+                          {reg.teamName}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Lead: {reg.leadName} ({reg.leadDepartment})
+                        </p>
+                        {ps && (
+                          <div className="mt-2 text-[10px] bg-slate-50 px-2 py-1 rounded border border-slate-100 line-clamp-1 text-slate-600 font-mono">
+                            {ps.code}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+
+            {/* Right side: Active Scoring Panel */}
+            <div className="md:col-span-2">
+              {activeEvalTeam ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-8 space-y-6 relative shadow-xs">
+                  {/* Team details header */}
+                  <div className="border-b border-slate-100 pb-4 flex flex-wrap justify-between items-start gap-4">
+                    <div>
+                      <span className="text-[10px] font-mono font-bold text-indigo-600 uppercase bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                        Active Evaluation
+                      </span>
+                      <h3 className="text-xl font-bold font-display text-slate-800 mt-2">
+                        {activeEvalTeam.teamName}
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Problem Statement: <span className="font-semibold text-slate-700">
+                          {problemStatements.find(p => p.id === activeEvalTeam.problemStatementId)?.title || "Unknown"}
+                        </span>
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedRegProposal(activeEvalTeam)}
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 text-[10px] font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1"
+                    >
+                      <Briefcase className="w-3.5 h-3.5" />
+                      View PPT / Proposal Abstract
+                    </button>
+                  </div>
+
+                  {/* Message displays */}
+                  {evaluationError && (
+                    <div className="p-3 bg-red-50 text-red-700 border border-red-200 rounded-xl text-xs">
+                      {evaluationError}
+                    </div>
+                  )}
+                  {evaluationSuccess && (
+                    <div className="p-3 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl text-xs">
+                      {evaluationSuccess}
+                    </div>
+                  )}
+
+                  {/* Criteria Sliders / Scoring */}
+                  <div className="space-y-6">
+                    <h4 className="font-bold text-slate-700 text-xs uppercase tracking-wider">
+                      Evaluation Criteria
+                    </h4>
+                    {evaluationCriteria.length === 0 ? (
+                      <p className="text-xs text-slate-400">No scoring criteria have been defined by the Super Admin yet.</p>
+                    ) : (
+                      evaluationCriteria.map(crit => {
+                        const max = crit.maxScore || 10;
+                        const currentVal = activeScores[crit.id] ?? 0;
+                        return (
+                          <div key={crit.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                            <div className="flex justify-between items-start gap-4">
+                              <div>
+                                <h5 className="font-bold text-slate-800 text-xs">
+                                  {crit.name}
+                                </h5>
+                                <p className="text-[10px] text-slate-500 mt-0.5">
+                                  {crit.description}
+                                </p>
+                              </div>
+                              <span className="text-xs font-bold text-indigo-600 bg-white border border-slate-200 px-2 py-1 rounded-lg">
+                                {currentVal} / {max} pts
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-4">
+                              <input
+                                type="range"
+                                min="0"
+                                max={max}
+                                value={currentVal}
+                                onChange={(e) => {
+                                  setActiveScores(prev => ({
+                                    ...prev,
+                                    [crit.id]: parseInt(e.target.value) || 0
+                                  }));
+                                }}
+                                className="flex-1 accent-indigo-600 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                max={max}
+                                value={currentVal}
+                                onChange={(e) => {
+                                  let val = parseInt(e.target.value) || 0;
+                                  if (val > max) val = max;
+                                  if (val < 0) val = 0;
+                                  setActiveScores(prev => ({
+                                    ...prev,
+                                    [crit.id]: val
+                                  }));
+                                }}
+                                className="w-14 px-2 py-1 text-center text-xs font-bold border border-slate-200 bg-white rounded-lg outline-none focus:border-indigo-500"
+                              />
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Notes / Remarks */}
+                  <div className="space-y-2">
+                    <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                      Evaluation Notes & Feedback
+                    </label>
+                    <textarea
+                      value={activeNotes}
+                      onChange={(e) => setActiveNotes(e.target.value)}
+                      placeholder="e.g., Solid solution structure, team was communicative. Great presentation."
+                      rows={3}
+                      className="w-full px-3 py-2.5 text-xs rounded-xl border border-slate-200 outline-none focus:border-indigo-500 bg-slate-50 focus:bg-white transition-all resize-none"
+                    />
+                  </div>
+
+                  {/* Submission summary and button */}
+                  <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-4 bg-slate-50/50 p-4 -mx-6 -mb-6 md:-mx-8 md:-mb-8 rounded-b-3xl">
+                    <div className="text-left">
+                      <span className="text-[10px] font-bold text-slate-400 block uppercase">
+                        Total Computed Score
+                      </span>
+                      <p className="text-lg font-black text-indigo-600 font-display">
+                        {Object.values(activeScores).reduce((a: number, b: any) => a + (b as number), 0)} / {evaluationCriteria.reduce((acc, c) => acc + (c.maxScore || 10), 0)} pts
+                      </p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setEvaluationError("");
+                        setEvaluationSuccess("");
+                        try {
+                          const res = await fetch(`/api/admin/registrations/${activeEvalTeam.id}/evaluate`, {
+                            method: "POST",
+                            headers: {
+                              "Content-Type": "application/json",
+                              "X-Admin-Passcode": passcode
+                            },
+                            body: JSON.stringify({
+                              scores: activeScores,
+                              notes: activeNotes
+                            })
+                          });
+                          const data = await res.json();
+                          if (res.ok) {
+                            setEvaluationSuccess("Evaluation score submitted successfully!");
+                            fetchRegistrations();
+                            setTimeout(() => {
+                              setActiveEvalTeam(null);
+                            }, 1000);
+                          } else {
+                            setEvaluationError(data.error || "Failed to submit score.");
+                          }
+                        } catch (err) {
+                          setEvaluationError("Network error. Could not save score.");
+                        }
+                      }}
+                      className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer"
+                    >
+                      Submit Scores
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-slate-50 border border-dashed border-slate-200 rounded-3xl p-12 text-center text-slate-400 flex flex-col items-center justify-center h-[400px]">
+                  <Layers className="w-12 h-12 text-slate-300 mb-3" />
+                  <p className="text-sm font-semibold text-slate-600">Select a team from the left to start scoring</p>
+                  <p className="text-xs text-slate-400 mt-1">Or view their project proposal abstracts, team roster, and scores.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EVALUATION & SELECTION CENTRE TAB */}
+      {activeTab === "evaluation-selection" && (adminRole === "SPOC" || adminRole === "Student SPOC") && (
+        <div className="max-w-6xl mx-auto space-y-6 animate-fade-in text-left">
+          {/* Header Banner */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 shrink-0">
+                <Database className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black font-display text-slate-800">
+                  Evaluation & Selection Control Center
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Promote highest-scoring student teams, manage evaluation rubrics, and view overall feedback scores.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Subpanels Container */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* Scorecard leaderboard (Takes up 2 cols) */}
+            <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider font-display">
+                    Score Leaderboard & Selection
+                  </h3>
+                  <p className="text-[11px] text-slate-400">Filter, evaluate, and promote teams to the next level.</p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Selected team filter button */}
+                  <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border border-slate-200 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setEvaluationSelectionFilter("all")}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        evaluationSelectionFilter === "all"
+                          ? "bg-white text-indigo-700 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      All Teams
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEvaluationSelectionFilter("selected")}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition-all cursor-pointer ${
+                        evaluationSelectionFilter === "selected"
+                          ? "bg-white text-indigo-700 shadow-xs"
+                          : "text-slate-500 hover:text-slate-800"
+                      }`}
+                    >
+                      Selected Teams Only
+                    </button>
+                  </div>
+                  <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full shrink-0">
+                    Total: {registrations.filter(r => evaluationSelectionFilter === "all" || r.isFinalSelected).length}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {registrations.length === 0 ? (
+                  <p className="text-xs text-slate-400">No registrations found.</p>
+                ) : (
+                  [...registrations]
+                    .filter(reg => evaluationSelectionFilter === "all" || reg.isFinalSelected)
+                    .sort((a, b) => {
+                      const aScore = (a.evaluationStatus === "completed" ? Object.values(a.evaluatorScores || {}).reduce((x: number, y: any) => x + (y as number), 0) : -1) as number;
+                      const bScore = (b.evaluationStatus === "completed" ? Object.values(b.evaluatorScores || {}).reduce((x: number, y: any) => x + (y as number), 0) : -1) as number;
+                      return bScore - aScore;
+                    })
+                    .map((reg, idx) => {
+                      const totalScore = reg.evaluationStatus === "completed" ? Object.values(reg.evaluatorScores || {}).reduce((a: number, b: any) => a + (b as number), 0) : 0;
+                      const maxPossible = evaluationCriteria.reduce((acc, c) => acc + (c.maxScore || 10), 0);
+                      const isPromoted = reg.isFinalSelected;
+
+                      return (
+                        <div key={reg.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200/60 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                          <div className="space-y-1 text-left flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[10px] font-mono text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded">
+                                #{idx + 1} • {reg.registrationId}
+                              </span>
+                              {isPromoted && (
+                                <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                                  Selected
+                                </span>
+                              )}
+                              {reg.assignedEvaluator ? (
+                                <span className="text-[9px] text-slate-500 font-medium">
+                                  Evaluator: <span className="font-bold text-slate-700">{reg.assignedEvaluator}</span>
+                                </span>
+                              ) : (
+                                <span className="text-[9px] text-amber-500 font-bold bg-amber-50 px-1 rounded">No Evaluator</span>
+                              )}
+                            </div>
+                            <h4 className="font-bold text-slate-800 text-sm font-display mt-1">
+                              {reg.teamName}
+                            </h4>
+                            <p className="text-xs text-slate-500">
+                              Lead: {reg.leadName} • {reg.leadDepartment}
+                            </p>
+                            
+                            {/* Score breakdown if scored */}
+                            {reg.evaluationStatus === "completed" ? (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {Object.entries(reg.evaluatorScores || {}).map(([cId, val]) => {
+                                  const cName = evaluationCriteria.find(c => c.id === cId)?.name || "Criterion";
+                                  return (
+                                    <span key={cId} className="text-[9px] bg-white border border-slate-100 px-1.5 py-0.5 rounded text-slate-500">
+                                      {cName}: <span className="font-bold text-slate-700">{val}</span>
+                                    </span>
+                                  );
+                                })}
+                                {reg.evaluationNotes && (
+                                  <p className="text-[10px] italic text-slate-400 w-full mt-1">
+                                    Notes: "{reg.evaluationNotes}"
+                                  </p>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="text-[10px] text-amber-500 font-medium mt-1">Pending scores from assigned Evaluator.</p>
+                            )}
+                          </div>
+
+                          <div className="flex flex-col md:items-end gap-2 shrink-0 self-stretch md:self-auto justify-between md:justify-center">
+                            <div className="text-left md:text-right">
+                              <span className="text-[9px] font-bold text-slate-400 block uppercase">Evaluation Score</span>
+                              <p className="text-base font-black text-slate-800 font-display">
+                                {reg.evaluationStatus === "completed" ? `${totalScore} / ${maxPossible} pts` : "N/A"}
+                              </p>
+                            </div>
+
+                            {/* Select / Revoke promotion buttons */}
+                            <div className="flex flex-col items-stretch md:items-end gap-1.5 mt-1 w-full md:w-auto">
+                              {selectingTeamId === reg.id ? (
+                                <div className="p-2.5 bg-indigo-50/50 rounded-xl border border-indigo-100 flex flex-col gap-2 w-full max-w-[280px] text-left animate-fade-in">
+                                  <label className="text-[9px] font-bold text-indigo-700 uppercase tracking-wide">
+                                    Selection Feedback Notes:
+                                  </label>
+                                  <textarea
+                                    value={selectionFeedbackNotes}
+                                    onChange={(e) => setSelectionFeedbackNotes(e.target.value)}
+                                    placeholder="e.g. Congratulations on getting selected!"
+                                    className="w-full text-[10px] p-2 border border-indigo-200 rounded-md bg-white text-slate-800 outline-none focus:border-indigo-500 resize-none"
+                                    rows={2}
+                                  />
+                                  <div className="flex gap-1.5 justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectingTeamId(null);
+                                        setSelectionFeedbackNotes("");
+                                      }}
+                                      className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold rounded-md transition-all cursor-pointer"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        handleFinalizeSelection(reg.id, true, selectionFeedbackNotes.trim() || "Congratulations on getting selected for the next level!");
+                                        setSelectingTeamId(null);
+                                        setSelectionFeedbackNotes("");
+                                      }}
+                                      className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-md transition-all cursor-pointer"
+                                    >
+                                      Confirm Select
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 justify-end">
+                                  <button
+                                    onClick={() => setSelectedRegProposal(reg)}
+                                    className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    title="View abstract"
+                                  >
+                                    View PPT
+                                  </button>
+                                  {isPromoted && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedRegForLetter(reg)}
+                                      className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg text-[10px] font-extrabold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                      title="Generate Consent Letter"
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      Consent Letter
+                                    </button>
+                                  )}
+                                  {adminRole === "SPOC" && (
+                                    <>
+                                      {isPromoted ? (
+                                        <button
+                                          onClick={() => handleFinalizeSelection(reg.id, false, "")}
+                                          className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                        >
+                                          Revoke Selection
+                                        </button>
+                                      ) : (
+                                        <button
+                                          onClick={() => {
+                                            setSelectingTeamId(reg.id);
+                                            setSelectionFeedbackNotes("Congratulations on getting selected for the next level!");
+                                          }}
+                                          className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                        >
+                                          Select Team
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+
+            {/* Criteria Management (Takes up 1 col, SPOC only) */}
+            <div className="lg:col-span-1 space-y-6">
+              
+              <div className="bg-white rounded-3xl border border-slate-200 p-6 space-y-4">
+                <h3 className="font-bold text-slate-800 text-sm uppercase tracking-wider font-display border-b border-slate-100 pb-3">
+                  Criteria Management
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Manage the criteria used by your evaluators to score student project proposals.
+                </p>
+
+                {/* Criteria List */}
+                <div className="space-y-3 pt-2">
+                  {evaluationCriteria.length === 0 ? (
+                    <p className="text-xs text-slate-400">No criteria defined.</p>
+                  ) : (
+                    evaluationCriteria.map(crit => (
+                      <div key={crit.id} className="p-3 bg-slate-50 rounded-xl border border-slate-200 relative text-left">
+                        {editingCriterionId === crit.id ? (
+                          <div className="space-y-2 text-left">
+                            <span className="text-[10px] font-bold text-indigo-600 uppercase">Edit Criterion</span>
+                            <input
+                              type="text"
+                              value={editingCriterionName}
+                              onChange={(e) => setEditingCriterionName(e.target.value)}
+                              className="w-full px-2 py-1 text-xs border border-slate-200 bg-white rounded-md outline-none focus:border-indigo-500"
+                              placeholder="Name"
+                              required
+                            />
+                            <textarea
+                              value={editingCriterionDesc}
+                              onChange={(e) => setEditingCriterionDesc(e.target.value)}
+                              className="w-full px-2 py-1 text-xs border border-slate-200 bg-white rounded-md outline-none focus:border-indigo-500 resize-none"
+                              placeholder="Description"
+                              rows={2}
+                            />
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-[10px] text-slate-500 uppercase">Max:</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="100"
+                                  value={editingCriterionMaxScore}
+                                  onChange={(e) => setEditingCriterionMaxScore(parseInt(e.target.value) || 10)}
+                                  className="w-14 px-1.5 py-0.5 text-xs border border-slate-200 bg-white rounded-md outline-none"
+                                />
+                              </div>
+                              <div className="flex gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingCriterionId(null)}
+                                  className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold rounded-md cursor-pointer transition-all"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!editingCriterionName.trim()) return;
+                                    const updatedList = evaluationCriteria.map(c => 
+                                      c.id === crit.id ? {
+                                        ...c,
+                                        name: editingCriterionName.trim(),
+                                        description: editingCriterionDesc.trim(),
+                                        maxScore: editingCriterionMaxScore
+                                      } : c
+                                    );
+                                    handleUpdateCriteria(updatedList);
+                                    setEditingCriterionId(null);
+                                  }}
+                                  className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-md cursor-pointer transition-all"
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : deletingCriterionId === crit.id ? (
+                          <div className="space-y-2 text-left animate-fade-in">
+                            <span className="text-[10px] font-bold text-red-600 uppercase">Confirm Deletion</span>
+                            <p className="text-[11px] text-slate-600">Are you sure you want to delete <b>{crit.name}</b>?</p>
+                            <div className="flex gap-1.5 justify-end mt-1">
+                              <button
+                                type="button"
+                                onClick={() => setDeletingCriterionId(null)}
+                                className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 text-[10px] font-bold rounded-md cursor-pointer transition-all"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleUpdateCriteria(evaluationCriteria.filter(c => c.id !== crit.id));
+                                  setDeletingCriterionId(null);
+                                }}
+                                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold rounded-md cursor-pointer transition-all"
+                              >
+                                Yes, Delete
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {adminRole === "SPOC" && (
+                              <div className="absolute top-2 right-2 flex items-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    setEditingCriterionId(crit.id);
+                                    setEditingCriterionName(crit.name);
+                                    setEditingCriterionDesc(crit.description || "");
+                                    setEditingCriterionMaxScore(crit.maxScore || 10);
+                                    setDeletingCriterionId(null);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-600 rounded transition-colors cursor-pointer animate-fade-in"
+                                  title="Edit Criterion"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setDeletingCriterionId(crit.id);
+                                    setEditingCriterionId(null);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-red-500 rounded transition-colors cursor-pointer"
+                                  title="Delete Criterion"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                            <h4 className="font-bold text-slate-800 text-xs pr-12">{crit.name}</h4>
+                            <p className="text-[10px] text-slate-500 mt-0.5 pr-12">{crit.description}</p>
+                            <span className="inline-block mt-2 text-[9px] font-bold text-indigo-600 bg-white border px-2 py-0.5 rounded">
+                              Max: {crit.maxScore} pts
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {/* Add Criteria Form (SPOC only) */}
+                {adminRole === "SPOC" && (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!newCriterionName.trim()) return;
+                      const newCrit = {
+                        id: "crit_" + Date.now(),
+                        name: newCriterionName.trim(),
+                        description: newCriterionDesc.trim(),
+                        maxScore: newCriterionMaxScore
+                      };
+                      handleUpdateCriteria([...evaluationCriteria, newCrit]);
+                      setNewCriterionName("");
+                      setNewCriterionDesc("");
+                      setNewCriterionMaxScore(10);
+                    }}
+                    className="space-y-3 pt-4 border-t border-slate-100 text-left"
+                  >
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                      Add New Criterion
+                    </span>
+                    <div className="space-y-1">
+                      <input
+                        type="text"
+                        placeholder="Criterion Name (e.g. Innovation)"
+                        value={newCriterionName}
+                        onChange={(e) => setNewCriterionName(e.target.value)}
+                        className="w-full px-3 py-2 text-xs border border-slate-200 bg-slate-50 rounded-lg outline-none focus:bg-white focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <textarea
+                        placeholder="Short description..."
+                        value={newCriterionDesc}
+                        onChange={(e) => setNewCriterionDesc(e.target.value)}
+                        className="w-full px-3 py-2 text-xs border border-slate-200 bg-slate-50 rounded-lg outline-none focus:bg-white focus:border-indigo-500 resize-none"
+                        rows={2}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase">Max Score</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={newCriterionMaxScore}
+                        onChange={(e) => setNewCriterionMaxScore(parseInt(e.target.value) || 10)}
+                        className="w-20 px-3 py-1.5 text-xs border border-slate-200 bg-slate-50 rounded-lg outline-none focus:bg-white focus:border-indigo-500"
+                        required
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer text-center"
+                    >
+                      Save Criterion
+                    </button>
+                  </form>
+                )}
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -4954,6 +6233,264 @@ export default function AdminPanel({
           </div>
         )}
       </AnimatePresence>
+
+      {/* EVALUATOR PDF PRINT PREVIEW MODAL */}
+      <AnimatePresence>
+        {showPrintModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 text-slate-800">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowPrintModal(false)}
+              className="absolute inset-0 bg-slate-900 opacity-50 no-print"
+            ></motion.div>
+
+            {/* Modal container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden relative z-10 no-print"
+            >
+              {/* Modal Header */}
+              <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-indigo-400" />
+                  <h3 className="font-bold font-display text-base">Print Evaluation Marks Report</h3>
+                </div>
+                <button
+                  onClick={() => setShowPrintModal(false)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body / Print Area */}
+              <div className="p-6 overflow-y-auto flex-1 space-y-6">
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-bold">Print Hint</p>
+                    <p className="mt-0.5">Click the "Print Report (PDF)" button below. In the system print dialog, enable <b>Background Graphics</b> and set layout to <b>Landscape</b> to print the table beautifully.</p>
+                  </div>
+                </div>
+
+                {/* Printable Content container */}
+                <div id="print-report-content" className="p-6 border border-slate-200 rounded-3xl bg-white text-left space-y-6">
+                  {/* Dynamic CSS for beautiful print */}
+                  <style dangerouslySetInnerHTML={{__html: `
+                    @media print {
+                      body * {
+                        visibility: hidden !important;
+                      }
+                      #print-report-content, #print-report-content * {
+                        visibility: visible !important;
+                      }
+                      #print-report-content {
+                        position: absolute !important;
+                        left: 0 !important;
+                        top: 0 !important;
+                        width: 100% !important;
+                        margin: 0 !important;
+                        padding: 20px !important;
+                        border: none !important;
+                        box-shadow: none !important;
+                        background: white !important;
+                        color: black !important;
+                      }
+                      .no-print {
+                        display: none !important;
+                      }
+                    }
+                  `}} />
+
+                  {/* Top Contact Info Bar (matching image) */}
+                  <div className="flex justify-between items-center text-[9px] font-mono text-slate-500 border-b border-slate-200 pb-1 mb-2 no-print">
+                    <div>
+                      <span>☎ 08818-284577, 284355 Ext: 322/323; Fax: 08818-284577</span>
+                    </div>
+                    <div>
+                      <span>Visit us at: <a href="https://www.srivasaviengg.ac.in" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">www.srivasaviengg.ac.in</a></span>
+                    </div>
+                  </div>
+
+                  {/* College Letterhead Header */}
+                  <div className="flex items-center gap-6 pb-4 border-b-2 border-slate-900">
+                    {/* College Logo */}
+                    <div className="shrink-0">
+                      <SvecLogo className="w-20 h-20" />
+                    </div>
+                    
+                    {/* College Information */}
+                    <div className="flex-1 text-center">
+                      <h2 className="text-xl md:text-2xl font-black font-display text-blue-700 tracking-tight leading-tight uppercase">
+                        SRI VASAVI ENGINEERING COLLEGE <span className="text-indigo-600 font-bold lowercase text-sm font-sans">(Autonomous)</span>
+                      </h2>
+                      <p className="text-[10px] font-bold text-slate-600 mt-0.5">
+                        (Sponsored by Sri Vasavi Educational Society; Regd.No:898/2000)
+                      </p>
+                      <p className="text-[10px] font-bold text-slate-700 mt-0.5">
+                        | Accredited by <span className="text-pink-600 font-extrabold">NAAC</span> with <span className="text-pink-600 font-extrabold">'A'</span> Grade | &amp; | Accredited by <span className="text-pink-600 font-extrabold">NBA</span> |
+                      </p>
+                      <p className="text-[10px] font-semibold text-slate-600 mt-0.5">
+                        Approved by AICTE, New Delhi and Permanently Affiliated to JNTUK, Kakinada
+                      </p>
+                      <p className="text-[11px] font-black text-slate-900 font-sans mt-1 uppercase tracking-wide">
+                        Pedatadepalli, TADEPALLIGUDEM – 534 101, W.G. Dist, (A.P.)
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Report Details Sub-Header */}
+                  <div className="pt-4 pb-2 flex justify-between items-end gap-4 border-b border-dashed border-slate-300">
+                    <div>
+                      <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-wider uppercase">
+                        Smart India Hackathon (SIH) Internal Hackathon
+                      </span>
+                      <h3 className="text-sm font-bold text-slate-800 mt-1 uppercase">
+                        Assigned Teams Evaluation Scorecard
+                      </h3>
+                    </div>
+                    <div className="text-right text-[10px] font-mono text-slate-500 space-y-0.5">
+                      <p><b>Evaluator:</b> {sessionStorage.getItem("svec_sih_admin_username") || "admin"}</p>
+                      <p><b>Date:</b> {new Date().toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                      <p><b>Total Assigned:</b> {registrations.filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin")).length} Teams</p>
+                    </div>
+                  </div>
+
+                  {/* Marks Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-xs text-left">
+                      <thead>
+                        <tr className="bg-slate-100 border-b border-slate-300">
+                          <th className="p-2.5 font-bold text-slate-700 border border-slate-300 w-12 text-center">S.No</th>
+                          <th className="p-2.5 font-bold text-slate-700 border border-slate-300 w-24">Team ID</th>
+                          <th className="p-2.5 font-bold text-slate-700 border border-slate-300">Team Name & Leader</th>
+                          <th className="p-2.5 font-bold text-slate-700 border border-slate-300">Problem Statement</th>
+                          
+                          {/* Criteria Headers */}
+                          {evaluationCriteria.map(crit => (
+                            <th key={crit.id} className="p-2.5 font-bold text-slate-700 border border-slate-300 text-center max-w-[100px]" title={crit.description}>
+                              {crit.name}
+                              <span className="block text-[9px] font-normal text-slate-400">({crit.maxScore}M)</span>
+                            </th>
+                          ))}
+
+                          <th className="p-2.5 font-bold text-slate-900 border border-slate-300 text-center w-20">Total Score</th>
+                          <th className="p-2.5 font-bold text-slate-700 border border-slate-300">Remarks / Feedback</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {registrations.filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin")).length === 0 ? (
+                          <tr>
+                            <td colSpan={6 + evaluationCriteria.length} className="p-8 text-center text-slate-400 font-medium">
+                              No teams assigned to evaluate.
+                            </td>
+                          </tr>
+                        ) : (
+                          registrations
+                            .filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin"))
+                            .map((reg, idx) => {
+                              const ps = problemStatements.find(p => p.id === reg.problemStatementId);
+                              const isCompleted = reg.evaluationStatus === "completed";
+                              const totalScore = isCompleted ? Object.values(reg.evaluatorScores || {}).reduce((a: number, b: any) => a + (b as number), 0) : 0;
+                              const maxPossible = evaluationCriteria.reduce((acc, c) => acc + (c.maxScore || 10), 0);
+
+                              return (
+                                <tr key={reg.id} className="border-b border-slate-200 hover:bg-slate-50/50">
+                                  <td className="p-2.5 border border-slate-300 text-center font-semibold font-mono">{idx + 1}</td>
+                                  <td className="p-2.5 border border-slate-300 font-bold font-mono text-indigo-600">{reg.registrationId}</td>
+                                  <td className="p-2.5 border border-slate-300">
+                                    <div className="font-bold text-slate-800">{reg.teamName}</div>
+                                    <div className="text-[10px] text-slate-500 mt-0.5">Lead: {reg.leadName} ({reg.leadDepartment})</div>
+                                  </td>
+                                  <td className="p-2.5 border border-slate-300">
+                                    {ps ? (
+                                      <div>
+                                        <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1 rounded text-[10px]">{ps.code}</span>
+                                        <div className="line-clamp-2 mt-0.5 text-slate-600 text-[10px]">{ps.title}</div>
+                                      </div>
+                                    ) : (
+                                      <span className="text-slate-400">Not selected</span>
+                                    )}
+                                  </td>
+
+                                  {/* Criteria Scores */}
+                                  {evaluationCriteria.map(crit => {
+                                    const score = isCompleted ? (reg.evaluatorScores?.[crit.id] ?? 0) : null;
+                                    return (
+                                      <td key={crit.id} className="p-2.5 border border-slate-300 text-center font-bold">
+                                        {score !== null ? (
+                                          <span className="text-slate-800">{score}</span>
+                                        ) : (
+                                          <span className="text-amber-500 font-semibold italic">Pending</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+
+                                  <td className="p-2.5 border border-slate-300 text-center font-black text-indigo-600 font-display">
+                                    {isCompleted ? (
+                                      <span>{totalScore} / {maxPossible}</span>
+                                    ) : (
+                                      <span className="text-amber-500 italic font-semibold">Pending</span>
+                                    )}
+                                  </td>
+                                  <td className="p-2.5 border border-slate-300 text-slate-600 italic">
+                                    {reg.evaluationNotes || <span className="text-slate-400">-</span>}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Signature Section */}
+                  <div className="pt-12 flex justify-between items-center text-xs font-semibold">
+                    <div>
+                      <p className="italic text-slate-400">Generated securely via SVEC SIH Portal</p>
+                    </div>
+                    <div className="text-center w-48 border-t border-slate-400 pt-1">
+                      <p className="font-bold text-slate-800">{sessionStorage.getItem("svec_sih_admin_username") || "Evaluator"}</p>
+                      <p className="text-[10px] text-slate-400">Signature of the Evaluator</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0 no-print">
+                <button
+                  type="button"
+                  onClick={() => setShowPrintModal(false)}
+                  className="px-5 py-2.5 text-xs font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl shadow-xs cursor-pointer transition-colors"
+                >
+                  Close Preview
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-5 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  Print Report (PDF)
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <ConsentLetterModal
+        isOpen={!!selectedRegForLetter}
+        onClose={() => setSelectedRegForLetter(null)}
+        registration={selectedRegForLetter}
+      />
 
     </div>
   );

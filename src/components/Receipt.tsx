@@ -22,10 +22,13 @@ import {
   Lock,
   CloudUpload,
   CheckCircle2,
-  Download
+  Download,
+  Trophy,
+  Sparkles
 } from "lucide-react";
 import { Registration, ProblemStatement } from "../types";
 import SvecLogo from "./SvecLogo";
+import ConsentLetterModal from "./ConsentLetterModal";
 
 interface ReceiptProps {
   registration: Registration;
@@ -58,6 +61,7 @@ export default function Receipt({
 
   // Tab Navigation State
   const [activeTab, setActiveTab] = useState<"slip" | "proposal" | "profile" | "team">("slip");
+  const [showConsentLetter, setShowConsentLetter] = useState(false);
 
   // Proposal Form State
   const [abstract, setAbstract] = useState(registration.abstract || "");
@@ -137,6 +141,120 @@ export default function Receipt({
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+
+  // Payment pending states & functions
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState("");
+  const [paymentStatusMessage, setPaymentStatusMessage] = useState("");
+
+  const loadRazorpayScript = () => {
+    return new Promise((resolve) => {
+      if ((window as any).Razorpay) {
+        resolve(true);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = "https://checkout.razorpay.com/v1/checkout.js";
+      script.onload = () => resolve(true);
+      script.onerror = () => resolve(false);
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleProceedWithPayment = async () => {
+    setPaymentLoading(true);
+    setPaymentError("");
+    setPaymentStatusMessage("Initiating secure Razorpay payment...");
+
+    try {
+      const orderRes = await fetch("/api/payments/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentEmail: registration.studentEmail })
+      });
+
+      const orderData = await orderRes.json();
+      if (!orderRes.ok) {
+        setPaymentError(orderData.error || "Failed to initiate payment. Please contact SVEC admin.");
+        setPaymentLoading(false);
+        setPaymentStatusMessage("");
+        return;
+      }
+
+      setPaymentStatusMessage("Opening Razorpay payment gateway...");
+      const isScriptLoaded = await loadRazorpayScript();
+      if (!isScriptLoaded) {
+        setPaymentError("Failed to load payment checkout script. Please check your network connection.");
+        setPaymentLoading(false);
+        setPaymentStatusMessage("");
+        return;
+      }
+
+      setPaymentStatusMessage("Please complete the payment in the Razorpay pop-up...");
+
+      const options = {
+        key: orderData.keyId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: "SVEC SIH Hackathon 2026",
+        description: `Registration Fee: ₹${orderData.amount / 100}`,
+        order_id: orderData.orderId,
+        handler: async function (response: any) {
+          setPaymentStatusMessage("Verifying secure signature with SVEC server...");
+          try {
+            const verifyRes = await fetch("/api/registrations/verify-payment", {
+              method: "POST",
+              headers: getAuthHeaders({ "Content-Type": "application/json" }),
+              body: JSON.stringify({
+                registrationId: registration.registrationId,
+                paymentId: response.razorpay_payment_id,
+                orderId: response.razorpay_order_id,
+                signature: response.razorpay_signature
+              })
+            });
+
+            const verifyData = await verifyRes.json();
+            if (verifyRes.ok && verifyData.success) {
+              setPaymentStatusMessage("Payment completed successfully!");
+              if (onUpdateRegistration) {
+                onUpdateRegistration(verifyData.registration);
+              }
+            } else {
+              setPaymentError(verifyData.error || "Payment verification failed. Please contact support.");
+            }
+          } catch (err: any) {
+            setPaymentError("Network error during payment verification.");
+          } finally {
+            setPaymentLoading(false);
+            setPaymentStatusMessage("");
+          }
+        },
+        prefill: {
+          name: registration.leadName,
+          email: registration.studentEmail,
+          contact: registration.leadMobile
+        },
+        theme: {
+          color: "#4f46e5"
+        },
+        modal: {
+          ondismiss: function() {
+            setPaymentLoading(false);
+            setPaymentStatusMessage("");
+            setPaymentError("Payment was cancelled. You must complete the payment to complete registration.");
+          }
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+    } catch (err: any) {
+      console.error("Payment initialization error", err);
+      setPaymentError("Failed to load payment portal. Please try again.");
+      setPaymentLoading(false);
+      setPaymentStatusMessage("");
+    }
+  };
 
   // Sync state with registration prop updates
   useEffect(() => {
@@ -403,6 +521,96 @@ export default function Receipt({
         </div>
       </div>
 
+      {/* SELECTION CELEBRATION BANNER */}
+      {registration.isFinalSelected && (
+        <div className="mb-6 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-3xl p-6 shadow-lg border border-emerald-400 relative overflow-hidden animate-fade-in print:hidden">
+          {/* Ambient light circles for high-end aesthetic */}
+          <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10"></div>
+          <div className="absolute bottom-0 left-0 w-24 h-24 bg-teal-400/20 rounded-full blur-xl -ml-8 -mb-8"></div>
+          
+          <div className="relative z-10 flex flex-col sm:flex-row items-center gap-5">
+            <div className="p-4 bg-white/10 backdrop-blur-md rounded-2xl text-yellow-300">
+              <Trophy className="w-8 h-8 animate-bounce" />
+            </div>
+            <div className="text-center sm:text-left flex-1 space-y-1">
+              <span className="inline-flex items-center gap-1 bg-emerald-700/50 border border-emerald-400/40 text-emerald-100 text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-1 rounded-full">
+                <Sparkles className="w-3 h-3 text-yellow-300 animate-spin" /> Nominated for Next Round
+              </span>
+              <h3 className="text-xl font-extrabold font-display leading-tight tracking-tight mt-1.5">
+                Congratulations! Your Team is Selected!
+              </h3>
+              <p className="text-sm text-emerald-50 font-medium max-w-xl">
+                We are thrilled to announce that your team <strong className="font-extrabold underline">{registration.teamName}</strong> has been selected for the next level of Smart India Hackathon.
+              </p>
+              {registration.selectionNotes && (
+                <div className="mt-3 p-3 bg-white/10 border border-white/15 rounded-xl text-xs text-emerald-100 leading-relaxed font-sans italic">
+                  <strong className="not-italic font-bold block mb-0.5 text-yellow-300">Jury Remarks & Next Steps:</strong>
+                  "{registration.selectionNotes}"
+                </div>
+              )}
+              <div className="mt-4 pt-4 border-t border-white/15 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowConsentLetter(true)}
+                  className="px-4 py-2 bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-black tracking-wide transition-all cursor-pointer flex items-center gap-1.5 shadow-md active:scale-98"
+                >
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  Generate College Consent Letter
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Pending Banner */}
+      {registration.paymentStatus === "pending" && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5 shadow-sm print:hidden animate-fade-in">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <span className="p-2 bg-amber-100 rounded-xl text-amber-700 font-bold text-lg leading-none">⚠️</span>
+              <div>
+                <h4 className="text-sm font-bold text-amber-800">Registration Payment Pending</h4>
+                <p className="text-xs text-amber-700/90 mt-0.5 leading-relaxed">
+                  Your team registration for <strong className="font-semibold">{registration.teamName}</strong> is created, but payment is pending. Please proceed with the payment to complete the registration.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleProceedWithPayment}
+              disabled={paymentLoading}
+              className="px-5 py-2.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-all shadow-sm shrink-0 flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {paymentLoading ? (
+                <>
+                  <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <span>Proceed with Payment</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </>
+              )}
+            </button>
+          </div>
+
+          {paymentStatusMessage && (
+            <div className="mt-4 p-3 bg-indigo-50 border border-indigo-100 text-indigo-700 rounded-xl text-xs font-mono flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-indigo-500 animate-ping"></span>
+              <span>{paymentStatusMessage}</span>
+            </div>
+          )}
+
+          {paymentError && (
+            <div className="mt-4 p-3 bg-rose-50 border border-rose-100 text-rose-700 rounded-xl text-xs font-mono flex items-start gap-1.5">
+              <span>❌</span>
+              <span>{paymentError}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       <AnimatePresence mode="wait">
         {activeTab === "slip" && (
           <motion.div
@@ -551,6 +759,8 @@ export default function Receipt({
                   <div className={`rounded-xl p-4 border ${
                     registration.paymentStatus === "paid"
                       ? "bg-emerald-50/40 border-emerald-100"
+                      : registration.paymentStatus === "pending"
+                      ? "bg-amber-50/40 border-amber-100"
                       : "bg-slate-50 border-slate-100"
                   }`}>
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
@@ -558,9 +768,15 @@ export default function Receipt({
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                       <div>
-                        <span className="text-slate-400 block">Payment Mode</span>
-                        <span className="font-bold text-slate-700 uppercase">
-                          {registration.paymentStatus === "paid" ? "Razorpay Checkout" : "Waived / Free"}
+                        <span className="text-slate-400 block">Payment Status</span>
+                        <span className={`font-bold uppercase ${
+                          registration.paymentStatus === "paid"
+                            ? "text-emerald-700"
+                            : registration.paymentStatus === "pending"
+                            ? "text-amber-700 font-extrabold animate-pulse"
+                            : "text-slate-700"
+                        }`}>
+                          {registration.paymentStatus === "paid" ? "Paid" : registration.paymentStatus === "pending" ? "Pending" : "Waived / Free"}
                         </span>
                       </div>
                       {registration.paymentStatus === "paid" && (
@@ -1564,6 +1780,13 @@ export default function Receipt({
           }
         }
       `}</style>
+
+      <ConsentLetterModal
+        isOpen={showConsentLetter}
+        onClose={() => setShowConsentLetter(false)}
+        registration={registration}
+        isReadOnly={true}
+      />
 
     </div>
   );

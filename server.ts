@@ -154,7 +154,34 @@ if (!fs.existsSync(REGISTRATIONS_FILE)) {
   fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify([], null, 2), "utf-8");
 }
 
+const CRITERIA_FILE = path.join(DATA_DIR, "evaluation_criteria.json");
+const defaultCriteria = [
+  { id: "c1", name: "Novelty & Innovation", maxScore: 20, description: "Uniqueness and creativity of the solution approach" },
+  { id: "c2", name: "Technical Feasibility", maxScore: 20, description: "Practicality of implementation and choice of tech stack" },
+  { id: "c3", name: "Impact & Scalability", maxScore: 20, description: "Societal/economic value and potential to scale" },
+  { id: "c4", name: "Presentation & Pitch", maxScore: 20, description: "Clarity of delivery, PPT organization and prototype quality" }
+];
+
+if (!fs.existsSync(CRITERIA_FILE)) {
+  fs.writeFileSync(CRITERIA_FILE, JSON.stringify(defaultCriteria, null, 2), "utf-8");
+}
+
 // Helpers to read/write files
+function readCriteria(): any[] {
+  try {
+    const data = fs.readFileSync(CRITERIA_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch (err) {
+    return defaultCriteria;
+  }
+}
+
+function writeCriteria(criteria: any[]) {
+  fs.writeFileSync(CRITERIA_FILE, JSON.stringify(criteria, null, 2), "utf-8");
+  syncMetadataToExternalDB("evaluation_criteria", criteria).catch(err => {
+    console.error("Failed to sync evaluation criteria to DB:", err);
+  });
+}
 function readStatements(): ProblemStatement[] {
   try {
     const data = fs.readFileSync(STATEMENTS_FILE, "utf-8");
@@ -166,6 +193,9 @@ function readStatements(): ProblemStatement[] {
 
 function writeStatements(statements: ProblemStatement[]) {
   fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(statements, null, 2), "utf-8");
+  syncMetadataToExternalDB("problem_statements", statements).catch(err => {
+    console.error("Failed to sync problem statements to DB:", err);
+  });
 }
 
 function readRegistrations(): Registration[] {
@@ -192,6 +222,9 @@ function readStudents(): Student[] {
 
 function writeStudents(students: Student[]) {
   fs.writeFileSync(STUDENTS_FILE, JSON.stringify(students, null, 2), "utf-8");
+  syncMetadataToExternalDB("students", students).catch(err => {
+    console.error("Failed to sync students to DB:", err);
+  });
 }
 
 function readHomepage(): HomepageContent {
@@ -215,6 +248,9 @@ function readHomepage(): HomepageContent {
 
 function writeHomepage(content: HomepageContent) {
   fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(content, null, 2), "utf-8");
+  syncMetadataToExternalDB("homepage_content", content).catch(err => {
+    console.error("Failed to sync homepage content to DB:", err);
+  });
 }
 
 function readCustomPages(): CustomPage[] {
@@ -228,6 +264,9 @@ function readCustomPages(): CustomPage[] {
 
 function writeCustomPages(pages: CustomPage[]) {
   fs.writeFileSync(PAGES_FILE, JSON.stringify(pages, null, 2), "utf-8");
+  syncMetadataToExternalDB("custom_pages", pages).catch(err => {
+    console.error("Failed to sync custom pages to DB:", err);
+  });
 }
 
 function readMenuItems(): MenuItem[] {
@@ -241,6 +280,9 @@ function readMenuItems(): MenuItem[] {
 
 function writeMenuItems(items: MenuItem[]) {
   fs.writeFileSync(MENU_FILE, JSON.stringify(items, null, 2), "utf-8");
+  syncMetadataToExternalDB("menu_items", items).catch(err => {
+    console.error("Failed to sync menu items to DB:", err);
+  });
 }
 
 
@@ -290,7 +332,18 @@ function readSettings(): FeeConfig {
       whatsappCustomUrl: parsed.whatsappCustomUrl ?? "",
       whatsappCustomMethod: parsed.whatsappCustomMethod ?? "POST",
       whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
-      whatsappCustomPayload: parsed.whatsappCustomPayload ?? ""
+      whatsappCustomPayload: parsed.whatsappCustomPayload ?? "",
+
+      // External DB config
+      dbEnabled: parsed.dbEnabled ?? false,
+      dbType: parsed.dbType ?? "none",
+      dbHost: parsed.dbHost ?? "",
+      dbPort: parsed.dbPort !== undefined ? Number(parsed.dbPort) : undefined,
+      dbName: parsed.dbName ?? "",
+      dbUsername: parsed.dbUsername ?? "",
+      dbPassword: parsed.dbPassword ?? "",
+      dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
+      dbStatus: parsed.dbStatus ?? "Not Connected"
     };
   } catch (err) {
     return {
@@ -333,13 +386,410 @@ function readSettings(): FeeConfig {
       whatsappCustomUrl: "",
       whatsappCustomMethod: "POST",
       whatsappCustomHeaders: "",
-      whatsappCustomPayload: ""
+      whatsappCustomPayload: "",
+
+      dbEnabled: false,
+      dbType: "none",
+      dbHost: "",
+      dbPort: undefined,
+      dbName: "",
+      dbUsername: "",
+      dbPassword: "",
+      dbCollectionOrTable: "registrations",
+      dbStatus: "Not Connected"
     };
   }
 }
 
 function writeSettings(settings: FeeConfig) {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
+  if (settings.dbEnabled) {
+    syncSettingsToExternalDB(settings).catch(err => {
+      console.error("Failed to sync settings to external DB on write:", err);
+    });
+    // Trigger dynamic metadata sync in background to keep all portal configurations updated in DB
+    syncMetadataToExternalDB("problem_statements", readStatements()).catch(err => {
+      console.error("Failed to sync problem statements to DB on settings write:", err);
+    });
+    syncMetadataToExternalDB("homepage_content", readHomepage()).catch(err => {
+      console.error("Failed to sync homepage content to DB on settings write:", err);
+    });
+    syncMetadataToExternalDB("custom_pages", readCustomPages()).catch(err => {
+      console.error("Failed to sync custom pages to DB on settings write:", err);
+    });
+    syncMetadataToExternalDB("menu_items", readMenuItems()).catch(err => {
+      console.error("Failed to sync menu items to DB on settings write:", err);
+    });
+  }
+}
+
+// Sync app settings dynamically to configured external MongoDB or SQL
+async function syncSettingsToExternalDB(settings: FeeConfig): Promise<{ success: boolean; error?: string }> {
+  if (!settings.dbEnabled || settings.dbType === "none") {
+    return { success: true };
+  }
+
+  const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword } = settings;
+
+  try {
+    if (dbType === "mongodb") {
+      const { MongoClient } = await import("mongodb");
+      let mongoUrl = "";
+      if (dbUsername && dbPassword) {
+        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
+      } else {
+        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
+      }
+      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
+        mongoUrl = dbHost;
+      }
+
+      const client = new MongoClient(mongoUrl);
+      await client.connect();
+      const db = client.db(dbName || "svec_sih");
+      const collection = db.collection("app_settings");
+      
+      // Upsert document based on id "system_settings"
+      await collection.updateOne(
+        { id: "system_settings" },
+        { $set: { id: "system_settings", ...settings, updatedAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+      await client.close();
+      return { success: true };
+
+    } else if (dbType === "sql") {
+      const { default: pg } = await import("pg");
+      const client = new pg.Client({
+        host: dbHost,
+        port: dbPort || 5432,
+        database: dbName,
+        user: dbUsername,
+        password: dbPassword,
+        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
+      });
+
+      await client.connect();
+
+      // Create table query to ensure it exists
+      const createTableSql = `
+        CREATE TABLE IF NOT EXISTS app_settings (
+          id VARCHAR(255) PRIMARY KEY,
+          settings_json TEXT
+        );
+      `;
+      await client.query(createTableSql);
+
+      const insertSql = `
+        INSERT INTO app_settings (id, settings_json)
+        VALUES ('system_settings', $1)
+        ON CONFLICT (id) DO UPDATE SET settings_json = EXCLUDED.settings_json;
+      `;
+      await client.query(insertSql, [JSON.stringify(settings)]);
+      await client.end();
+      return { success: true };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error(`[External DB Error] Sync failed for app settings:`, err);
+    return { success: false, error: err.message };
+  }
+}
+
+// Sync app metadata dynamically to configured external MongoDB or SQL
+async function syncMetadataToExternalDB(key: string, data: any): Promise<{ success: boolean; error?: string }> {
+  const settings = readSettings();
+  if (!settings.dbEnabled || settings.dbType === "none") {
+    return { success: true };
+  }
+
+  const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword } = settings;
+
+  try {
+    if (dbType === "mongodb") {
+      const { MongoClient } = await import("mongodb");
+      let mongoUrl = "";
+      if (dbUsername && dbPassword) {
+        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
+      } else {
+        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
+      }
+      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
+        mongoUrl = dbHost;
+      }
+
+      const client = new MongoClient(mongoUrl);
+      await client.connect();
+      const db = client.db(dbName || "svec_sih");
+      const collection = db.collection("app_metadata");
+      
+      // Upsert document based on key
+      await collection.updateOne(
+        { id: key },
+        { $set: { id: key, data: data, updatedAt: new Date().toISOString() } },
+        { upsert: true }
+      );
+      await client.close();
+      return { success: true };
+
+    } else if (dbType === "sql") {
+      const { default: pg } = await import("pg");
+      const client = new pg.Client({
+        host: dbHost,
+        port: dbPort || 5432,
+        database: dbName,
+        user: dbUsername,
+        password: dbPassword,
+        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
+      });
+
+      await client.connect();
+
+      // Create table query to ensure it exists
+      const createTableSql = `
+        CREATE TABLE IF NOT EXISTS app_metadata (
+          id VARCHAR(255) PRIMARY KEY,
+          metadata_json TEXT
+        );
+      `;
+      await client.query(createTableSql);
+
+      const insertSql = `
+        INSERT INTO app_metadata (id, metadata_json)
+        VALUES ($1, $2)
+        ON CONFLICT (id) DO UPDATE SET metadata_json = EXCLUDED.metadata_json;
+      `;
+      await client.query(insertSql, [key, JSON.stringify(data)]);
+      await client.end();
+      return { success: true };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error(`[External DB Error] Sync failed for app metadata (${key}):`, err);
+    return { success: false, error: err.message };
+  }
+}
+
+
+// Sync single registration dynamically to configured external MongoDB or SQL
+async function syncRegistrationToExternalDB(registration: Registration): Promise<{ success: boolean; error?: string }> {
+  const settings = readSettings();
+  if (!settings.dbEnabled || settings.dbType === "none") {
+    return { success: true };
+  }
+
+  const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword, dbCollectionOrTable } = settings;
+
+  try {
+    if (dbType === "mongodb") {
+      const { MongoClient } = await import("mongodb");
+      let mongoUrl = "";
+      if (dbUsername && dbPassword) {
+        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
+      } else {
+        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
+      }
+      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
+        mongoUrl = dbHost;
+      }
+
+      const client = new MongoClient(mongoUrl);
+      await client.connect();
+      const db = client.db(dbName || "svec_sih");
+      const collection = db.collection(dbCollectionOrTable || "registrations");
+      
+      // Upsert document based on registration id
+      await collection.updateOne(
+        { id: registration.id },
+        { $set: registration },
+        { upsert: true }
+      );
+      await client.close();
+      return { success: true };
+
+    } else if (dbType === "sql") {
+      const { default: pg } = await import("pg");
+      const client = new pg.Client({
+        host: dbHost,
+        port: dbPort || 5432,
+        database: dbName,
+        user: dbUsername,
+        password: dbPassword,
+        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
+      });
+
+      await client.connect();
+
+      const tableName = dbCollectionOrTable || "registrations";
+
+      // Create table query to ensure it exists
+      const createTableSql = `
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(255),
+          team_name VARCHAR(255),
+          lead_name VARCHAR(255),
+          lead_department VARCHAR(255),
+          lead_mobile VARCHAR(20),
+          lead_gender VARCHAR(50),
+          member1 VARCHAR(255),
+          member1_gender VARCHAR(50),
+          member1_email VARCHAR(255),
+          member1_phone VARCHAR(20),
+          member2 VARCHAR(255),
+          member2_gender VARCHAR(50),
+          member2_email VARCHAR(255),
+          member2_phone VARCHAR(20),
+          member3 VARCHAR(255),
+          member3_gender VARCHAR(50),
+          member3_email VARCHAR(255),
+          member3_phone VARCHAR(20),
+          member4 VARCHAR(255),
+          member4_gender VARCHAR(50),
+          member4_email VARCHAR(255),
+          member4_phone VARCHAR(20),
+          member5 VARCHAR(255),
+          member5_gender VARCHAR(50),
+          member5_email VARCHAR(255),
+          member5_phone VARCHAR(20),
+          has_female_member BOOLEAN,
+          mentor_name VARCHAR(255),
+          problem_statement_id VARCHAR(255),
+          submitted_at VARCHAR(255),
+          student_email VARCHAR(255),
+          payment_status VARCHAR(50),
+          payment_id VARCHAR(255),
+          order_id VARCHAR(255),
+          amount_paid INT,
+          abstract TEXT,
+          implementation_steps TEXT,
+          ppt_file_name VARCHAR(255),
+          ppt_base64 TEXT,
+          proposal_status VARCHAR(50)
+        );
+      `;
+      await client.query(createTableSql);
+
+      const insertSql = `
+        INSERT INTO ${tableName} (
+          id, registration_id, team_name, lead_name, lead_department, lead_mobile, lead_gender,
+          member1, member1_gender, member1_email, member1_phone,
+          member2, member2_gender, member2_email, member2_phone,
+          member3, member3_gender, member3_email, member3_phone,
+          member4, member4_gender, member4_email, member4_phone,
+          member5, member5_gender, member5_email, member5_phone,
+          has_female_member, mentor_name, problem_statement_id, submitted_at, student_email,
+          payment_status, payment_id, order_id, amount_paid, abstract, implementation_steps,
+          ppt_file_name, ppt_base64, proposal_status
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11,
+          $12, $13, $14, $15,
+          $16, $17, $18, $19,
+          $20, $21, $22, $23,
+          $24, $25, $26, $27,
+          $28, $29, $30, $31, $32,
+          $33, $34, $35, $36, $37, $38,
+          $39, $40, $41
+        ) ON CONFLICT (id) DO UPDATE SET
+          registration_id = EXCLUDED.registration_id,
+          team_name = EXCLUDED.team_name,
+          lead_name = EXCLUDED.lead_name,
+          lead_department = EXCLUDED.lead_department,
+          lead_mobile = EXCLUDED.lead_mobile,
+          lead_gender = EXCLUDED.lead_gender,
+          member1 = EXCLUDED.member1,
+          member1_gender = EXCLUDED.member1_gender,
+          member1_email = EXCLUDED.member1_email,
+          member1_phone = EXCLUDED.member1_phone,
+          member2 = EXCLUDED.member2,
+          member2_gender = EXCLUDED.member2_gender,
+          member2_email = EXCLUDED.member2_email,
+          member2_phone = EXCLUDED.member2_phone,
+          member3 = EXCLUDED.member3,
+          member3_gender = EXCLUDED.member3_gender,
+          member3_email = EXCLUDED.member3_email,
+          member3_phone = EXCLUDED.member3_phone,
+          member4 = EXCLUDED.member4,
+          member4_gender = EXCLUDED.member4_gender,
+          member4_email = EXCLUDED.member4_email,
+          member4_phone = EXCLUDED.member4_phone,
+          member5 = EXCLUDED.member5,
+          member5_gender = EXCLUDED.member5_gender,
+          member5_email = EXCLUDED.member5_email,
+          member5_phone = EXCLUDED.member5_phone,
+          has_female_member = EXCLUDED.has_female_member,
+          mentor_name = EXCLUDED.mentor_name,
+          problem_statement_id = EXCLUDED.problem_statement_id,
+          submitted_at = EXCLUDED.submitted_at,
+          student_email = EXCLUDED.student_email,
+          payment_status = EXCLUDED.payment_status,
+          payment_id = EXCLUDED.payment_id,
+          order_id = EXCLUDED.order_id,
+          amount_paid = EXCLUDED.amount_paid,
+          abstract = EXCLUDED.abstract,
+          implementation_steps = EXCLUDED.implementation_steps,
+          ppt_file_name = EXCLUDED.ppt_file_name,
+          ppt_base64 = EXCLUDED.ppt_base64,
+          proposal_status = EXCLUDED.proposal_status
+      `;
+
+      const values = [
+        registration.id,
+        registration.registrationId,
+        registration.teamName,
+        registration.leadName,
+        registration.leadDepartment,
+        registration.leadMobile,
+        registration.leadGender || "",
+        registration.member1 || "",
+        registration.member1Gender || "",
+        registration.member1Email || "",
+        registration.member1Phone || "",
+        registration.member2 || "",
+        registration.member2Gender || "",
+        registration.member2Email || "",
+        registration.member2Phone || "",
+        registration.member3 || "",
+        registration.member3Gender || "",
+        registration.member3Email || "",
+        registration.member3Phone || "",
+        registration.member4 || "",
+        registration.member4Gender || "",
+        registration.member4Email || "",
+        registration.member4Phone || "",
+        registration.member5 || "",
+        registration.member5Gender || "",
+        registration.member5Email || "",
+        registration.member5Phone || "",
+        registration.hasFemaleMember,
+        registration.mentorName,
+        registration.problemStatementId,
+        registration.submittedAt,
+        registration.studentEmail || "",
+        registration.paymentStatus || "free",
+        registration.paymentId || "",
+        registration.orderId || "",
+        registration.amountPaid !== undefined ? registration.amountPaid : null,
+        registration.abstract || "",
+        registration.implementationSteps || "",
+        registration.pptFileName || "",
+        registration.pptBase64 || "",
+        registration.proposalStatus || "saved"
+      ];
+
+      await client.query(insertSql, values);
+      await client.end();
+      return { success: true };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    console.error(`[External DB Error] Sync failed for registration ${registration.id}:`, err);
+    return { success: false, error: err.message };
+  }
 }
 
 
@@ -697,7 +1147,7 @@ const ADMINS_FILE = path.join(DATA_DIR, "admins.json");
 interface AdminUser {
   username: string;
   passwordHash: string;
-  role: "SPOC" | "Student SPOC";
+  role: "SPOC" | "Student SPOC" | "Evaluator";
 }
 
 let needsWrite = !fs.existsSync(ADMINS_FILE);
@@ -963,7 +1413,18 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     whatsappCustomUrl,
     whatsappCustomMethod,
     whatsappCustomHeaders,
-    whatsappCustomPayload
+    whatsappCustomPayload,
+
+    // Database options
+    dbEnabled,
+    dbType,
+    dbHost,
+    dbPort,
+    dbName,
+    dbUsername,
+    dbPassword,
+    dbCollectionOrTable,
+    dbStatus
   } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
@@ -1012,11 +1473,175 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     whatsappCustomUrl: (whatsappCustomUrl || "").trim(),
     whatsappCustomMethod: (whatsappCustomMethod || "POST").trim() as any,
     whatsappCustomHeaders: (whatsappCustomHeaders || "").trim(),
-    whatsappCustomPayload: (whatsappCustomPayload || "").trim()
+    whatsappCustomPayload: (whatsappCustomPayload || "").trim(),
+
+    // Database options
+    dbEnabled: !!dbEnabled,
+    dbType: (dbType || "none").trim() as any,
+    dbHost: (dbHost || "").trim(),
+    dbPort: dbPort !== undefined && dbPort !== "" ? Number(dbPort) : undefined,
+    dbName: (dbName || "").trim(),
+    dbUsername: (dbUsername || "").trim(),
+    dbPassword: (dbPassword || "").trim(),
+    dbCollectionOrTable: (dbCollectionOrTable || "registrations").trim(),
+    dbStatus: (dbStatus || "Not Connected").trim()
   };
 
   writeSettings(updated);
   res.json({ success: true, settings: updated });
+});
+
+// POST test external DB connection & install schemas dynamically
+app.post("/api/settings/test-db", validateAdmin, async (req, res) => {
+  if ((req as any).adminRole === "Student SPOC") {
+    return res.status(403).json({ error: "Access Denied: Student SPOC is not authorized to configure system settings." });
+  }
+
+  const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword, dbCollectionOrTable } = req.body;
+
+  if (!dbHost || !dbName) {
+    return res.status(400).json({ error: "Host/Server URL and Database Name are required." });
+  }
+
+  try {
+    if (dbType === "mongodb") {
+      const { MongoClient } = await import("mongodb");
+      let mongoUrl = "";
+      if (dbUsername && dbPassword) {
+        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
+      } else {
+        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
+      }
+      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
+        mongoUrl = dbHost;
+      }
+
+      const client = new MongoClient(mongoUrl);
+      await client.connect();
+      const db = client.db(dbName || "svec_sih");
+      
+      const collectionName = dbCollectionOrTable || "registrations";
+      // Create collection (install schema) if it doesn't exist
+      const collections = await db.listCollections({ name: collectionName }).toArray();
+      if (collections.length === 0) {
+        await db.createCollection(collectionName);
+      }
+      // Ensure app_settings and app_metadata collections exist
+      const collectionsSettings = await db.listCollections({ name: "app_settings" }).toArray();
+      if (collectionsSettings.length === 0) {
+        await db.createCollection("app_settings");
+      }
+      const collectionsMetadata = await db.listCollections({ name: "app_metadata" }).toArray();
+      if (collectionsMetadata.length === 0) {
+        await db.createCollection("app_metadata");
+      }
+      await client.close();
+
+      // Read current settings, update status to "Connected", write settings
+      const settings = readSettings();
+      settings.dbStatus = `Connected Successfully (Mongo: ${new Date().toLocaleTimeString()})`;
+      writeSettings(settings);
+
+      return res.json({ success: true, message: `Successfully connected to MongoDB and verified/created collection "${collectionName}"!` });
+
+    } else if (dbType === "sql") {
+      const { default: pg } = await import("pg");
+      const client = new pg.Client({
+        host: dbHost,
+        port: dbPort || 5432,
+        database: dbName,
+        user: dbUsername,
+        password: dbPassword,
+        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
+      });
+
+      await client.connect();
+
+      const tableName = dbCollectionOrTable || "registrations";
+
+      // Execute schema creation SQL to install schemas
+      const createTableSql = `
+        CREATE TABLE IF NOT EXISTS ${tableName} (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(255),
+          team_name VARCHAR(255),
+          lead_name VARCHAR(255),
+          lead_department VARCHAR(255),
+          lead_mobile VARCHAR(20),
+          lead_gender VARCHAR(50),
+          member1 VARCHAR(255),
+          member1_gender VARCHAR(50),
+          member1_email VARCHAR(255),
+          member1_phone VARCHAR(20),
+          member2 VARCHAR(255),
+          member2_gender VARCHAR(50),
+          member2_email VARCHAR(255),
+          member2_phone VARCHAR(20),
+          member3 VARCHAR(255),
+          member3_gender VARCHAR(50),
+          member3_email VARCHAR(255),
+          member3_phone VARCHAR(20),
+          member4 VARCHAR(255),
+          member4_gender VARCHAR(50),
+          member4_email VARCHAR(255),
+          member4_phone VARCHAR(20),
+          member5 VARCHAR(255),
+          member5_gender VARCHAR(50),
+          member5_email VARCHAR(255),
+          member5_phone VARCHAR(20),
+          has_female_member BOOLEAN,
+          mentor_name VARCHAR(255),
+          problem_statement_id VARCHAR(255),
+          submitted_at VARCHAR(255),
+          student_email VARCHAR(255),
+          payment_status VARCHAR(50),
+          payment_id VARCHAR(255),
+          order_id VARCHAR(255),
+          amount_paid INT,
+          abstract TEXT,
+          implementation_steps TEXT,
+          ppt_file_name VARCHAR(255),
+          ppt_base64 TEXT,
+          proposal_status VARCHAR(50)
+        );
+      `;
+      await client.query(createTableSql);
+
+      const createAppSettingsTableSql = `
+        CREATE TABLE IF NOT EXISTS app_settings (
+          id VARCHAR(255) PRIMARY KEY,
+          settings_json TEXT
+        );
+      `;
+      await client.query(createAppSettingsTableSql);
+
+      const createAppMetadataTableSql = `
+        CREATE TABLE IF NOT EXISTS app_metadata (
+          id VARCHAR(255) PRIMARY KEY,
+          metadata_json TEXT
+        );
+      `;
+      await client.query(createAppMetadataTableSql);
+
+      await client.end();
+
+      // Read current settings, update status to "Connected", write settings
+      const settings = readSettings();
+      settings.dbStatus = `Connected Successfully (SQL Table: ${new Date().toLocaleTimeString()})`;
+      writeSettings(settings);
+
+      return res.json({ success: true, message: `Successfully connected to SQL database and installed/verified table "${tableName}" schema!` });
+    }
+
+    return res.status(400).json({ error: "Invalid database type configured." });
+  } catch (err: any) {
+    // Save status as connection failed
+    const settings = readSettings();
+    settings.dbStatus = `Connection Failed: ${err.message}`;
+    writeSettings(settings);
+
+    return res.status(500).json({ error: `Connection failed: ${err.message}. Please double check credentials, port and server reachability.` });
+  }
 });
 
 // Broadcast Logging System
@@ -1502,7 +2127,7 @@ app.post("/api/admin/manage-admins", validateAdmin, (req, res) => {
     const newAdmin: AdminUser = {
       username: cleanUsername,
       passwordHash: crypto.createHash("sha256").update(password).digest("hex"),
-      role: role === "SPOC" ? "SPOC" : "Student SPOC"
+      role: (role === "SPOC" || role === "Student SPOC" || role === "Evaluator") ? role : "Student SPOC"
     };
 
     admins.push(newAdmin);
@@ -1709,6 +2334,98 @@ app.get("/api/registrations", validateAdmin, (req, res) => {
   res.json(readRegistrations());
 });
 
+// GET evaluation criteria (Admin/Evaluators)
+app.get("/api/admin/evaluation-criteria", validateAdmin, (req, res) => {
+  res.json(readCriteria());
+});
+
+// POST update evaluation criteria (SPOC Super Admin only)
+app.post("/api/admin/evaluation-criteria", validateAdmin, (req, res) => {
+  if ((req as any).adminRole !== "SPOC") {
+    return res.status(403).json({ error: "Access Denied: Only SPOC (Super Admin) can manage evaluation criteria." });
+  }
+  const { criteria } = req.body;
+  if (!Array.isArray(criteria)) {
+    return res.status(400).json({ error: "Criteria must be an array." });
+  }
+  writeCriteria(criteria);
+  res.json({ success: true, message: "Evaluation criteria updated successfully." });
+});
+
+// POST assign evaluator to a team registration
+app.post("/api/admin/registrations/:id/assign-evaluator", validateAdmin, (req, res) => {
+  const role = (req as any).adminRole;
+  if (role !== "SPOC" && role !== "Student SPOC") {
+    return res.status(403).json({ error: "Access Denied: Not authorized to assign evaluators." });
+  }
+  const { id } = req.params;
+  const { evaluatorUsername } = req.body; // can be empty string to unassign
+
+  const registrations = readRegistrations();
+  const idx = registrations.findIndex(r => r.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Registration not found." });
+  }
+
+  registrations[idx].assignedEvaluator = evaluatorUsername || undefined;
+  writeRegistrations(registrations);
+
+  res.json({ success: true, message: "Evaluator assigned successfully." });
+});
+
+// POST evaluate/score team (Evaluator role)
+app.post("/api/admin/registrations/:id/evaluate", validateAdmin, (req, res) => {
+  const role = (req as any).adminRole;
+  const username = (req as any).adminUser;
+  if (role !== "Evaluator") {
+    return res.status(403).json({ error: "Access Denied: Only Evaluators can score teams." });
+  }
+
+  const { id } = req.params;
+  const { scores, notes, status } = req.body;
+
+  const registrations = readRegistrations();
+  const idx = registrations.findIndex(r => r.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Registration not found." });
+  }
+
+  // Ensure evaluator is the assigned one
+  if (registrations[idx].assignedEvaluator !== username) {
+    return res.status(403).json({ error: "Access Denied: You are not assigned to evaluate this team." });
+  }
+
+  registrations[idx].evaluatorScores = scores || {};
+  registrations[idx].evaluationNotes = notes || "";
+  registrations[idx].evaluationStatus = status || "completed";
+
+  writeRegistrations(registrations);
+  res.json({ success: true, message: "Team evaluation submitted successfully." });
+});
+
+// POST finalize student selection (SPOC only)
+app.post("/api/admin/registrations/:id/finalize-selection", validateAdmin, (req, res) => {
+  const role = (req as any).adminRole;
+  if (role !== "SPOC") {
+    return res.status(403).json({ error: "Access Denied: Only SPOC can manage selection status." });
+  }
+
+  const { id } = req.params;
+  const { isSelected, selectionNotes } = req.body;
+
+  const registrations = readRegistrations();
+  const idx = registrations.findIndex(r => r.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Registration not found." });
+  }
+
+  registrations[idx].isFinalSelected = !!isSelected;
+  registrations[idx].selectionNotes = selectionNotes || "";
+
+  writeRegistrations(registrations);
+  res.json({ success: true, message: `Team selection finalized.` });
+});
+
 // GET own registration (Student lookup)
 app.get("/api/registrations/my", validateStudentJWT, (req, res) => {
   const email = req.query.email;
@@ -1776,6 +2493,12 @@ app.put("/api/registrations/my/proposal", validateStudentJWT, (req, res) => {
   };
 
   writeRegistrations(registrations);
+
+  // Sync to external DB in the background
+  syncRegistrationToExternalDB(registrations[idx]).catch(err => {
+    console.error("Failed to sync proposal update to external DB in background:", err);
+  });
+
   res.json({ success: true, registration: registrations[idx], message: proposalStatus === "submitted" ? "Proposal submitted successfully!" : "Proposal saved successfully!" });
 });
 
@@ -1990,6 +2713,12 @@ app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
   };
 
   writeRegistrations(registrations);
+
+  // Sync to external DB in the background
+  syncRegistrationToExternalDB(registrations[idx]).catch(err => {
+    console.error("Failed to sync team update to external DB in background:", err);
+  });
+
   res.json({ success: true, message: "Team roster and contact details updated successfully.", registration: registrations[idx] });
 });
 
@@ -2303,6 +3032,11 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
   registrations.push(newRegistration);
   writeRegistrations(registrations);
 
+  // Sync to external DB in the background
+  syncRegistrationToExternalDB(newRegistration).catch(err => {
+    console.error("Failed to sync registration to external DB in background:", err);
+  });
+
   // Trigger background confirmation emails to all team members
   try {
     const pStatements = readStatements();
@@ -2397,6 +3131,138 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
   });
 });
 
+// POST verify-payment for a pending registration
+app.post("/api/registrations/verify-payment", validateStudentJWT, (req, res) => {
+  const { registrationId, paymentId, orderId, signature } = req.body;
+  if (!registrationId || !paymentId || !orderId || !signature) {
+    return res.status(400).json({ error: "Missing verification parameters." });
+  }
+
+  const settings = readSettings();
+  const registrations = readRegistrations();
+  const idx = registrations.findIndex(r => r.registrationId === registrationId);
+
+  if (idx === -1) {
+    return res.status(404).json({ error: "Registration not found." });
+  }
+
+  const registration = registrations[idx];
+
+  // Verify signature
+  try {
+    const generated_signature = crypto
+      .createHmac("sha256", settings.razorpayKeySecret)
+      .update(orderId + "|" + paymentId)
+      .digest("hex");
+
+    if (generated_signature !== signature) {
+      return res.status(400).json({ error: "Payment signature verification failed." });
+    }
+
+    registration.paymentStatus = "paid";
+    registration.paymentId = paymentId;
+    registration.orderId = orderId;
+    registration.amountPaid = settings.feeAmount;
+    registration.submittedAt = new Date().toISOString(); // Update submission timestamp on payment confirmation
+
+    registrations[idx] = registration;
+    writeRegistrations(registrations);
+
+    // Sync to external DB in the background on payment confirmation
+    syncRegistrationToExternalDB(registration).catch(err => {
+      console.error("Failed to sync registration to external DB in background on payment:", err);
+    });
+
+    // Trigger background confirmation emails to all team members
+    try {
+      const pStatements = readStatements();
+      const matchedPS = pStatements.find(s => s.id === registration.problemStatementId);
+      const psDetails = matchedPS ? `${matchedPS.code}: ${matchedPS.title}` : "Selected SIH Problem Statement";
+
+      const count = settings.teamMembersCount ?? 5;
+      const teamEmails = [
+        registration.studentEmail?.trim(),
+        registration.member1Email?.trim(),
+        registration.member2Email?.trim(),
+        registration.member3Email?.trim(),
+        registration.member4Email?.trim(),
+        registration.member5Email?.trim()
+      ].filter((email): email is string => !!email && /\S+@\S+\.\S+/.test(email));
+
+      const uniqueTeamEmails = Array.from(new Set(teamEmails.map(e => e.toLowerCase())));
+
+      if (uniqueTeamEmails.length > 0) {
+        const confirmSubject = `SIH Hackathon Registration Confirmed - Team: ${registration.teamName}`;
+        let rosterHtml = `<strong>Team Members roster:</strong><br/>`;
+        rosterHtml += `1. ${registration.leadName} (Leader, Mobile: ${registration.leadMobile})<br/>`;
+        if (count >= 1 && registration.member1) rosterHtml += `2. ${registration.member1} (${registration.member1Email || "No Email"})<br/>`;
+        if (count >= 2 && registration.member2) rosterHtml += `3. ${registration.member2} (${registration.member2Email || "No Email"})<br/>`;
+        if (count >= 3 && registration.member3) rosterHtml += `4. ${registration.member3} (${registration.member3Email || "No Email"})<br/>`;
+        if (count >= 4 && registration.member4) rosterHtml += `5. ${registration.member4} (${registration.member4Email || "No Email"})<br/>`;
+        if (count >= 5 && registration.member5) rosterHtml += `6. ${registration.member5} (${registration.member5Email || "No Email"})`;
+
+        const confirmHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+            <div style="text-align: center; margin-bottom: 24px;">
+              <span style="display: inline-block; background-color: #e0e7ff; color: #4338ca; padding: 6px 12px; border-radius: 9999px; font-size: 11px; font-weight: bold; text-transform: uppercase;">Registration Confirmed</span>
+              <h2 style="color: #4f46e5; margin-top: 8px; margin-bottom: 4px; font-size: 22px; font-weight: bold;">Smart India Hackathon</h2>
+              <p style="font-size: 14px; color: #64748b; margin-top: 0;">SVEC Campus Hackathon Edition</p>
+            </div>
+
+            <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; padding: 20px; border-radius: 12px; margin: 24px 0;">
+              <h3 style="margin-top: 0; color: #0f172a; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Hackathon Registration Summary:</h3>
+              <table style="width: 100%; border-collapse: collapse; font-size: 13px; color: #334155;">
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b; width: 130px;">Registration ID:</td>
+                  <td style="padding: 6px 0; font-weight: bold; color: #0f172a;">${registration.registrationId}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b;">Team Name:</td>
+                  <td style="padding: 6px 0; font-weight: bold; color: #0f172a;">${registration.teamName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b;">Problem Code:</td>
+                  <td style="padding: 6px 0; font-weight: bold; color: #0f172a;">${psDetails}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b;">Mentor Name:</td>
+                  <td style="padding: 6px 0; font-weight: bold; color: #0f172a;">${registration.mentorName}</td>
+                </tr>
+                <tr>
+                  <td style="padding: 6px 0; color: #64748b;">Payment Status:</td>
+                  <td style="padding: 6px 0; text-transform: uppercase; font-size: 11px;"><span style="background-color: #d1fae5; color: #065f46; padding: 2px 6px; border-radius: 4px; font-weight: bold;">PAID</span></td>
+                </tr>
+              </table>
+            </div>
+
+            <div style="background-color: #eff6ff; border: 1px solid #bfdbfe; padding: 14px; border-radius: 8px; margin-bottom: 24px; font-size: 12px; color: #1e40af; line-height: 1.5;">
+              <strong>Team Registered!</strong> You can now log into the Student Portal to upload your presentation and track your ideas status.
+            </div>
+
+            <div style="font-size: 12px; color: #475569; margin-bottom: 24px; line-height: 1.6;">
+              ${rosterHtml}
+            </div>
+
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+            <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">This is an automated confirmation from SVEC Smart India Hackathon Portal.</p>
+          </div>
+        `;
+
+        // Dispatch to each member in background
+        Promise.all(uniqueTeamEmails.map(email => sendEmail(email, confirmSubject, confirmHtml))).catch(err => {
+          console.error("Failed to send some of the team registration confirmation emails:", err);
+        });
+      }
+    } catch (err) {
+      console.error("Error setting up team registration email dispatch:", err);
+    }
+
+    res.json({ success: true, registration });
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to verify signature: " + err.message });
+  }
+});
+
 // PUT update a registration (Admin)
 app.put("/api/registrations/:id", validateAdmin, (req, res) => {
   const { id } = req.params;
@@ -2435,6 +3301,12 @@ app.put("/api/registrations/:id", validateAdmin, (req, res) => {
 
   registrations[idx] = updated;
   writeRegistrations(registrations);
+
+  // Sync to external DB in the background
+  syncRegistrationToExternalDB(updated).catch(err => {
+    console.error("Failed to sync updated registration to external DB in background:", err);
+  });
+
   res.json({ success: true, registration: updated });
 });
 
