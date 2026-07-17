@@ -751,6 +751,26 @@ export default function AdminPanel({
   const [evaluationError, setEvaluationError] = useState("");
   const [evaluationSuccess, setEvaluationSuccess] = useState("");
   const [showPrintModal, setShowPrintModal] = useState(false);
+  const [printFilterEvaluator, setPrintFilterEvaluator] = useState<string>("all");
+  const [printFilterStatus, setPrintFilterStatus] = useState<string>("all");
+
+  const printedTeams = registrations.filter(reg => {
+    if (adminRole === "Evaluator") {
+      return reg.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin");
+    }
+    // SPOC / Student SPOC custom filtering
+    if (printFilterEvaluator !== "all" && reg.assignedEvaluator !== printFilterEvaluator) {
+      return false;
+    }
+    if (printFilterStatus === "completed") {
+      if (reg.evaluationStatus !== "completed") return false;
+    } else if (printFilterStatus === "pending") {
+      if (reg.evaluationStatus === "completed") return false;
+    } else if (printFilterStatus === "selected") {
+      if (!reg.isFinalSelected) return false;
+    }
+    return true;
+  });
 
   // Criteria Editing States (for Super Admin management)
   const [newCriterionName, setNewCriterionName] = useState("");
@@ -4233,6 +4253,19 @@ export default function AdminPanel({
                 </p>
               </div>
             </div>
+
+            {/* Print/Download Marks Table Button */}
+            <button
+              onClick={() => {
+                setPrintFilterEvaluator("all");
+                setPrintFilterStatus("all");
+                setShowPrintModal(true);
+              }}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 self-start md:self-auto"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Download Evaluation Report (PDF)</span>
+            </button>
           </div>
 
           {/* Subpanels Container */}
@@ -6270,13 +6303,53 @@ export default function AdminPanel({
 
               {/* Modal Body / Print Area */}
               <div className="p-6 overflow-y-auto flex-1 space-y-6">
-                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-start gap-2.5">
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-800 flex items-start gap-2.5 no-print">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                   <div>
                     <p className="font-bold">Print Hint</p>
                     <p className="mt-0.5">Click the "Print Report (PDF)" button below. In the system print dialog, enable <b>Background Graphics</b> and set layout to <b>Landscape</b> to print the table beautifully.</p>
                   </div>
                 </div>
+
+                {/* Print Filter Controls for SPOC/Admin */}
+                {(adminRole === "SPOC" || adminRole === "Student SPOC") && (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 no-print text-left">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider font-display">SPOC Master Report Filters</h4>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Filter the evaluation data before downloading or printing the scorecard.</p>
+                    </div>
+                    <div className="flex gap-3 flex-wrap items-center">
+                      <div>
+                        <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1">Evaluator</span>
+                        <select
+                          value={printFilterEvaluator}
+                          onChange={(e) => setPrintFilterEvaluator(e.target.value)}
+                          className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium outline-none text-slate-700 min-w-[140px]"
+                        >
+                          <option value="all">All Evaluators</option>
+                          {Array.from(new Set(registrations.map(r => r.assignedEvaluator).filter(Boolean))).map(evaluator => (
+                            <option key={evaluator} value={evaluator}>
+                              {evaluator}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1">Status / Filter</span>
+                        <select
+                          value={printFilterStatus}
+                          onChange={(e) => setPrintFilterStatus(e.target.value)}
+                          className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium outline-none text-slate-700 min-w-[120px]"
+                        >
+                          <option value="all">All Teams</option>
+                          <option value="completed">Evaluation Completed</option>
+                          <option value="pending">Evaluation Pending</option>
+                          <option value="selected">Selected (Promoted) Only</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Printable Content container */}
                 <div id="print-report-content" className="p-6 border border-slate-200 rounded-3xl bg-white text-left space-y-6">
@@ -6350,14 +6423,20 @@ export default function AdminPanel({
                       <span className="text-[10px] font-bold text-indigo-600 font-mono tracking-wider uppercase">
                         Smart India Hackathon (SIH) Internal Hackathon
                       </span>
-                      <h3 className="text-sm font-bold text-slate-800 mt-1 uppercase">
-                        Assigned Teams Evaluation Scorecard
+                      <h3 className="text-sm font-bold text-slate-800 mt-1 uppercase font-display">
+                        {adminRole === "Evaluator" 
+                          ? "Assigned Teams Evaluation Scorecard" 
+                          : "Consolidated Evaluation & Selection Report"
+                        }
                       </h3>
                     </div>
                     <div className="text-right text-[10px] font-mono text-slate-500 space-y-0.5">
-                      <p><b>Evaluator:</b> {sessionStorage.getItem("svec_sih_admin_username") || "admin"}</p>
+                      <p><b>Evaluator / Scope:</b> {adminRole === "Evaluator" 
+                        ? (sessionStorage.getItem("svec_sih_admin_username") || "admin") 
+                        : (printFilterEvaluator === "all" ? "All Evaluators (SPOC)" : printFilterEvaluator)
+                      }</p>
                       <p><b>Date:</b> {new Date().toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-                      <p><b>Total Assigned:</b> {registrations.filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin")).length} Teams</p>
+                      <p><b>Total Teams:</b> {printedTeams.length} Teams</p>
                     </div>
                   </div>
 
@@ -6384,67 +6463,68 @@ export default function AdminPanel({
                         </tr>
                       </thead>
                       <tbody>
-                        {registrations.filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin")).length === 0 ? (
+                        {printedTeams.length === 0 ? (
                           <tr>
                             <td colSpan={6 + evaluationCriteria.length} className="p-8 text-center text-slate-400 font-medium">
-                              No teams assigned to evaluate.
+                              No teams matching the selected criteria.
                             </td>
                           </tr>
                         ) : (
-                          registrations
-                            .filter(r => r.assignedEvaluator === (sessionStorage.getItem("svec_sih_admin_username") || "admin"))
-                            .map((reg, idx) => {
-                              const ps = problemStatements.find(p => p.id === reg.problemStatementId);
-                              const isCompleted = reg.evaluationStatus === "completed";
-                              const totalScore = isCompleted ? Object.values(reg.evaluatorScores || {}).reduce((a: number, b: any) => a + (b as number), 0) : 0;
-                              const maxPossible = evaluationCriteria.reduce((acc, c) => acc + (c.maxScore || 10), 0);
+                          printedTeams.map((reg, idx) => {
+                            const ps = problemStatements.find(p => p.id === reg.problemStatementId);
+                            const isCompleted = reg.evaluationStatus === "completed";
+                            const totalScore = isCompleted ? Object.values(reg.evaluatorScores || {}).reduce((a: number, b: any) => a + (b as number), 0) : 0;
+                            const maxPossible = evaluationCriteria.reduce((acc, c) => acc + (c.maxScore || 10), 0);
 
-                              return (
-                                <tr key={reg.id} className="border-b border-slate-200 hover:bg-slate-50/50">
-                                  <td className="p-2.5 border border-slate-300 text-center font-semibold font-mono">{idx + 1}</td>
-                                  <td className="p-2.5 border border-slate-300 font-bold font-mono text-indigo-600">{reg.registrationId}</td>
-                                  <td className="p-2.5 border border-slate-300">
-                                    <div className="font-bold text-slate-800">{reg.teamName}</div>
-                                    <div className="text-[10px] text-slate-500 mt-0.5">Lead: {reg.leadName} ({reg.leadDepartment})</div>
-                                  </td>
-                                  <td className="p-2.5 border border-slate-300">
-                                    {ps ? (
-                                      <div>
-                                        <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1 rounded text-[10px]">{ps.code}</span>
-                                        <div className="line-clamp-2 mt-0.5 text-slate-600 text-[10px]">{ps.title}</div>
-                                      </div>
-                                    ) : (
-                                      <span className="text-slate-400">Not selected</span>
-                                    )}
-                                  </td>
+                            return (
+                              <tr key={reg.id} className="border-b border-slate-200 hover:bg-slate-50/50">
+                                <td className="p-2.5 border border-slate-300 text-center font-semibold font-mono">{idx + 1}</td>
+                                <td className="p-2.5 border border-slate-300 font-bold font-mono text-indigo-600">{reg.registrationId}</td>
+                                <td className="p-2.5 border border-slate-300">
+                                  <div className="font-bold text-slate-800">{reg.teamName}</div>
+                                  <div className="text-[10px] text-slate-500 mt-0.5">Lead: {reg.leadName} ({reg.leadDepartment})</div>
+                                  {adminRole !== "Evaluator" && reg.assignedEvaluator && (
+                                    <div className="text-[9px] text-indigo-500 mt-0.5 font-bold">Evaluator: {reg.assignedEvaluator}</div>
+                                  )}
+                                </td>
+                                <td className="p-2.5 border border-slate-300">
+                                  {ps ? (
+                                    <div>
+                                      <span className="font-mono font-bold bg-slate-100 text-slate-700 px-1 rounded text-[10px]">{ps.code}</span>
+                                      <div className="line-clamp-2 mt-0.5 text-slate-600 text-[10px]">{ps.title}</div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-slate-400">Not selected</span>
+                                  )}
+                                </td>
 
-                                  {/* Criteria Scores */}
-                                  {evaluationCriteria.map(crit => {
-                                    const score = isCompleted ? (reg.evaluatorScores?.[crit.id] ?? 0) : null;
-                                    return (
-                                      <td key={crit.id} className="p-2.5 border border-slate-300 text-center font-bold">
-                                        {score !== null ? (
-                                          <span className="text-slate-800">{score}</span>
-                                        ) : (
-                                          <span className="text-amber-500 font-semibold italic">Pending</span>
-                                        )}
-                                      </td>
-                                    );
-                                  })}
+                                {/* Criteria Scores */}
+                                {evaluationCriteria.map(crit => {
+                                  const score = isCompleted ? (reg.evaluatorScores?.[crit.id] ?? 0) : null;
+                                  return (
+                                    <td key={crit.id} className="p-2.5 border border-slate-300 text-center font-bold">
+                                      {score !== null ? (
+                                        <span className="text-slate-800">{score}</span>
+                                      ) : (
+                                        <span className="text-amber-500 font-semibold italic text-[10px]">Pending</span>
+                                      )}
+                                    </td>
+                                  );
+                                })}
 
-                                  <td className="p-2.5 border border-slate-300 text-center font-black text-indigo-600 font-display">
-                                    {isCompleted ? (
-                                      <span>{totalScore} / {maxPossible}</span>
-                                    ) : (
-                                      <span className="text-amber-500 italic font-semibold">Pending</span>
-                                    )}
-                                  </td>
-                                  <td className="p-2.5 border border-slate-300 text-slate-600 italic">
-                                    {reg.evaluationNotes || <span className="text-slate-400">-</span>}
-                                  </td>
-                                </tr>
-                              );
-                            })
+                                <td className="p-2.5 border border-slate-300 text-center font-black text-indigo-600 font-display">
+                                  {isCompleted ? (
+                                    <span>{totalScore} / {maxPossible}</span>
+                                  ) : (
+                                    <span className="text-amber-500 italic font-semibold text-[10px]">Pending</span>
+                                  )}
+                                </td>
+                                <td className="p-2.5 border border-slate-300 text-slate-600 italic">
+                                  {reg.evaluationNotes || <span className="text-slate-400">-</span>}
+                                </td>
+                              </tr>
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
@@ -6456,8 +6536,18 @@ export default function AdminPanel({
                       <p className="italic text-slate-400">Generated securely via SVEC SIH Portal</p>
                     </div>
                     <div className="text-center w-48 border-t border-slate-400 pt-1">
-                      <p className="font-bold text-slate-800">{sessionStorage.getItem("svec_sih_admin_username") || "Evaluator"}</p>
-                      <p className="text-[10px] text-slate-400">Signature of the Evaluator</p>
+                      <p className="font-bold text-slate-800">
+                        {adminRole === "Evaluator" 
+                          ? (sessionStorage.getItem("svec_sih_admin_username") || "Evaluator") 
+                          : "SIH College SPOC / Admin"
+                        }
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {adminRole === "Evaluator" 
+                          ? "Signature of the Evaluator" 
+                          : "Signature of the SPOC"
+                        }
+                      </p>
                     </div>
                   </div>
                 </div>
