@@ -1488,6 +1488,7 @@ app.post("/api/settings", validateAdmin, (req, res) => {
 
     // Student profile updates lock & Certificates Customization
     lockStudentUpdates,
+    lockRegisterAnotherTeam,
     enableCertificates,
     certificateTitle,
     certificateSubtitle,
@@ -1563,6 +1564,7 @@ app.post("/api/settings", validateAdmin, (req, res) => {
 
     // Updates lock & certificates
     lockStudentUpdates: !!lockStudentUpdates,
+    lockRegisterAnotherTeam: !!lockRegisterAnotherTeam,
     enableCertificates: !!enableCertificates,
     certificateTitle: (certificateTitle || "").trim(),
     certificateSubtitle: (certificateSubtitle || "").trim(),

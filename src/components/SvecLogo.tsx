@@ -1,11 +1,14 @@
 import React from "react";
 
-export default function SvecLogo({ className = "w-12 h-12" }: { className?: string }) {
+export default function SvecLogo({ className = "w-12 h-12", style }: { className?: string; style?: React.CSSProperties }) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 400 400"
       className={className}
+      style={style}
+      width="100%"
+      height="100%"
     >
       {/* Outer Gear / Cog Wheel */}
       <g id="gear" fill="#16a34a">

@@ -41,7 +41,8 @@ import {
   ChevronUp,
   Database,
   Award,
-  Upload
+  Upload,
+  Loader2
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -49,6 +50,157 @@ import PageMenuCustomizer from "./PageMenuCustomizer";
 import SvecLogo from "./SvecLogo";
 import ConsentLetterModal from "./ConsentLetterModal";
 import ParticipationCertificateModal from "./ParticipationCertificateModal";
+
+// Helper to temporarily intercept CSS rules containing "oklch" (which crashes html2canvas in Tailwind v4)
+function makeOklchSafe() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext("2d");
+
+  function oklchToRgb(oklchColor: string): string {
+    if (!ctx) return "rgb(0, 0, 0)";
+    try {
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillStyle = oklchColor;
+      ctx.fillRect(0, 0, 1, 1);
+      const imgData = ctx.getImageData(0, 0, 1, 1).data;
+      return `rgba(${imgData[0]}, ${imgData[1]}, ${imgData[2]}, ${imgData[3] / 255})`;
+    } catch (e) {
+      return "rgb(0, 0, 0)";
+    }
+  }
+
+  function replaceOklchInString(str: string): string {
+    if (!str || typeof str !== "string") return str;
+    if (!str.includes("oklch") && !str.includes("oklab")) return str;
+    return str.replace(/(oklch|oklab)\([^)]+\)/g, (match) => oklchToRgb(match));
+  }
+
+  // 1. Patch getComputedStyle
+  const originalGetComputedStyle = window.getComputedStyle;
+  window.getComputedStyle = function(element, pseudoElement) {
+    const style = originalGetComputedStyle(element, pseudoElement);
+    return new Proxy(style, {
+      get(target, prop) {
+        const value = (target as any)[prop];
+        if (typeof value === "function") {
+          if (prop === "getPropertyValue") {
+            return function(propertyName: string) {
+              const val = target.getPropertyValue(propertyName);
+              return replaceOklchInString(val);
+            };
+          }
+          return value.bind(target);
+        }
+        if (typeof prop === "string" && typeof value === "string") {
+          return replaceOklchInString(value);
+        }
+        return value;
+      }
+    });
+  };
+
+  // 2. Patch CSSStyleSheet cssRules and rules
+  const cssRulesDescriptor = Object.getOwnPropertyDescriptor(CSSStyleSheet.prototype, "cssRules");
+  const rulesDescriptor = Object.getOwnPropertyDescriptor(CSSStyleSheet.prototype, "rules");
+
+  function proxyRuleList(rules: CSSRuleList): CSSRuleList {
+    if (!rules) return rules;
+    return new Proxy(rules, {
+      get(target, prop) {
+        if (prop === "length") {
+          return target.length;
+        }
+        if (prop === "item") {
+          return function(index: number) {
+            const rule = target.item(index);
+            return rule ? proxyRule(rule) : null;
+          };
+        }
+        const index = Number(prop);
+        if (!isNaN(index)) {
+          const rule = target[index];
+          return rule ? proxyRule(rule) : undefined;
+        }
+        const val = (target as any)[prop];
+        return typeof val === "function" ? val.bind(target) : val;
+      }
+    }) as any;
+  }
+
+  function proxyRule(rule: CSSRule): CSSRule {
+    if (!rule) return rule;
+    return new Proxy(rule, {
+      get(target, prop) {
+        if (prop === "cssText") {
+          try {
+            return replaceOklchInString(target.cssText);
+          } catch {
+            return "";
+          }
+        }
+        if (prop === "style" && "style" in target) {
+          const style = (target as any).style;
+          return new Proxy(style, {
+            get(styleTarget, styleProp) {
+              const val = (styleTarget as any)[styleProp];
+              if (typeof val === "function") {
+                if (styleProp === "getPropertyValue") {
+                  return function(propertyName: string) {
+                    const v = styleTarget.getPropertyValue(propertyName);
+                    return replaceOklchInString(v);
+                  };
+                }
+                return val.bind(styleTarget);
+              }
+              if (typeof styleProp === "string" && typeof val === "string") {
+                return replaceOklchInString(val);
+              }
+              return val;
+            }
+          });
+        }
+        const val = (target as any)[prop];
+        return typeof val === "function" ? val.bind(target) : val;
+      }
+    });
+  }
+
+  const patchGetter = (originalGetter: any) => {
+    return function(this: CSSStyleSheet) {
+      try {
+        const rules = originalGetter.call(this);
+        return proxyRuleList(rules);
+      } catch (e) {
+        return [];
+      }
+    };
+  };
+
+  if (cssRulesDescriptor && cssRulesDescriptor.get) {
+    Object.defineProperty(CSSStyleSheet.prototype, "cssRules", {
+      get: patchGetter(cssRulesDescriptor.get),
+      configurable: true,
+    });
+  }
+  if (rulesDescriptor && rulesDescriptor.get) {
+    Object.defineProperty(CSSStyleSheet.prototype, "rules", {
+      get: patchGetter(rulesDescriptor.get),
+      configurable: true,
+    });
+  }
+
+  return () => {
+    window.getComputedStyle = originalGetComputedStyle;
+    if (cssRulesDescriptor) {
+      Object.defineProperty(CSSStyleSheet.prototype, "cssRules", cssRulesDescriptor);
+    }
+    if (rulesDescriptor) {
+      Object.defineProperty(CSSStyleSheet.prototype, "rules", rulesDescriptor);
+    }
+  };
+}
 
 interface AdminPanelProps {
   onBackToPortal: () => void;
@@ -804,6 +956,8 @@ export default function AdminPanel({
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [printFilterEvaluator, setPrintFilterEvaluator] = useState<string>("all");
   const [printFilterStatus, setPrintFilterStatus] = useState<string>("all");
+  const [isDownloadingReport, setIsDownloadingReport] = useState(false);
+  const [downloadReportError, setDownloadReportError] = useState("");
 
   const printedTeams = registrations.filter(reg => {
     if (adminRole === "Evaluator") {
@@ -822,6 +976,54 @@ export default function AdminPanel({
     }
     return true;
   });
+
+  const handleDownloadReportPDF = async () => {
+    if (isDownloadingReport) return;
+    setDownloadReportError("");
+    setIsDownloadingReport(true);
+
+    // Yield main thread so the loading state and spinner can render in the browser
+    setTimeout(async () => {
+      try {
+        const element = document.getElementById("print-report-content");
+        if (!element) {
+          throw new Error("Report content area not found.");
+        }
+
+        // Load html2pdf from CDN if it's not already loaded
+        if (!(window as any).html2pdf) {
+          await new Promise<void>((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error("Failed to load PDF library"));
+            document.head.appendChild(script);
+          });
+        }
+
+        const opt = {
+          margin: 10,
+          filename: `SIH_Internal_Evaluation_Report_${new Date().toISOString().slice(0, 10)}.pdf`,
+          image: { type: "jpeg", quality: 1.0 },
+          html2canvas: { scale: 2, useCORS: true, logging: false },
+          jsPDF: { unit: "mm", format: "a4", orientation: "landscape" }
+        };
+
+        const restore = makeOklchSafe();
+        try {
+          const worker = (window as any).html2pdf().from(element).set(opt);
+          await worker.save();
+        } finally {
+          restore();
+        }
+      } catch (err: any) {
+        console.error("Report PDF generation error:", err);
+        setDownloadReportError(err?.message || "Failed to generate PDF. Please try again.");
+      } finally {
+        setIsDownloadingReport(false);
+      }
+    }, 150);
+  };
 
   // Criteria Editing States (for Super Admin management)
   const [newCriterionName, setNewCriterionName] = useState("");
@@ -4416,11 +4618,15 @@ export default function AdminPanel({
 
             {/* Print/Download Marks Table Button */}
             <button
-              onClick={() => setShowPrintModal(true)}
+              onClick={() => {
+                setPrintFilterEvaluator(sessionStorage.getItem("svec_sih_admin_username") || "admin");
+                setPrintFilterStatus("all");
+                setShowPrintModal(true);
+              }}
               className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 shrink-0 self-start md:self-auto"
             >
               <Printer className="w-4 h-4" />
-              <span>Print Marks Report (PDF)</span>
+              <span>Download Evaluation Report (PDF)</span>
             </button>
           </div>
 
@@ -6980,22 +7186,49 @@ export default function AdminPanel({
               </div>
 
               {/* Modal Footer */}
-              <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0 no-print">
-                <button
-                  type="button"
-                  onClick={() => setShowPrintModal(false)}
-                  className="px-5 py-2.5 text-xs font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl shadow-xs cursor-pointer transition-colors"
-                >
-                  Close Preview
-                </button>
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-5 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-1.5"
-                >
-                  <Printer className="w-4 h-4" />
-                  Print Report (PDF)
-                </button>
+              <div className="p-6 border-t border-slate-100 bg-slate-50 flex flex-col gap-3 shrink-0 no-print">
+                {downloadReportError && (
+                  <p className="text-xs text-rose-600 font-bold text-right w-full">
+                    ⚠️ {downloadReportError}
+                  </p>
+                )}
+                <div className="flex justify-end gap-3 items-center w-full">
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintModal(false)}
+                    disabled={isDownloadingReport}
+                    className="px-5 py-2.5 text-xs font-bold text-slate-600 bg-white hover:bg-slate-100 border border-slate-200 rounded-xl shadow-xs cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Close Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    disabled={isDownloadingReport}
+                    className="px-5 py-2.5 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Printer className="w-4 h-4" />
+                    Print via Browser
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadReportPDF}
+                    disabled={isDownloadingReport}
+                    className="px-5 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-80 disabled:cursor-not-allowed"
+                  >
+                    {isDownloadingReport ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        Generating PDF...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        Download Landscape PDF
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -7006,6 +7239,7 @@ export default function AdminPanel({
         isOpen={!!selectedRegForLetter}
         onClose={() => setSelectedRegForLetter(null)}
         registration={selectedRegForLetter}
+        config={settingsForm}
       />
 
       {selectedCertStudentName && selectedCertReg && (
