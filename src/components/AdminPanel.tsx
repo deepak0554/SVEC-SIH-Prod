@@ -233,6 +233,28 @@ export default function AdminPanel({
   useEffect(() => {
     sessionStorage.setItem("svec_sih_admin_active_tab", activeTab);
   }, [activeTab]);
+
+  useEffect(() => {
+    const fetchPublicSettings = async () => {
+      try {
+        const res = await fetch("/api/settings/public");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.logoUrl) {
+            setSettingsForm(prev => ({
+              ...prev,
+              logoUrl: data.logoUrl,
+              portalTitle: data.portalTitle || prev.portalTitle,
+              portalCaption: data.portalCaption || prev.portalCaption
+            }));
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching public settings in AdminPanel:", err);
+      }
+    };
+    fetchPublicSettings();
+  }, []);
   const [isUserDropdownOpen, setIsUserDropdownOpen] = useState(false);
 
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -990,6 +1012,23 @@ export default function AdminPanel({
           throw new Error("Report content area not found.");
         }
 
+        // Capture and reset scroll positions of all scrollable ancestor containers
+        // to prevent html2canvas offset alignment/blank-space bugs
+        const scrolledAncestors: Array<{ element: HTMLElement; scrollTop: number; scrollLeft: number }> = [];
+        let parent = element.parentElement;
+        while (parent) {
+          if (parent.scrollHeight > parent.clientHeight || parent.scrollWidth > parent.clientWidth) {
+            scrolledAncestors.push({
+              element: parent,
+              scrollTop: parent.scrollTop,
+              scrollLeft: parent.scrollLeft,
+            });
+            parent.scrollTop = 0;
+            parent.scrollLeft = 0;
+          }
+          parent = parent.parentElement;
+        }
+
         // Load html2pdf from CDN if it's not already loaded
         if (!(window as any).html2pdf) {
           await new Promise<void>((resolve, reject) => {
@@ -1001,11 +1040,19 @@ export default function AdminPanel({
           });
         }
 
+        element.classList.add("pdf-generation-active");
+
         const opt = {
           margin: 10,
           filename: `SIH_Internal_Evaluation_Report_${new Date().toISOString().slice(0, 10)}.pdf`,
           image: { type: "jpeg", quality: 1.0 },
-          html2canvas: { scale: 2, useCORS: true, logging: false },
+          html2canvas: { 
+            scale: 2, 
+            useCORS: true, 
+            logging: false,
+            scrollX: 0,
+            scrollY: 0
+          },
           jsPDF: { unit: "mm", format: "a4", orientation: "landscape" }
         };
 
@@ -1015,6 +1062,13 @@ export default function AdminPanel({
           await worker.save();
         } finally {
           restore();
+          element.classList.remove("pdf-generation-active");
+          
+          // Restore the scroll positions of all ancestors perfectly
+          scrolledAncestors.forEach(({ element: el, scrollTop, scrollLeft }) => {
+            el.scrollTop = scrollTop;
+            el.scrollLeft = scrollLeft;
+          });
         }
       } catch (err: any) {
         console.error("Report PDF generation error:", err);
@@ -7010,6 +7064,24 @@ export default function AdminPanel({
                         display: none !important;
                       }
                     }
+
+                    /* Interactive PDF generation styles via html2canvas */
+                    .pdf-generation-active #print-report-content,
+                    .pdf-generation-active {
+                      font-family: ui-sans-serif, system-ui, sans-serif !important;
+                      color: #000000 !important;
+                      background: #ffffff !important;
+                      width: 100% !important;
+                      padding: 10mm 10mm 10mm 10mm !important;
+                      margin: 0 !important;
+                      box-shadow: none !important;
+                      border: none !important;
+                      font-size: 9.5pt !important;
+                      box-sizing: border-box !important;
+                    }
+                    .pdf-generation-active .no-print {
+                      display: none !important;
+                    }
                   `}} />
 
                   {/* Top Contact Info Bar (matching image) */}
@@ -7025,8 +7097,12 @@ export default function AdminPanel({
                   {/* College Letterhead Header */}
                   <div className="flex items-center gap-6 pb-4 border-b-2 border-slate-900">
                     {/* College Logo */}
-                    <div className="shrink-0">
-                      <SvecLogo className="w-20 h-20" />
+                    <div className="shrink-0 flex items-center justify-center w-20 h-20">
+                      {settingsForm?.logoUrl ? (
+                        <img src={settingsForm.logoUrl} width="80" height="80" className="max-w-full max-h-full object-contain" alt="College Logo" referrerPolicy="no-referrer" />
+                      ) : (
+                        <SvecLogo className="w-20 h-20" />
+                      )}
                     </div>
                     
                     {/* College Information */}
