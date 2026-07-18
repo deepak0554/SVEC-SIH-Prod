@@ -24,11 +24,12 @@ import {
   CheckCircle2,
   Download,
   Trophy,
-  Sparkles
+  Sparkles,
+  Award
 } from "lucide-react";
 import { Registration, ProblemStatement } from "../types";
 import SvecLogo from "./SvecLogo";
-import ConsentLetterModal from "./ConsentLetterModal";
+import ParticipationCertificateModal from "./ParticipationCertificateModal";
 
 interface ReceiptProps {
   registration: Registration;
@@ -60,8 +61,7 @@ export default function Receipt({
   };
 
   // Tab Navigation State
-  const [activeTab, setActiveTab] = useState<"slip" | "proposal" | "profile" | "team">("slip");
-  const [showConsentLetter, setShowConsentLetter] = useState(false);
+  const [activeTab, setActiveTab] = useState<"slip" | "proposal" | "profile" | "team" | "certificates">("slip");
 
   // Proposal Form State
   const [abstract, setAbstract] = useState(registration.abstract || "");
@@ -87,6 +87,11 @@ export default function Receipt({
   const [teamError, setTeamError] = useState("");
   const [teamMembersCount, setTeamMembersCount] = useState<number>(5);
   const [genderDiversityRequired, setGenderDiversityRequired] = useState<boolean>(true);
+  const [lockStudentUpdates, setLockStudentUpdates] = useState<boolean>(false);
+  const [lockRegisterAnotherTeam, setLockRegisterAnotherTeam] = useState<boolean>(false);
+  const [enableCertificates, setEnableCertificates] = useState<boolean>(false);
+  const [certificateConfig, setCertificateConfig] = useState<any>(null);
+  const [selectedCertStudentName, setSelectedCertStudentName] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/public")
@@ -97,6 +102,16 @@ export default function Receipt({
         }
         if (data.genderDiversityRequired !== undefined) {
           setGenderDiversityRequired(data.genderDiversityRequired);
+        }
+        if (data.lockStudentUpdates !== undefined) {
+          setLockStudentUpdates(data.lockStudentUpdates);
+        }
+        if (data.lockRegisterAnotherTeam !== undefined) {
+          setLockRegisterAnotherTeam(data.lockRegisterAnotherTeam);
+        }
+        if (data.enableCertificates !== undefined) {
+          setEnableCertificates(data.enableCertificates);
+          setCertificateConfig(data);
         }
       })
       .catch(err => console.error("Error loading public settings in Receipt", err));
@@ -518,6 +533,20 @@ export default function Receipt({
             <Users className="w-4 h-4" />
             Manage Team
           </button>
+          {enableCertificates && (
+            <button
+              onClick={() => setActiveTab("certificates")}
+              className={`flex-1 py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                activeTab === "certificates"
+                  ? "bg-white text-indigo-700 shadow-md"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+              id="tab-certificates"
+            >
+              <Award className="w-4 h-4" />
+              Certificates
+            </button>
+          )}
         </div>
       </div>
 
@@ -548,16 +577,6 @@ export default function Receipt({
                   "{registration.selectionNotes}"
                 </div>
               )}
-              <div className="mt-4 pt-4 border-t border-white/15 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setShowConsentLetter(true)}
-                  className="px-4 py-2 bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl text-xs font-black tracking-wide transition-all cursor-pointer flex items-center gap-1.5 shadow-md active:scale-98"
-                >
-                  <FileText className="w-4 h-4 text-emerald-600" />
-                  Generate College Consent Letter
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -840,13 +859,23 @@ export default function Receipt({
                 <Printer className="w-5 h-5" />
                 Print / Save PDF
               </button>
-              <button
-                onClick={onReset}
-                className="flex-1 py-3 px-4 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer shadow-md shadow-indigo-100"
-              >
-                Register Another Team
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              {lockRegisterAnotherTeam ? (
+                <button
+                  disabled
+                  className="flex-1 py-3 px-4 rounded-xl font-bold bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center gap-2 cursor-not-allowed"
+                >
+                  <Lock className="w-4 h-4 text-slate-400" />
+                  Register Another Team (Locked)
+                </button>
+              ) : (
+                <button
+                  onClick={onReset}
+                  className="flex-1 py-3 px-4 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer shadow-md shadow-indigo-100"
+                >
+                  Register Another Team
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </motion.div>
         )}
@@ -1161,10 +1190,18 @@ export default function Receipt({
                     </div>
                   )}
 
+                  {lockStudentUpdates && (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3.5 flex gap-2.5 text-xs font-semibold text-amber-800 shadow-xs">
+                      <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <span>Editing locked: Profile modifications have been disabled by the SPOC Administrator.</span>
+                    </div>
+                  )}
+
                   {/* Profile form */}
                   <form
                     onSubmit={async (e) => {
                       e.preventDefault();
+                      if (lockStudentUpdates) return;
                       setProfileError("");
                       setProfileSuccess("");
                       setProfileLoading(true);
@@ -1212,8 +1249,11 @@ export default function Receipt({
                         placeholder="10-digit mobile"
                         value={profileMobile}
                         onChange={(e) => setProfileMobile(e.target.value)}
-                        className="w-full px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500 transition-all font-mono"
+                        className={`w-full px-4 py-2.5 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 transition-all font-mono ${
+                          lockStudentUpdates ? "bg-slate-50 text-slate-400 cursor-not-allowed" : "bg-white"
+                        }`}
                         required
+                        disabled={lockStudentUpdates}
                       />
                     </div>
 
@@ -1222,8 +1262,11 @@ export default function Receipt({
                       <select
                         value={profileGender}
                         onChange={(e) => setProfileGender(e.target.value)}
-                        className="w-full px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                        className={`w-full px-4 py-2.5 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer ${
+                          lockStudentUpdates ? "bg-slate-50 text-slate-400 cursor-not-allowed" : "bg-white"
+                        }`}
                         required
+                        disabled={lockStudentUpdates}
                       >
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
@@ -1235,8 +1278,11 @@ export default function Receipt({
                       <select
                         value={profileDept}
                         onChange={(e) => setProfileDept(e.target.value)}
-                        className="w-full px-4 py-2.5 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                        className={`w-full px-4 py-2.5 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer ${
+                          lockStudentUpdates ? "bg-slate-50 text-slate-400 cursor-not-allowed" : "bg-white"
+                        }`}
                         required
+                        disabled={lockStudentUpdates}
                       >
                         <option value="CSE">Computer Science & Engineering (CSE)</option>
                         <option value="CSE-AI">CSE - Artificial Intelligence (CSE-AI)</option>
@@ -1252,9 +1298,14 @@ export default function Receipt({
                     <div className="sm:col-span-2 text-right pt-2">
                       <button
                         type="submit"
-                        className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all"
+                        disabled={lockStudentUpdates}
+                        className={`px-5 py-2.5 font-bold text-xs rounded-xl shadow-md transition-all ${
+                          lockStudentUpdates
+                            ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                            : "bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+                        }`}
                       >
-                        Save Profile Info
+                        {lockStudentUpdates ? "Profile Editing Locked" : "Save Profile Info"}
                       </button>
                     </div>
                   </form>
@@ -1402,9 +1453,17 @@ export default function Receipt({
                 </div>
               )}
 
+              {lockStudentUpdates && (
+                <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-4 text-xs mb-6 flex gap-2.5 font-semibold">
+                  <Lock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>Editing locked: Team roster and student member details have been locked by the SPOC Administrator.</span>
+                </div>
+              )}
+
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
+                  if (lockStudentUpdates) return;
                   setTeamError("");
                   setTeamSuccess("");
                   setTeamLoading(true);
@@ -1742,13 +1801,22 @@ export default function Receipt({
                 <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
                   <button
                     type="submit"
-                    disabled={teamLoading}
-                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md cursor-pointer transition-all flex items-center justify-center gap-1.5"
+                    disabled={teamLoading || lockStudentUpdates}
+                    className={`px-6 py-3 font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 ${
+                      lockStudentUpdates
+                        ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                        : "bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+                    }`}
                   >
                     {teamLoading ? (
                       <>
                         <span className="w-4 h-4 border-2 border-indigo-200 border-t-white rounded-full animate-spin inline-block"></span>
                         <span>Saving Changes...</span>
+                      </>
+                    ) : lockStudentUpdates ? (
+                      <>
+                        <Lock className="w-4 h-4 text-slate-400" />
+                        <span>Team Roster Locked</span>
                       </>
                     ) : (
                       <>
@@ -1759,6 +1827,151 @@ export default function Receipt({
                   </button>
                 </div>
               </form>
+            </div>
+          </motion.div>
+        )}
+        {activeTab === "certificates" && (
+          <motion.div
+            key="certificates-tab"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            transition={{ duration: 0.15 }}
+            className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden p-6 md:p-8 text-left space-y-6"
+          >
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-2xl text-indigo-600">
+                  <Award className="w-8 h-8" />
+                </div>
+                <div>
+                  <span className="inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] uppercase tracking-wider font-extrabold px-2.5 py-0.5 rounded-full">
+                    ★ Hackathon Completed ★
+                  </span>
+                  <h3 className="text-xl font-extrabold font-display leading-tight tracking-tight mt-1 text-slate-800">
+                    Download Your Participation Certificates
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Participation certificates are now available for download. Select any member to preview, edit, or print.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-6">
+                {/* Team Leader Card */}
+                {registration.leadName && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                    <div className="space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-amber-600 font-extrabold font-mono">Team Leader</span>
+                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.leadName}</h4>
+                      <p className="text-[10px] text-slate-500 truncate">{registration.studentEmail}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCertStudentName(registration.leadName)}
+                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Get Certificate
+                    </button>
+                  </div>
+                )}
+
+                {/* Member 1 Card */}
+                {registration.member1 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                    <div className="space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 1</span>
+                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member1}</h4>
+                      <p className="text-[10px] text-slate-500 truncate">{registration.member1Email || "No Email listed"}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCertStudentName(registration.member1)}
+                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Get Certificate
+                    </button>
+                  </div>
+                )}
+
+                {/* Member 2 Card */}
+                {registration.member2 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                    <div className="space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 2</span>
+                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member2}</h4>
+                      <p className="text-[10px] text-slate-500 truncate">{registration.member2Email || "No Email listed"}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCertStudentName(registration.member2)}
+                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Get Certificate
+                    </button>
+                  </div>
+                )}
+
+                {/* Member 3 Card */}
+                {registration.member3 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                    <div className="space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 3</span>
+                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member3}</h4>
+                      <p className="text-[10px] text-slate-500 truncate">{registration.member3Email || "No Email listed"}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCertStudentName(registration.member3)}
+                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Get Certificate
+                    </button>
+                  </div>
+                )}
+
+                {/* Member 4 Card */}
+                {registration.member4 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                    <div className="space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 4</span>
+                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member4}</h4>
+                      <p className="text-[10px] text-slate-500 truncate">{registration.member4Email || "No Email listed"}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCertStudentName(registration.member4)}
+                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Get Certificate
+                    </button>
+                  </div>
+                )}
+
+                {/* Member 5 Card */}
+                {registration.member5 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                    <div className="space-y-1">
+                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 5</span>
+                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member5}</h4>
+                      <p className="text-[10px] text-slate-500 truncate">{registration.member5Email || "No Email listed"}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCertStudentName(registration.member5)}
+                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Get Certificate
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -1781,12 +1994,16 @@ export default function Receipt({
         }
       `}</style>
 
-      <ConsentLetterModal
-        isOpen={showConsentLetter}
-        onClose={() => setShowConsentLetter(false)}
-        registration={registration}
-        isReadOnly={true}
-      />
+      {selectedCertStudentName && (
+        <ParticipationCertificateModal
+          isOpen={true}
+          onClose={() => setSelectedCertStudentName(null)}
+          studentName={selectedCertStudentName}
+          registration={registration}
+          config={certificateConfig}
+          problemStatement={problemStatements.find(p => p.id === registration.problemStatementId)}
+        />
+      )}
 
     </div>
   );

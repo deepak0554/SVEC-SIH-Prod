@@ -39,13 +39,16 @@ import {
   Shield,
   ChevronDown,
   ChevronUp,
-  Database
+  Database,
+  Award,
+  Upload
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
 import PageMenuCustomizer from "./PageMenuCustomizer";
 import SvecLogo from "./SvecLogo";
 import ConsentLetterModal from "./ConsentLetterModal";
+import ParticipationCertificateModal from "./ParticipationCertificateModal";
 
 interface AdminPanelProps {
   onBackToPortal: () => void;
@@ -98,6 +101,10 @@ export default function AdminPanel({
   // Reset other admin password states
   const [selectedAdminForReset, setSelectedAdminForReset] = useState<string | null>(null);
   const [newAdminPassword, setNewAdminPassword] = useState("");
+
+  // Participation Certificate Download States
+  const [selectedCertStudentName, setSelectedCertStudentName] = useState<string | null>(null);
+  const [selectedCertReg, setSelectedCertReg] = useState<Registration | null>(null);
 
   // Admins management state
   const [adminsList, setAdminsList] = useState<{ username: string; role: "SPOC" | "Student SPOC" | "Evaluator" }[]>([]);
@@ -486,7 +493,26 @@ export default function AdminPanel({
     dbUsername: "",
     dbPassword: "",
     dbCollectionOrTable: "registrations",
-    dbStatus: "Not Connected"
+    dbStatus: "Not Connected",
+
+    // Lock updates flag
+    lockStudentUpdates: false,
+    lockRegisterAnotherTeam: false,
+
+    // Certificates configuration
+    enableCertificates: false,
+    certificateTitle: "CERTIFICATE OF PARTICIPATION",
+    certificateSubtitle: "This is proudly presented to",
+    certificateBody: "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
+    certificateSignatory1Name: "Dr. Ch. Rambabu",
+    certificateSignatory1Title: "Principal & Chairman, SVEC",
+    certificateSignatory2Name: "Dr. K. Shirin Bhanu",
+    certificateSignatory2Title: "SIH College SPOC & Convenor",
+    certificateSignatories: [] as any[],
+    certificateBgType: "classic" as "classic" | "modern" | "tech" | "image",
+    certificateBgUrl: "",
+    certificateBorderColor: "#4f46e5",
+    certificateDateText: "July 17, 2026"
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -559,7 +585,26 @@ export default function AdminPanel({
           dbUsername: data.dbUsername || "",
           dbPassword: data.dbPassword || "",
           dbCollectionOrTable: data.dbCollectionOrTable || "registrations",
-          dbStatus: data.dbStatus || "Not Connected"
+          dbStatus: data.dbStatus || "Not Connected",
+
+          // Updates lock flag
+          lockStudentUpdates: data.lockStudentUpdates || false,
+          lockRegisterAnotherTeam: data.lockRegisterAnotherTeam || false,
+
+          // Certificates customization
+          enableCertificates: data.enableCertificates || false,
+          certificateTitle: data.certificateTitle || "CERTIFICATE OF PARTICIPATION",
+          certificateSubtitle: data.certificateSubtitle || "This is proudly presented to",
+          certificateBody: data.certificateBody || "",
+          certificateSignatory1Name: data.certificateSignatory1Name || "",
+          certificateSignatory1Title: data.certificateSignatory1Title || "",
+          certificateSignatory2Name: data.certificateSignatory2Name || "",
+          certificateSignatory2Title: data.certificateSignatory2Title || "",
+          certificateSignatories: data.certificateSignatories || [],
+          certificateBgType: data.certificateBgType || "classic",
+          certificateBgUrl: data.certificateBgUrl || "",
+          certificateBorderColor: data.certificateBorderColor || "#4f46e5",
+          certificateDateText: data.certificateDateText || "July 17, 2026"
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -1906,10 +1951,23 @@ export default function AdminPanel({
                               </summary>
                               <div className="mt-1.5 p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-3 min-w-[240px] shadow-sm max-h-[220px] overflow-y-auto text-left">
                                 {/* Lead Details */}
-                                <div className="border-b border-slate-100 pb-1.5">
-                                  <span className="text-[9px] font-bold text-indigo-700 uppercase block">Team Lead</span>
-                                  <p className="text-[10px] font-semibold text-slate-800">{reg.leadName} ({reg.leadGender || "N/A"})</p>
-                                  <p className="text-[9px] text-slate-500">{reg.leadDepartment} • {reg.leadMobile}</p>
+                                <div className="border-b border-slate-100 pb-1.5 flex justify-between items-center gap-2">
+                                  <div>
+                                    <span className="text-[9px] font-bold text-indigo-700 uppercase block">Team Lead</span>
+                                    <p className="text-[10px] font-semibold text-slate-800">{reg.leadName} ({reg.leadGender || "N/A"})</p>
+                                    <p className="text-[9px] text-slate-500">{reg.leadDepartment} • {reg.leadMobile}</p>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCertStudentName(reg.leadName);
+                                      setSelectedCertReg(reg);
+                                    }}
+                                    className="p-1 hover:bg-indigo-50 hover:text-indigo-700 text-indigo-600 rounded transition-all cursor-pointer flex items-center justify-center shrink-0 border border-indigo-100/50 bg-indigo-50/20"
+                                    title="Generate & Download Participation Certificate"
+                                  >
+                                    <Award className="w-3.5 h-3.5" />
+                                  </button>
                                 </div>
                                 {/* Member Details */}
                                 {[1, 2, 3, 4, 5].map(mNum => {
@@ -1919,10 +1977,23 @@ export default function AdminPanel({
                                   const mPhone = (reg as any)[`member${mNum}Phone`] || "N/A";
                                   if (!mName) return null;
                                   return (
-                                    <div key={mNum} className="border-b border-slate-100 pb-1.5 last:border-0 last:pb-0">
-                                      <span className="text-[9px] font-bold text-slate-400 uppercase block">Member {mNum}</span>
-                                      <p className="text-[10px] font-semibold text-slate-700">{mName} ({mGender})</p>
-                                      <p className="text-[9px] text-slate-500">{mEmail} • {mPhone}</p>
+                                    <div key={mNum} className="border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 flex justify-between items-center gap-2">
+                                      <div>
+                                        <span className="text-[9px] font-bold text-slate-400 uppercase block">Member {mNum}</span>
+                                        <p className="text-[10px] font-semibold text-slate-700">{mName} ({mGender})</p>
+                                        <p className="text-[9px] text-slate-500">{mEmail} • {mPhone}</p>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedCertStudentName(mName);
+                                          setSelectedCertReg(reg);
+                                        }}
+                                        className="p-1 hover:bg-indigo-50 hover:text-indigo-700 text-indigo-600 rounded transition-all cursor-pointer flex items-center justify-center shrink-0 border border-indigo-100/50 bg-indigo-50/20"
+                                        title="Generate & Download Participation Certificate"
+                                      >
+                                        <Award className="w-3.5 h-3.5" />
+                                      </button>
                                     </div>
                                   );
                                 })}
@@ -3444,6 +3515,354 @@ export default function AdminPanel({
                       </div>
                     </div>
                   </div>
+                </div>
+
+                {/* LOCK REGISTRATION UPDATES SECTION */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-rose-50 border border-rose-100 rounded-lg text-rose-600">
+                      <Lock className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1 flex-1">
+                      <span className="text-xs font-bold text-slate-700 block">
+                        Lock Student Profile & Roster Updates (SPOC/Admin Only)
+                      </span>
+                      <span className="text-[11px] text-slate-400 block">
+                        Toggle to immediately lock or unlock editing capabilities. When locked, students cannot update their personal profile (mobile, department, gender) or change team member details in the Student Portal.
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm(prev => ({ ...prev, lockStudentUpdates: !prev.lockStudentUpdates }))}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          settingsForm.lockStudentUpdates ? "bg-rose-600" : "bg-slate-200"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            settingsForm.lockStudentUpdates ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-100/80 pt-4 flex items-start gap-3">
+                    <div className="p-2 bg-rose-50 border border-rose-100 rounded-lg text-rose-600">
+                      <UserPlus className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1 flex-1">
+                      <span className="text-xs font-bold text-slate-700 block">
+                        Lock Register Another Team (SPOC/Admin Only)
+                      </span>
+                      <span className="text-[11px] text-slate-400 block">
+                        Toggle to disable the "Register Another Team" option in the Student Portal. When locked, students cannot start a new registration and can only view their existing registration details.
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm(prev => ({ ...prev, lockRegisterAnotherTeam: !prev.lockRegisterAnotherTeam }))}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          settingsForm.lockRegisterAnotherTeam ? "bg-rose-600" : "bg-slate-200"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            settingsForm.lockRegisterAnotherTeam ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PARTICIPATION CERTIFICATES SECTION */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-600">
+                      <Award className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1 flex-1">
+                      <span className="text-xs font-bold text-slate-700 block">
+                        Participation Certificate & Hackathon Completion Settings
+                      </span>
+                      <span className="text-[11px] text-slate-400 block">
+                        Customizable participation certificates can be downloaded by registered students and SPOCs once enabled. Admin should toggle this feature on only after Hackathon completion.
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm(prev => ({ ...prev, enableCertificates: !prev.enableCertificates }))}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          settingsForm.enableCertificates ? "bg-indigo-600" : "bg-slate-200"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            settingsForm.enableCertificates ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  {settingsForm.enableCertificates && (
+                    <div className="space-y-4 pt-3 border-t border-slate-200/60 transition-all">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                            Certificate Title
+                          </label>
+                          <input
+                            type="text"
+                            value={settingsForm.certificateTitle}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateTitle: e.target.value }))}
+                            className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
+                            placeholder="CERTIFICATE OF PARTICIPATION"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                            Certificate Subtitle
+                          </label>
+                          <input
+                            type="text"
+                            value={settingsForm.certificateSubtitle}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateSubtitle: e.target.value }))}
+                            className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
+                            placeholder="This is proudly presented to"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                          Certificate Body Paragraph
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={settingsForm.certificateBody}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateBody: e.target.value }))}
+                          className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none leading-relaxed"
+                          placeholder="for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon..."
+                        />
+                        <p className="text-[9px] text-slate-400 mt-1">
+                          Use placeholders: <strong className="text-indigo-600 font-mono">[StudentName]</strong>, <strong className="text-indigo-600 font-mono">[TeamName]</strong>, <strong className="text-indigo-600 font-mono">[ProblemCode]</strong>, <strong className="text-indigo-600 font-mono">[ProblemTitle]</strong> to inject live participant details dynamically.
+                        </p>
+                      </div>
+
+                      {/* Dynamic Signatories List */}
+                      <div className="border-t border-slate-100 pt-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-700 block">
+                            Dynamic Certificate Signatories
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newSig = { id: `sig-${Date.now()}`, name: "", title: "" };
+                              setSettingsForm(prev => ({
+                                ...prev,
+                                certificateSignatories: [...(prev.certificateSignatories || []), newSig]
+                              }));
+                            }}
+                            className="py-1 px-2.5 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1 cursor-pointer border border-indigo-100"
+                          >
+                            <span>+ Add Signatory</span>
+                          </button>
+                        </div>
+
+                        {(!settingsForm.certificateSignatories || settingsForm.certificateSignatories.length === 0) ? (
+                          <div className="text-center py-6 border border-dashed border-slate-200 rounded-xl text-[11px] text-slate-400">
+                            No signatories added. Click "+ Add Signatory" to insert one.
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            {settingsForm.certificateSignatories.map((sig, idx) => (
+                              <div key={sig.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex flex-col gap-3 relative">
+                                <div className="absolute top-2 right-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSettingsForm(prev => {
+                                        const updated = (prev.certificateSignatories || []).filter(s => s.id !== sig.id);
+                                        const updateObj: any = { certificateSignatories: updated };
+                                        // Keep backwards compatibility for static properties
+                                        updateObj.certificateSignatory1Name = updated[0]?.name || "";
+                                        updateObj.certificateSignatory1Title = updated[0]?.title || "";
+                                        updateObj.certificateSignatory2Name = updated[1]?.name || "";
+                                        updateObj.certificateSignatory2Title = updated[1]?.title || "";
+                                        return { ...prev, ...updateObj };
+                                      });
+                                    }}
+                                    className="p-1 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-all border border-transparent hover:border-rose-100"
+                                    title="Remove Signatory"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <div className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider font-mono">
+                                  Signatory #{idx + 1}
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Name</label>
+                                    <input
+                                      type="text"
+                                      value={sig.name}
+                                      onChange={(e) => {
+                                        setSettingsForm(prev => {
+                                          const updated = [...(prev.certificateSignatories || [])];
+                                          updated[idx] = { ...updated[idx], name: e.target.value };
+                                          const updateObj: any = { certificateSignatories: updated };
+                                          if (idx === 0) {
+                                            updateObj.certificateSignatory1Name = e.target.value;
+                                          } else if (idx === 1) {
+                                            updateObj.certificateSignatory2Name = e.target.value;
+                                          }
+                                          return { ...prev, ...updateObj };
+                                        });
+                                      }}
+                                      className="w-full text-xs border border-slate-200 bg-white rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
+                                      placeholder="e.g. Dr. Ch. Rambabu"
+                                    />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Title/Role</label>
+                                    <input
+                                      type="text"
+                                      value={sig.title}
+                                      onChange={(e) => {
+                                        setSettingsForm(prev => {
+                                          const updated = [...(prev.certificateSignatories || [])];
+                                          updated[idx] = { ...updated[idx], title: e.target.value };
+                                          const updateObj: any = { certificateSignatories: updated };
+                                          if (idx === 0) {
+                                            updateObj.certificateSignatory1Title = e.target.value;
+                                          } else if (idx === 1) {
+                                            updateObj.certificateSignatory2Title = e.target.value;
+                                          }
+                                          return { ...prev, ...updateObj };
+                                        });
+                                      }}
+                                      className="w-full text-xs border border-slate-200 bg-white rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
+                                      placeholder="e.g. Principal & Chairman, SVEC"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                            Certificate Date Text
+                          </label>
+                          <input
+                            type="text"
+                            value={settingsForm.certificateDateText}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateDateText: e.target.value }))}
+                            className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
+                            placeholder="July 17, 2026"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                            Border Color Accent
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="color"
+                              value={settingsForm.certificateBorderColor}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateBorderColor: e.target.value }))}
+                              className="w-8 h-8 rounded-lg cursor-pointer border-0 p-0"
+                            />
+                            <input
+                              type="text"
+                              value={settingsForm.certificateBorderColor}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateBorderColor: e.target.value }))}
+                              className="flex-1 text-xs border border-slate-200 rounded-lg px-2 focus:border-indigo-500 focus:outline-none"
+                              placeholder="#4f46e5"
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                            Background Style
+                          </label>
+                          <select
+                            value={settingsForm.certificateBgType}
+                            onChange={(e) => setSettingsForm(prev => ({ ...prev, certificateBgType: e.target.value as any }))}
+                            className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none bg-white"
+                          >
+                            <option value="classic">Classic Frame Border</option>
+                            <option value="modern">Modern Indigo Frame</option>
+                            <option value="tech">Geometric Tech Accents</option>
+                            <option value="image">Custom Upload Image Overlays</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {settingsForm.certificateBgType === "image" && (
+                        <div className="border border-dashed border-slate-200 rounded-xl p-4 bg-slate-50">
+                          <label className="text-xs font-bold text-slate-700 block mb-2">
+                            Custom Certificate Background Image (Overlay)
+                          </label>
+                          <div className="flex items-center gap-4">
+                            <label className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-2 rounded-xl border border-indigo-100 transition-all duration-150 cursor-pointer flex items-center gap-2">
+                              <Upload className="w-4 h-4" />
+                              Upload BG Image
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    if (file.size > 2 * 1024 * 1024) {
+                                      alert("Background image must be less than 2MB.");
+                                      return;
+                                    }
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => {
+                                      setSettingsForm(prev => ({ ...prev, certificateBgUrl: reader.result as string }));
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                            </label>
+                            {settingsForm.certificateBgUrl && (
+                              <div className="flex items-center gap-2">
+                                <img
+                                  src={settingsForm.certificateBgUrl}
+                                  alt="Background Thumbnail"
+                                  className="w-16 h-10 object-cover rounded-lg border border-slate-300"
+                                  referrerPolicy="no-referrer"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setSettingsForm(prev => ({ ...prev, certificateBgUrl: "" }))}
+                                  className="text-red-600 hover:text-red-700 text-xs font-bold transition-all"
+                                >
+                                  Remove Image
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <p className="text-[9px] text-slate-400 mt-2">
+                            For optimal results, use a high-resolution landscape template (approx. 1123 x 794 px). Supports PNG, JPG or WEBP.
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
@@ -6588,6 +7007,20 @@ export default function AdminPanel({
         onClose={() => setSelectedRegForLetter(null)}
         registration={selectedRegForLetter}
       />
+
+      {selectedCertStudentName && selectedCertReg && (
+        <ParticipationCertificateModal
+          isOpen={true}
+          onClose={() => {
+            setSelectedCertStudentName(null);
+            setSelectedCertReg(null);
+          }}
+          studentName={selectedCertStudentName}
+          registration={selectedCertReg}
+          config={settingsForm}
+          problemStatement={problemStatements.find(p => p.id === selectedCertReg.problemStatementId)}
+        />
+      )}
 
     </div>
   );

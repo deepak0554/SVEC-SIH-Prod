@@ -43,7 +43,7 @@ const defaultHomepageContent: HomepageContent = {
     { id: "p1", name: "Sri G. Satyanarayana", position: "President", imageUrl: "" },
     { id: "p2", name: "Sri Ch. V. V. Subba Rao", position: "Secretary", imageUrl: "" },
     { id: "p3", name: "Sri K. Venkateswara Rao", position: "Technical Director", imageUrl: "" },
-    { id: "p4", name: "Dr. Gudru Prasada Rao", position: "Principal", imageUrl: "" }
+    { id: "p4", name: "Dr. Ch. Rambabu", position: "Principal", imageUrl: "" }
   ],
   studentSpocs: [
     { id: "1", name: "K. Sameer Kumar", role: "Student SPOC Lead", department: "Computer Science & Engineering", email: "sameer.k@svec.edu.in", phone: "9876543210" },
@@ -236,7 +236,7 @@ function readHomepage(): HomepageContent {
         { id: "p1", name: "Sri G. Satyanarayana", position: "President", imageUrl: "" },
         { id: "p2", name: "Sri Ch. V. V. Subba Rao", position: "Secretary", imageUrl: "" },
         { id: "p3", name: "Sri K. Venkateswara Rao", position: "Technical Director", imageUrl: "" },
-        { id: "p4", name: "Dr. Gudru Prasada Rao", position: "Principal", imageUrl: "" }
+        { id: "p4", name: "Dr. Ch. Rambabu", position: "Principal", imageUrl: "" }
       ];
       fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(parsed, null, 2), "utf-8");
     }
@@ -343,7 +343,29 @@ function readSettings(): FeeConfig {
       dbUsername: parsed.dbUsername ?? "",
       dbPassword: parsed.dbPassword ?? "",
       dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
-      dbStatus: parsed.dbStatus ?? "Not Connected"
+      dbStatus: parsed.dbStatus ?? "Not Connected",
+
+      // Student Profile & Member updates lock
+      lockStudentUpdates: parsed.lockStudentUpdates ?? false,
+      lockRegisterAnotherTeam: parsed.lockRegisterAnotherTeam ?? false,
+
+      // Customizable Certificates
+      enableCertificates: parsed.enableCertificates ?? false,
+      certificateTitle: parsed.certificateTitle ?? "CERTIFICATE OF PARTICIPATION",
+      certificateSubtitle: parsed.certificateSubtitle ?? "This is proudly presented to",
+      certificateBody: parsed.certificateBody ?? "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
+      certificateSignatory1Name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu",
+      certificateSignatory1Title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC",
+      certificateSignatory2Name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu",
+      certificateSignatory2Title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor",
+      certificateSignatories: parsed.certificateSignatories ?? [
+        { id: "sig-1", name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu", title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC" },
+        { id: "sig-2", name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu", title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor" }
+      ],
+      certificateBgType: parsed.certificateBgType ?? "classic",
+      certificateBgUrl: parsed.certificateBgUrl ?? "",
+      certificateBorderColor: parsed.certificateBorderColor ?? "#4f46e5",
+      certificateDateText: parsed.certificateDateText ?? "July 17, 2026"
     };
   } catch (err) {
     return {
@@ -396,7 +418,26 @@ function readSettings(): FeeConfig {
       dbUsername: "",
       dbPassword: "",
       dbCollectionOrTable: "registrations",
-      dbStatus: "Not Connected"
+      dbStatus: "Not Connected",
+
+      lockStudentUpdates: false,
+      lockRegisterAnotherTeam: false,
+      enableCertificates: false,
+      certificateTitle: "CERTIFICATE OF PARTICIPATION",
+      certificateSubtitle: "This is proudly presented to",
+      certificateBody: "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
+      certificateSignatory1Name: "Dr. Ch. Rambabu",
+      certificateSignatory1Title: "Principal & Chairman, SVEC",
+      certificateSignatory2Name: "Dr. K. Shirin Bhanu",
+      certificateSignatory2Title: "SIH College SPOC & Convenor",
+      certificateSignatories: [
+        { id: "sig-1", name: "Dr. Ch. Rambabu", title: "Principal & Chairman, SVEC" },
+        { id: "sig-2", name: "Dr. K. Shirin Bhanu", title: "SIH College SPOC & Convenor" }
+      ],
+      certificateBgType: "classic",
+      certificateBgUrl: "",
+      certificateBorderColor: "#4f46e5",
+      certificateDateText: "July 17, 2026"
     };
   }
 }
@@ -1353,7 +1394,26 @@ app.get("/api/settings/public", (req, res) => {
     portalTitle: settings.portalTitle || "SVEC - SIH Internal Hackathon 2026",
     portalCaption: settings.portalCaption || "Sri Vasavi Engineering College",
     teamMembersCount: settings.teamMembersCount ?? 5,
-    genderDiversityRequired: settings.genderDiversityRequired !== undefined ? settings.genderDiversityRequired : true
+    genderDiversityRequired: settings.genderDiversityRequired !== undefined ? settings.genderDiversityRequired : true,
+    
+    // Lock updates
+    lockStudentUpdates: settings.lockStudentUpdates ?? false,
+    lockRegisterAnotherTeam: settings.lockRegisterAnotherTeam ?? false,
+
+    // Certificates config
+    enableCertificates: settings.enableCertificates ?? false,
+    certificateSignatories: settings.certificateSignatories || [],
+    certificateTitle: settings.certificateTitle || "CERTIFICATE OF PARTICIPATION",
+    certificateSubtitle: settings.certificateSubtitle || "This is proudly presented to",
+    certificateBody: settings.certificateBody || "",
+    certificateSignatory1Name: settings.certificateSignatory1Name || "",
+    certificateSignatory1Title: settings.certificateSignatory1Title || "",
+    certificateSignatory2Name: settings.certificateSignatory2Name || "",
+    certificateSignatory2Title: settings.certificateSignatory2Title || "",
+    certificateBgType: settings.certificateBgType || "classic",
+    certificateBgUrl: settings.certificateBgUrl || "",
+    certificateBorderColor: settings.certificateBorderColor || "#4f46e5",
+    certificateDateText: settings.certificateDateText || "July 17, 2026"
   });
 });
 
@@ -1424,7 +1484,22 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     dbUsername,
     dbPassword,
     dbCollectionOrTable,
-    dbStatus
+    dbStatus,
+
+    // Student profile updates lock & Certificates Customization
+    lockStudentUpdates,
+    enableCertificates,
+    certificateTitle,
+    certificateSubtitle,
+    certificateBody,
+    certificateSignatory1Name,
+    certificateSignatory1Title,
+    certificateSignatory2Name,
+    certificateSignatory2Title,
+    certificateBgType,
+    certificateBgUrl,
+    certificateBorderColor,
+    certificateDateText
   } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
@@ -1484,7 +1559,22 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     dbUsername: (dbUsername || "").trim(),
     dbPassword: (dbPassword || "").trim(),
     dbCollectionOrTable: (dbCollectionOrTable || "registrations").trim(),
-    dbStatus: (dbStatus || "Not Connected").trim()
+    dbStatus: (dbStatus || "Not Connected").trim(),
+
+    // Updates lock & certificates
+    lockStudentUpdates: !!lockStudentUpdates,
+    enableCertificates: !!enableCertificates,
+    certificateTitle: (certificateTitle || "").trim(),
+    certificateSubtitle: (certificateSubtitle || "").trim(),
+    certificateBody: (certificateBody || "").trim(),
+    certificateSignatory1Name: (certificateSignatory1Name || "").trim(),
+    certificateSignatory1Title: (certificateSignatory1Title || "").trim(),
+    certificateSignatory2Name: (certificateSignatory2Name || "").trim(),
+    certificateSignatory2Title: (certificateSignatory2Title || "").trim(),
+    certificateBgType: (certificateBgType || "classic") as any,
+    certificateBgUrl: (certificateBgUrl || "").trim(),
+    certificateBorderColor: (certificateBorderColor || "#4f46e5").trim(),
+    certificateDateText: (certificateDateText || "").trim()
   };
 
   writeSettings(updated);
@@ -2543,6 +2633,10 @@ app.put("/api/students/profile", validateStudentJWT, (req, res) => {
   }
 
   const settings = readSettings();
+  if (settings.lockStudentUpdates) {
+    return res.status(403).json({ error: "Profile updates are currently locked by the SPOC administrator." });
+  }
+
   if (settings.jwtEnabled) {
     const tokenEmail = (req as any).studentUser?.email;
     if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
@@ -2620,6 +2714,11 @@ app.post("/api/students/change-password", validateStudentJWT, (req, res) => {
 
 // PUT update student's own team member details
 app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
+  const settings = readSettings();
+  if (settings.lockStudentUpdates) {
+    return res.status(403).json({ error: "Team details and roster updates are currently locked by the SPOC administrator." });
+  }
+
   const {
     email,
     leadName,
@@ -2652,7 +2751,6 @@ app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
     return res.status(400).json({ error: "Email is required." });
   }
 
-  const settings = readSettings();
   if (settings.jwtEnabled) {
     const tokenEmail = (req as any).studentUser?.email;
     if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {

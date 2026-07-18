@@ -28,7 +28,7 @@ export default function ConsentLetterModal({
   isReadOnly = false,
 }: ConsentLetterModalProps) {
   const [aicteNo, setAicteNo] = useState("1-3634005111 (Sri Vasavi Engineering College)");
-  const [principalName, setPrincipalName] = useState("DR. CH. Rambabu");
+  const [principalName, setPrincipalName] = useState("Dr. Ch. Rambabu");
   const [collegeStamp, setCollegeStamp] = useState("The Principal\nSri Vasavi Engineering College (Autonomous)\nPedatadepalli, Tadepalligudem");
   
   const [letterDate, setLetterDate] = useState(() => {
@@ -250,7 +250,7 @@ export default function ConsentLetterModal({
                       value={principalName}
                       onChange={(e) => setPrincipalName(e.target.value)}
                       className="w-full text-xs px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:border-indigo-500 shadow-2xs font-medium"
-                      placeholder="e.g. Dr. K. S. S. Rao"
+                      placeholder="e.g. Dr. Ch. Rambabu"
                     />
                   </div>
 

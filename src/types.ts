@@ -127,6 +127,31 @@ export interface FeeConfig {
   dbPassword?: string;
   dbCollectionOrTable?: string;
   dbStatus?: string;
+
+  // Student Profile & Member updates lock
+  lockStudentUpdates?: boolean;
+  lockRegisterAnotherTeam?: boolean;
+
+  // Customizable Certificates
+  enableCertificates?: boolean;
+  certificateTitle?: string;
+  certificateSubtitle?: string;
+  certificateBody?: string;
+  certificateSignatory1Name?: string;
+  certificateSignatory1Title?: string;
+  certificateSignatory2Name?: string;
+  certificateSignatory2Title?: string;
+  certificateSignatories?: Signatory[];
+  certificateBgType?: "classic" | "modern" | "tech" | "image";
+  certificateBgUrl?: string;
+  certificateBorderColor?: string;
+  certificateDateText?: string;
+}
+
+export interface Signatory {
+  id: string;
+  name: string;
+  title: string;
 }
 
 
