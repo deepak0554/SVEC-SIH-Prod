@@ -2233,17 +2233,19 @@ export default function AdminPanel({
                                     </p>
                                     <p className="text-[9px] text-slate-500">{reg.leadDepartment} • {reg.leadMobile}</p>
                                   </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setSelectedCertStudentName(reg.leadName);
-                                      setSelectedCertReg(reg);
-                                    }}
-                                    className="p-1 hover:bg-indigo-50 hover:text-indigo-700 text-indigo-600 rounded transition-all cursor-pointer flex items-center justify-center shrink-0 border border-indigo-100/50 bg-indigo-50/20"
-                                    title="Generate & Download Participation Certificate"
-                                  >
-                                    <Award className="w-3.5 h-3.5" />
-                                  </button>
+                                  {settingsForm.enableCertificates && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedCertStudentName(reg.leadName);
+                                        setSelectedCertReg(reg);
+                                      }}
+                                      className="p-1 hover:bg-indigo-50 hover:text-indigo-700 text-indigo-600 rounded transition-all cursor-pointer flex items-center justify-center shrink-0 border border-indigo-100/50 bg-indigo-50/20"
+                                      title="Generate & Download Participation Certificate"
+                                    >
+                                      <Award className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                 </div>
                                 {/* Member Details */}
                                 {[1, 2, 3, 4, 5].map(mNum => {
@@ -2262,17 +2264,19 @@ export default function AdminPanel({
                                         </p>
                                         <p className="text-[9px] text-slate-500">{mEmail} • {mPhone}</p>
                                       </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setSelectedCertStudentName(mName);
-                                          setSelectedCertReg(reg);
-                                        }}
-                                        className="p-1 hover:bg-indigo-50 hover:text-indigo-700 text-indigo-600 rounded transition-all cursor-pointer flex items-center justify-center shrink-0 border border-indigo-100/50 bg-indigo-50/20"
-                                        title="Generate & Download Participation Certificate"
-                                      >
-                                        <Award className="w-3.5 h-3.5" />
-                                      </button>
+                                      {settingsForm.enableCertificates && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedCertStudentName(mName);
+                                            setSelectedCertReg(reg);
+                                          }}
+                                          className="p-1 hover:bg-indigo-50 hover:text-indigo-700 text-indigo-600 rounded transition-all cursor-pointer flex items-center justify-center shrink-0 border border-indigo-100/50 bg-indigo-50/20"
+                                          title="Generate & Download Participation Certificate"
+                                        >
+                                          <Award className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
                                     </div>
                                   );
                                 })}
