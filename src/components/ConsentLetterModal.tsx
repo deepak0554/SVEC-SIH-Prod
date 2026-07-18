@@ -243,7 +243,7 @@ export default function ConsentLetterModal({
       email: registration.studentEmail || "",
       phone: registration.leadMobile || "",
       stream: registration.leadDepartment || "B.Tech",
-      academicYear: "3rd Year",
+      academicYear: registration.leadAcademicYear || "3rd Year",
     });
 
     // Add member 1 to 5 if populated
@@ -255,7 +255,7 @@ export default function ConsentLetterModal({
         email: registration.member1Email || "",
         phone: registration.member1Phone || "",
         stream: registration.leadDepartment || "B.Tech",
-        academicYear: "3rd Year",
+        academicYear: registration.member1AcademicYear || "3rd Year",
       });
     }
     if (registration.member2) {
@@ -266,7 +266,7 @@ export default function ConsentLetterModal({
         email: registration.member2Email || "",
         phone: registration.member2Phone || "",
         stream: registration.leadDepartment || "B.Tech",
-        academicYear: "3rd Year",
+        academicYear: registration.member2AcademicYear || "3rd Year",
       });
     }
     if (registration.member3) {
@@ -277,7 +277,7 @@ export default function ConsentLetterModal({
         email: registration.member3Email || "",
         phone: registration.member3Phone || "",
         stream: registration.leadDepartment || "B.Tech",
-        academicYear: "3rd Year",
+        academicYear: registration.member3AcademicYear || "3rd Year",
       });
     }
     if (registration.member4) {
@@ -288,7 +288,7 @@ export default function ConsentLetterModal({
         email: registration.member4Email || "",
         phone: registration.member4Phone || "",
         stream: registration.leadDepartment || "B.Tech",
-        academicYear: "3rd Year",
+        academicYear: registration.member4AcademicYear || "3rd Year",
       });
     }
     if (registration.member5) {
@@ -299,7 +299,7 @@ export default function ConsentLetterModal({
         email: registration.member5Email || "",
         phone: registration.member5Phone || "",
         stream: registration.leadDepartment || "B.Tech",
-        academicYear: "3rd Year",
+        academicYear: registration.member5AcademicYear || "3rd Year",
       });
     }
 

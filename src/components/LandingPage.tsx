@@ -7,9 +7,14 @@ interface LandingPageProps {
   onNavigate: (view: "form" | "receipt" | "admin" | string) => void;
   customPages: CustomPage[];
   isDark?: boolean;
+  publicSettings?: {
+    creditsTitle?: string;
+    creditsContent?: string;
+    creditsEnabled?: boolean;
+  } | null;
 }
 
-export default function LandingPage({ homepageData, onNavigate, customPages, isDark = false }: LandingPageProps) {
+export default function LandingPage({ homepageData, onNavigate, customPages, isDark = false, publicSettings }: LandingPageProps) {
   const { sihDetails, sponsors, patrons = [], studentSpocs, collegeSpocs, previousPhotos } = homepageData;
 
   // Simple and robust parser for custom page content / markdown
@@ -402,6 +407,16 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
           <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500" />
         </div>
         <p>© 2026 SVEC. All Rights Reserved. Prepared for Smart India Hackathon internal selections.</p>
+        {publicSettings?.creditsEnabled !== false && (
+          <div className="pt-2">
+            <button
+              onClick={() => onNavigate("credits")}
+              className="text-indigo-650 hover:text-indigo-750 dark:text-indigo-400 dark:hover:text-indigo-300 underline font-bold transition-colors cursor-pointer"
+            >
+              {publicSettings?.creditsTitle || "Department of CSE"}
+            </button>
+          </div>
+        )}
       </footer>
     </div>
   );

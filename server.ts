@@ -365,7 +365,10 @@ function readSettings(): FeeConfig {
       certificateBgType: parsed.certificateBgType ?? "classic",
       certificateBgUrl: parsed.certificateBgUrl ?? "",
       certificateBorderColor: parsed.certificateBorderColor ?? "#4f46e5",
-      certificateDateText: parsed.certificateDateText ?? "July 17, 2026"
+      certificateDateText: parsed.certificateDateText ?? "July 17, 2026",
+      creditsTitle: parsed.creditsTitle ?? "Department of CSE",
+      creditsContent: parsed.creditsContent ?? "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
+      creditsEnabled: parsed.creditsEnabled ?? true
     };
   } catch (err) {
     return {
@@ -437,7 +440,10 @@ function readSettings(): FeeConfig {
       certificateBgType: "classic",
       certificateBgUrl: "",
       certificateBorderColor: "#4f46e5",
-      certificateDateText: "July 17, 2026"
+      certificateDateText: "July 17, 2026",
+      creditsTitle: "Department of CSE",
+      creditsContent: "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
+      creditsEnabled: true
     };
   }
 }
@@ -1413,7 +1419,10 @@ app.get("/api/settings/public", (req, res) => {
     certificateBgType: settings.certificateBgType || "classic",
     certificateBgUrl: settings.certificateBgUrl || "",
     certificateBorderColor: settings.certificateBorderColor || "#4f46e5",
-    certificateDateText: settings.certificateDateText || "July 17, 2026"
+    certificateDateText: settings.certificateDateText || "July 17, 2026",
+    creditsTitle: settings.creditsTitle ?? "Department of CSE",
+    creditsContent: settings.creditsContent ?? "",
+    creditsEnabled: settings.creditsEnabled !== undefined ? !!settings.creditsEnabled : true
   });
 });
 
@@ -1500,7 +1509,10 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     certificateBgType,
     certificateBgUrl,
     certificateBorderColor,
-    certificateDateText
+    certificateDateText,
+    creditsTitle,
+    creditsContent,
+    creditsEnabled
   } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
@@ -1576,7 +1588,10 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     certificateBgType: (certificateBgType || "classic") as any,
     certificateBgUrl: (certificateBgUrl || "").trim(),
     certificateBorderColor: (certificateBorderColor || "#4f46e5").trim(),
-    certificateDateText: (certificateDateText || "").trim()
+    certificateDateText: (certificateDateText || "").trim(),
+    creditsTitle: (creditsTitle || "Department of CSE").trim(),
+    creditsContent: (creditsContent || "").trim(),
+    creditsEnabled: creditsEnabled !== undefined ? !!creditsEnabled : true
   };
 
   writeSettings(updated);
@@ -2959,26 +2974,32 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     leadDepartment,
     leadMobile,
     leadGender,
+    leadAcademicYear,
     member1,
     member1Gender,
     member1Email,
     member1Phone,
+    member1AcademicYear,
     member2,
     member2Gender,
     member2Email,
     member2Phone,
+    member2AcademicYear,
     member3,
     member3Gender,
     member3Email,
     member3Phone,
+    member3AcademicYear,
     member4,
     member4Gender,
     member4Email,
     member4Phone,
+    member4AcademicYear,
     member5,
     member5Gender,
     member5Email,
     member5Phone,
+    member5AcademicYear,
     hasFemaleMember,
     mentorName,
     problemStatementId,
@@ -3098,26 +3119,32 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     leadDepartment: leadDepartment.trim(),
     leadMobile: leadMobile.trim(),
     leadGender: leadGender || "",
+    leadAcademicYear: (leadAcademicYear || "").trim(),
     member1: count >= 1 ? (member1 || "").trim() : "",
     member1Gender: count >= 1 ? (member1Gender || "") : "",
     member1Email: count >= 1 ? (member1Email || "") : "",
     member1Phone: count >= 1 ? (member1Phone || "") : "",
+    member1AcademicYear: count >= 1 ? (member1AcademicYear || "").trim() : "",
     member2: count >= 2 ? (member2 || "").trim() : "",
     member2Gender: count >= 2 ? (member2Gender || "") : "",
     member2Email: count >= 2 ? (member2Email || "") : "",
     member2Phone: count >= 2 ? (member2Phone || "") : "",
+    member2AcademicYear: count >= 2 ? (member2AcademicYear || "").trim() : "",
     member3: count >= 3 ? (member3 || "").trim() : "",
     member3Gender: count >= 3 ? (member3Gender || "") : "",
     member3Email: count >= 3 ? (member3Email || "") : "",
     member3Phone: count >= 3 ? (member3Phone || "") : "",
+    member3AcademicYear: count >= 3 ? (member3AcademicYear || "").trim() : "",
     member4: count >= 4 ? (member4 || "").trim() : "",
     member4Gender: count >= 4 ? (member4Gender || "") : "",
     member4Email: count >= 4 ? (member4Email || "") : "",
     member4Phone: count >= 4 ? (member4Phone || "") : "",
+    member4AcademicYear: count >= 4 ? (member4AcademicYear || "").trim() : "",
     member5: count >= 5 ? (member5 || "").trim() : "",
     member5Gender: count >= 5 ? (member5Gender || "") : "",
     member5Email: count >= 5 ? (member5Email || "") : "",
     member5Phone: count >= 5 ? (member5Phone || "") : "",
+    member5AcademicYear: count >= 5 ? (member5AcademicYear || "").trim() : "",
     hasFemaleMember: !!hasFemaleMember,
     mentorName: mentorName.trim(),
     problemStatementId,

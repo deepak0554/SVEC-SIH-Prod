@@ -112,6 +112,9 @@ export default function Receipt({
         if (data.enableCertificates !== undefined) {
           setEnableCertificates(data.enableCertificates);
           setCertificateConfig(data);
+          if (!data.enableCertificates) {
+            setActiveTab(prev => prev === "certificates" ? "slip" : prev);
+          }
         }
       })
       .catch(err => console.error("Error loading public settings in Receipt", err));
@@ -1830,7 +1833,7 @@ export default function Receipt({
             </div>
           </motion.div>
         )}
-        {activeTab === "certificates" && (
+        {activeTab === "certificates" && enableCertificates && (
           <motion.div
             key="certificates-tab"
             initial={{ opacity: 0, y: 10 }}
@@ -1994,7 +1997,7 @@ export default function Receipt({
         }
       `}</style>
 
-      {selectedCertStudentName && (
+      {selectedCertStudentName && enableCertificates && (
         <ParticipationCertificateModal
           isOpen={true}
           onClose={() => setSelectedCertStudentName(null)}

@@ -14,26 +14,32 @@ export interface Registration {
   leadDepartment: string;
   leadMobile: string;
   leadGender?: string;
+  leadAcademicYear?: string;
   member1: string;
   member1Gender?: string;
   member1Email?: string;
   member1Phone?: string;
+  member1AcademicYear?: string;
   member2: string;
   member2Gender?: string;
   member2Email?: string;
   member2Phone?: string;
+  member2AcademicYear?: string;
   member3: string;
   member3Gender?: string;
   member3Email?: string;
   member3Phone?: string;
+  member3AcademicYear?: string;
   member4: string;
   member4Gender?: string;
   member4Email?: string;
   member4Phone?: string;
+  member4AcademicYear?: string;
   member5: string;
   member5Gender?: string;
   member5Email?: string;
   member5Phone?: string;
+  member5AcademicYear?: string;
   hasFemaleMember: boolean;
   mentorName: string;
   problemStatementId: string;
@@ -146,6 +152,9 @@ export interface FeeConfig {
   certificateBgUrl?: string;
   certificateBorderColor?: string;
   certificateDateText?: string;
+  creditsTitle?: string;
+  creditsContent?: string;
+  creditsEnabled?: boolean;
 }
 
 export interface Signatory {

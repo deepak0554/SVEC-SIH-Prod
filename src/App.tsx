@@ -31,6 +31,9 @@ export default function App() {
     logoUrl?: string;
     portalTitle?: string;
     portalCaption?: string;
+    creditsTitle?: string;
+    creditsContent?: string;
+    creditsEnabled?: boolean;
   } | null>(null);
 
   const [student, setStudent] = useState<{ id: string; email: string } | null>(() => {
@@ -417,6 +420,7 @@ export default function App() {
                 onNavigate={navigateTo} 
                 customPages={customPages}
                 isDark={isDark}
+                publicSettings={publicSettings}
               />
             </motion.div>
           )}
@@ -502,6 +506,35 @@ export default function App() {
                 </h1>
                 <div className={`prose max-w-none ${isDark ? "text-slate-300" : "text-slate-600"}`}>
                   {renderSimpleMarkdown(currentCustomPage.content)}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* 6. CREDITS PAGE RENDERER */}
+          {view === "credits" && (
+            <motion.div
+              key="credits-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="max-w-4xl mx-auto px-4 py-8"
+            >
+              <div className={`rounded-3xl border p-6 md:p-10 shadow-sm space-y-6 ${isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200"}`}>
+                <h1 className={`text-2xl sm:text-3xl font-black font-display border-b pb-4 ${isDark ? "text-white border-slate-800" : "text-slate-800 border-slate-100"}`}>
+                  {publicSettings?.creditsTitle || "Department of CSE"}
+                </h1>
+                <div className={`prose max-w-none ${isDark ? "text-slate-300" : "text-slate-600"}`}>
+                  {renderSimpleMarkdown(publicSettings?.creditsContent || "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026")}
+                </div>
+                <div className="pt-4 flex justify-start">
+                  <button
+                    onClick={() => navigateTo("home")}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all cursor-pointer"
+                  >
+                    Back to Home
+                  </button>
                 </div>
               </div>
             </motion.div>

@@ -686,7 +686,10 @@ export default function AdminPanel({
     certificateBgType: "classic" as "classic" | "modern" | "tech" | "image",
     certificateBgUrl: "",
     certificateBorderColor: "#4f46e5",
-    certificateDateText: "July 17, 2026"
+    certificateDateText: "July 17, 2026",
+    creditsTitle: "Department of CSE",
+    creditsContent: "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
+    creditsEnabled: true
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -778,7 +781,10 @@ export default function AdminPanel({
           certificateBgType: data.certificateBgType || "classic",
           certificateBgUrl: data.certificateBgUrl || "",
           certificateBorderColor: data.certificateBorderColor || "#4f46e5",
-          certificateDateText: data.certificateDateText || "July 17, 2026"
+          certificateDateText: data.certificateDateText || "July 17, 2026",
+          creditsTitle: data.creditsTitle || "Department of CSE",
+          creditsContent: data.creditsContent || "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
+          creditsEnabled: data.creditsEnabled !== undefined ? data.creditsEnabled : true
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -1604,13 +1610,19 @@ export default function AdminPanel({
       "Registration ID",
       "Team Name",
       "Lead Name",
+      "Lead Academic Year",
       "Lead Department",
       "Lead Mobile",
       "Member 1",
+      "Member 1 Academic Year",
       "Member 2",
+      "Member 2 Academic Year",
       "Member 3",
+      "Member 3 Academic Year",
       "Member 4",
+      "Member 4 Academic Year",
       "Member 5",
+      "Member 5 Academic Year",
       "Has Female Member",
       "Faculty Mentor",
       "Problem Statement Code",
@@ -1624,13 +1636,19 @@ export default function AdminPanel({
         reg.registrationId,
         `"${reg.teamName.replace(/"/g, '""')}"`,
         `"${reg.leadName.replace(/"/g, '""')}"`,
+        `"${(reg.leadAcademicYear || "").replace(/"/g, '""')}"`,
         `"${reg.leadDepartment.replace(/"/g, '""')}"`,
         `'${reg.leadMobile}`, // Single quote prevents Excel trimming leading zeros
         `"${reg.member1.replace(/"/g, '""')}"`,
+        `"${(reg.member1AcademicYear || "").replace(/"/g, '""')}"`,
         `"${reg.member2.replace(/"/g, '""')}"`,
+        `"${(reg.member2AcademicYear || "").replace(/"/g, '""')}"`,
         `"${reg.member3.replace(/"/g, '""')}"`,
+        `"${(reg.member3AcademicYear || "").replace(/"/g, '""')}"`,
         `"${reg.member4.replace(/"/g, '""')}"`,
+        `"${(reg.member4AcademicYear || "").replace(/"/g, '""')}"`,
         `"${reg.member5.replace(/"/g, '""')}"`,
+        `"${(reg.member5AcademicYear || "").replace(/"/g, '""')}"`,
         reg.hasFemaleMember ? "Yes" : "No",
         `"${reg.mentorName.replace(/"/g, '""')}"`,
         ps ? ps.code : "N/A",
@@ -2210,7 +2228,9 @@ export default function AdminPanel({
                                 <div className="border-b border-slate-100 pb-1.5 flex justify-between items-center gap-2">
                                   <div>
                                     <span className="text-[9px] font-bold text-indigo-700 uppercase block">Team Lead</span>
-                                    <p className="text-[10px] font-semibold text-slate-800">{reg.leadName} ({reg.leadGender || "N/A"})</p>
+                                    <p className="text-[10px] font-semibold text-slate-800">
+                                      {reg.leadName} ({reg.leadGender || "N/A"}) {reg.leadAcademicYear ? `• ${reg.leadAcademicYear}` : ""}
+                                    </p>
                                     <p className="text-[9px] text-slate-500">{reg.leadDepartment} • {reg.leadMobile}</p>
                                   </div>
                                   <button
@@ -2229,6 +2249,7 @@ export default function AdminPanel({
                                 {[1, 2, 3, 4, 5].map(mNum => {
                                   const mName = (reg as any)[`member${mNum}`];
                                   const mGender = (reg as any)[`member${mNum}Gender`] || "N/A";
+                                  const mAcademicYear = (reg as any)[`member${mNum}AcademicYear`];
                                   const mEmail = (reg as any)[`member${mNum}Email`] || "N/A";
                                   const mPhone = (reg as any)[`member${mNum}Phone`] || "N/A";
                                   if (!mName) return null;
@@ -2236,7 +2257,9 @@ export default function AdminPanel({
                                     <div key={mNum} className="border-b border-slate-100 pb-1.5 last:border-0 last:pb-0 flex justify-between items-center gap-2">
                                       <div>
                                         <span className="text-[9px] font-bold text-slate-400 uppercase block">Member {mNum}</span>
-                                        <p className="text-[10px] font-semibold text-slate-700">{mName} ({mGender})</p>
+                                        <p className="text-[10px] font-semibold text-slate-700">
+                                          {mName} ({mGender}) {mAcademicYear ? `• ${mAcademicYear}` : ""}
+                                        </p>
                                         <p className="text-[9px] text-slate-500">{mEmail} • {mPhone}</p>
                                       </div>
                                       <button
@@ -4117,6 +4140,71 @@ export default function AdminPanel({
                           </p>
                         </div>
                       )}
+                    </div>
+                  )}
+                </div>
+
+                {/* CREDITS PAGE SECTION */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-600">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1 flex-1">
+                      <span className="text-xs font-bold text-slate-700 block">
+                        Landing Page Footer Credits Customizer
+                      </span>
+                      <span className="text-[11px] text-slate-400 block">
+                        Customize and edit the Credits Page linked from the footer of the Landing Page. SPOC Admin can edit the credits title (the link text, e.g., "Department of CSE") and edit the credits page content.
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <button
+                        type="button"
+                        onClick={() => setSettingsForm(prev => ({ ...prev, creditsEnabled: !prev.creditsEnabled }))}
+                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                          settingsForm.creditsEnabled ? "bg-indigo-600" : "bg-slate-200"
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                            settingsForm.creditsEnabled ? "translate-x-5" : "translate-x-0"
+                          }`}
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                  {settingsForm.creditsEnabled && (
+                    <div className="space-y-4 pt-3 border-t border-slate-200/60 transition-all">
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                          Credits Link Title (Displays in Footer)
+                        </label>
+                        <input
+                          type="text"
+                          value={settingsForm.creditsTitle}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, creditsTitle: e.target.value }))}
+                          className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
+                          placeholder="e.g., Department of CSE"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                          Credits Page Content (Markdown / Text supported)
+                        </label>
+                        <textarea
+                          rows={6}
+                          value={settingsForm.creditsContent}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, creditsContent: e.target.value }))}
+                          className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none leading-relaxed font-mono"
+                          placeholder="Write information about the department, mentors, development team..."
+                        />
+                        <p className="text-[9px] text-slate-400 mt-1">
+                          Markdown headers, bullet points, bold text, and links are fully supported.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>

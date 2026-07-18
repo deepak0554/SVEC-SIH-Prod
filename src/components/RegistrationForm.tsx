@@ -38,26 +38,32 @@ export default function RegistrationForm({
     leadDepartment: student.department || "",
     leadMobile: student.mobile || "",
     leadGender: student.gender || "",
+    leadAcademicYear: "",
     member1: "",
     member1Gender: "",
     member1Email: "",
     member1Phone: "",
+    member1AcademicYear: "",
     member2: "",
     member2Gender: "",
     member2Email: "",
     member2Phone: "",
+    member2AcademicYear: "",
     member3: "",
     member3Gender: "",
     member3Email: "",
     member3Phone: "",
+    member3AcademicYear: "",
     member4: "",
     member4Gender: "",
     member4Email: "",
     member4Phone: "",
+    member4AcademicYear: "",
     member5: "",
     member5Gender: "",
     member5Email: "",
     member5Phone: "",
+    member5AcademicYear: "",
     hasFemaleMember: null as boolean | null,
     mentorName: "",
     problemStatementId: ""
@@ -154,6 +160,9 @@ export default function RegistrationForm({
       if (!formData.leadGender) {
         newErrors.leadGender = "Gender is required.";
       }
+      if (!formData.leadAcademicYear) {
+        newErrors.leadAcademicYear = "Academic Year is required.";
+      }
       if (!formData.leadMobile.trim()) {
         newErrors.leadMobile = "Mobile number is required.";
       } else if (!/^[0-9]{10}$/.test(formData.leadMobile.trim())) {
@@ -167,17 +176,22 @@ export default function RegistrationForm({
         const genderKey = `member${i}Gender`;
         const emailKey = `member${i}Email`;
         const phoneKey = `member${i}Phone`;
+        const academicYearKey = `member${i}AcademicYear`;
 
         const nameVal = (formData[nameKey as keyof typeof formData] as string || "").trim();
         const genderVal = (formData[genderKey as keyof typeof formData] as string || "").trim();
         const emailVal = (formData[emailKey as keyof typeof formData] as string || "").trim();
         const phoneVal = (formData[phoneKey as keyof typeof formData] as string || "").trim();
+        const academicYearVal = (formData[academicYearKey as keyof typeof formData] as string || "").trim();
 
         if (!nameVal) {
           newErrors[nameKey] = `Member ${i} Name is required.`;
         }
         if (!genderVal) {
           newErrors[genderKey] = `Member ${i} Gender is required.`;
+        }
+        if (!academicYearVal) {
+          newErrors[academicYearKey] = `Member ${i} Academic Year is required.`;
         }
         if (!emailVal) {
           newErrors[emailKey] = `Member ${i} Email is required.`;
@@ -873,6 +887,39 @@ export default function RegistrationForm({
                     </p>
                   )}
                 </div>
+
+                {/* Lead Academic Year */}
+                <div className="space-y-2">
+                  <label htmlFor="leadAcademicYear" className="block text-sm font-semibold text-slate-700">
+                    Academic Year <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      name="leadAcademicYear"
+                      id="leadAcademicYear"
+                      value={formData.leadAcademicYear}
+                      onChange={handleChange}
+                      className={`w-full px-4 py-3 rounded-xl border transition-all outline-none pl-11 bg-white appearance-none cursor-pointer ${
+                        errors.leadAcademicYear
+                          ? "border-red-300 focus:ring-4 focus:ring-red-100"
+                          : "border-slate-200 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100"
+                      }`}
+                    >
+                      <option value="">Select Academic Year</option>
+                      <option value="1st Year">1st Year</option>
+                      <option value="2nd Year">2nd Year</option>
+                      <option value="3rd Year">3rd Year</option>
+                      <option value="4th Year">4th Year</option>
+                    </select>
+                    <BookOpen className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 pointer-events-none" />
+                  </div>
+                  {errors.leadAcademicYear && (
+                    <p className="text-xs text-red-500 flex items-center gap-1 mt-1">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      {errors.leadAcademicYear}
+                    </p>
+                  )}
+                </div>
               </motion.div>
             )}
 
@@ -982,6 +1029,39 @@ export default function RegistrationForm({
                               <p className="text-[11px] text-red-500 flex items-center gap-1 mt-0.5">
                                 <AlertCircle className="w-3 h-3" />
                                 {errors[`${fieldName}Gender`]}
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Member Academic Year */}
+                          <div className="space-y-1.5">
+                            <label htmlFor={`${fieldName}AcademicYear`} className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                              Academic Year <span className="text-red-500">*</span>
+                            </label>
+                            <div className="relative">
+                              <select
+                                name={`${fieldName}AcademicYear`}
+                                id={`${fieldName}AcademicYear`}
+                                value={(formData as any)[`${fieldName}AcademicYear`]}
+                                onChange={handleChange}
+                                className={`w-full px-3.5 py-2.5 rounded-xl border text-xs transition-all outline-none pl-10 bg-white appearance-none cursor-pointer focus:ring-4 focus:ring-indigo-100 ${
+                                  errors[`${fieldName}AcademicYear`]
+                                    ? "border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                                    : "border-slate-200 focus:border-indigo-500"
+                                }`}
+                              >
+                                <option value="">Select Academic Year</option>
+                                <option value="1st Year">1st Year</option>
+                                <option value="2nd Year">2nd Year</option>
+                                <option value="3rd Year">3rd Year</option>
+                                <option value="4th Year">4th Year</option>
+                              </select>
+                              <BookOpen className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                            </div>
+                            {errors[`${fieldName}AcademicYear`] && (
+                              <p className="text-[11px] text-red-500 flex items-center gap-1 mt-0.5">
+                                <AlertCircle className="w-3 h-3" />
+                                {errors[`${fieldName}AcademicYear`]}
                               </p>
                             )}
                           </div>
