@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { HomepageContent, CustomPage, LiveUpdate } from "../types";
-import { Calendar, Phone, Mail, Award, Users, Shield, ArrowRight, Image as ImageIcon, Heart, Bell, Megaphone, Info, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { HomepageContent, CustomPage, LiveUpdate, PreviousPhoto } from "../types";
+import { Calendar, Phone, Mail, Award, Users, Shield, ArrowRight, Image as ImageIcon, Heart, Bell, Megaphone, Info, ChevronLeft, ChevronRight, X, Folder } from "lucide-react";
 
 interface LandingPageProps {
   homepageData: HomepageContent;
@@ -18,26 +18,44 @@ interface LandingPageProps {
 export default function LandingPage({ homepageData, onNavigate, customPages, isDark = false, publicSettings, updates = [] }: LandingPageProps) {
   const { sihDetails, sponsors, patrons = [], studentSpocs, collegeSpocs, previousPhotos = [] } = homepageData;
 
+  // Selected gallery group/album on homepage
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+
   const [galleryPage, setGalleryPage] = useState(1);
   const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
   const IMAGES_PER_PAGE = 6;
 
-  const totalGalleryPages = previousPhotos ? Math.ceil(previousPhotos.length / IMAGES_PER_PAGE) : 0;
+  // Group photos by groupTitle dynamically
+  const groupedPhotos = React.useMemo(() => {
+    const groups: Record<string, typeof previousPhotos> = {};
+    previousPhotos.forEach((photo) => {
+      const gTitle = (photo.groupTitle || "General Gallery").trim();
+      if (!groups[gTitle]) {
+        groups[gTitle] = [];
+      }
+      groups[gTitle].push(photo);
+    });
+    return groups;
+  }, [previousPhotos]);
+
+  const activePhotos = selectedGroup ? (groupedPhotos[selectedGroup] || []) : [];
+
+  const totalGalleryPages = activePhotos ? Math.ceil(activePhotos.length / IMAGES_PER_PAGE) : 0;
   const currentPage = Math.min(galleryPage, Math.max(1, totalGalleryPages));
   
-  const paginatedPhotos = previousPhotos 
-    ? previousPhotos.slice((currentPage - 1) * IMAGES_PER_PAGE, currentPage * IMAGES_PER_PAGE)
+  const paginatedPhotos = activePhotos 
+    ? activePhotos.slice((currentPage - 1) * IMAGES_PER_PAGE, currentPage * IMAGES_PER_PAGE)
     : [];
 
   const handlePrevPhoto = () => {
-    if (activePhotoIndex !== null && previousPhotos && previousPhotos.length > 0) {
-      setActivePhotoIndex((activePhotoIndex - 1 + previousPhotos.length) % previousPhotos.length);
+    if (activePhotoIndex !== null && activePhotos && activePhotos.length > 0) {
+      setActivePhotoIndex((activePhotoIndex - 1 + activePhotos.length) % activePhotos.length);
     }
   };
 
   const handleNextPhoto = () => {
-    if (activePhotoIndex !== null && previousPhotos && previousPhotos.length > 0) {
-      setActivePhotoIndex((activePhotoIndex + 1) % previousPhotos.length);
+    if (activePhotoIndex !== null && activePhotos && activePhotos.length > 0) {
+      setActivePhotoIndex((activePhotoIndex + 1) % activePhotos.length);
     }
   };
 
@@ -58,7 +76,7 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [activePhotoIndex, previousPhotos]);
+  }, [activePhotoIndex, activePhotos]);
 
   // Simple and robust parser for custom page content / markdown
   const renderSimpleMarkdown = (text: string) => {
@@ -474,128 +492,237 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
       {/* Previous SIH Photos Gallery */}
       {previousPhotos && previousPhotos.length > 0 && (
         <section className="space-y-6" id="landing-gallery">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-2">
-              <ImageIcon className="w-5 h-5 text-indigo-500" />
-              <h2 className={`text-xl font-bold font-display ${isDark ? "text-white" : "text-slate-800"}`}>Previous SIH Gallery</h2>
-            </div>
-            
-            {totalGalleryPages > 1 && (
-              <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
-                Showing {paginatedPhotos.length} of {previousPhotos.length} images (Page {currentPage} of {totalGalleryPages})
-              </span>
-            )}
-          </div>
-
-          {/* Interactive Image Grid */}
-          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6 animate-fade-in">
-            {paginatedPhotos.map((photo, idx) => {
-              const originalIndex = (currentPage - 1) * IMAGES_PER_PAGE + idx;
-              return (
-                <div
-                  key={photo.id}
-                  onClick={() => setActivePhotoIndex(originalIndex)}
-                  className={`rounded-2xl border overflow-hidden shadow-xs transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-md ${
-                    isDark 
-                      ? "bg-slate-900 border-slate-800 hover:border-indigo-500 hover:shadow-indigo-950/25" 
-                      : "bg-white border-slate-200 hover:border-indigo-300 hover:shadow-slate-100"
-                  }`}
-                >
-                  <div className={`h-48 flex items-center justify-center relative overflow-hidden ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
-                    {photo.imageUrl ? (
-                      <>
-                        <img
-                          src={photo.imageUrl}
-                          alt={photo.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                          referrerPolicy="no-referrer"
-                        />
-                        {/* Hover Overlay Visual Indicator */}
-                        <div className="absolute inset-0 bg-slate-950/20 group-hover:bg-slate-950/40 transition-colors duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                          <span className="px-3 py-1.5 bg-white/90 dark:bg-slate-900/90 text-slate-900 dark:text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 select-none transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-                            <ImageIcon className="w-3.5 h-3.5" /> View Image
-                          </span>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center text-slate-400 gap-2 p-4 text-center">
-                        <ImageIcon className="w-8 h-8 text-slate-500" />
-                        <span className="text-xs font-semibold uppercase tracking-wider">{photo.title}</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="p-4 space-y-1">
-                    <h3 className={`font-bold text-sm leading-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-450 transition-colors ${isDark ? "text-slate-200" : "text-slate-800"}`}>{photo.title}</h3>
-                    {photo.description && (
-                      <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? "text-slate-400" : "text-slate-500"}`}>{photo.description}</p>
-                    )}
-                  </div>
+          {selectedGroup === null ? (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between flex-wrap gap-4">
+                <div className="flex items-center gap-2">
+                  <ImageIcon className="w-5 h-5 text-indigo-500" />
+                  <h2 className={`text-xl font-bold font-display ${isDark ? "text-white" : "text-slate-800"}`}>Previous SIH Gallery</h2>
                 </div>
-              );
-            })}
-          </div>
+                <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
+                  Select an album below to explore memory archives
+                </span>
+              </div>
 
-          {/* Pagination Controls */}
-          {totalGalleryPages > 1 && (
-            <div className="flex items-center justify-center gap-3 pt-4">
-              <button
-                onClick={() => setGalleryPage(prev => Math.max(1, prev - 1))}
-                disabled={currentPage === 1}
-                className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                  currentPage === 1
-                    ? "opacity-30 cursor-not-allowed border-slate-200/50 text-slate-400"
-                    : isDark
-                      ? "border-slate-800 hover:bg-slate-800 text-slate-300 bg-slate-900"
-                      : "border-slate-200 hover:bg-slate-50 text-slate-700 bg-white"
-                }`}
-                title="Previous Page"
-              >
-                <ChevronLeft className="w-4.5 h-4.5" />
-              </button>
-              
-              <div className="flex items-center gap-1.5">
-                {Array.from({ length: totalGalleryPages }).map((_, pageIdx) => {
-                  const pageNum = pageIdx + 1;
-                  const isActive = currentPage === pageNum;
+              {/* Album Cover Stacks Grid */}
+              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-8 animate-fade-in text-left">
+                {(Object.entries(groupedPhotos) as [string, PreviousPhoto[]][]).map(([groupName, photos]) => {
+                  const coverPhotos = photos.slice(0, 3);
                   return (
-                    <button
-                      key={pageNum}
-                      onClick={() => setGalleryPage(pageNum)}
-                      className={`w-9.5 h-9.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
-                        isActive
-                          ? "bg-indigo-650 text-white shadow-xs"
-                          : isDark
-                            ? "text-slate-400 bg-slate-900/55 border border-slate-800/80 hover:bg-slate-800 hover:text-white"
-                            : "text-slate-600 bg-white border border-slate-200/80 hover:bg-slate-50 hover:text-slate-900"
+                    <div
+                      key={groupName}
+                      onClick={() => {
+                        setSelectedGroup(groupName);
+                        setGalleryPage(1);
+                      }}
+                      className={`group rounded-3xl border p-6 overflow-hidden transition-all duration-300 cursor-pointer hover:-translate-y-1.5 hover:shadow-xl flex flex-col justify-between ${
+                        isDark 
+                          ? "bg-slate-900 border-slate-800 hover:border-indigo-500 hover:shadow-indigo-950/25" 
+                          : "bg-white border-slate-200 hover:border-indigo-300 hover:shadow-slate-100"
                       }`}
                     >
-                      {pageNum}
-                    </button>
+                      {/* Overlapping physical photo folder stacks */}
+                      <div className="h-44 w-full flex items-center justify-center relative select-none">
+                        {coverPhotos.length > 0 ? (
+                          coverPhotos.map((photo, photoIndex) => {
+                            // Generate stacked layered rotates
+                            const rotationStyles = [
+                              "-rotate-6 -translate-x-3.5 z-0 scale-95 opacity-80",
+                              "rotate-3 translate-x-2 z-10 scale-98 opacity-90",
+                              "rotate-0 z-20 scale-100"
+                            ];
+                            const rotation = rotationStyles[photoIndex % rotationStyles.length];
+                            
+                            return (
+                              <div
+                                key={photo.id}
+                                className={`absolute w-36 h-36 rounded-2xl overflow-hidden border-2 shadow-md transition-all duration-500 group-hover:scale-105 ${rotation} ${
+                                  isDark ? "border-slate-850 bg-slate-950" : "border-white bg-slate-100"
+                                }`}
+                              >
+                                {photo.imageUrl ? (
+                                  <img
+                                    src={photo.imageUrl}
+                                    alt={photo.title}
+                                    className="w-full h-full object-cover"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-slate-400 bg-slate-100 dark:bg-slate-950">
+                                    <ImageIcon className="w-7 h-7" />
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div className="w-36 h-36 rounded-2xl border-2 border-dashed flex items-center justify-center text-slate-400">
+                            <ImageIcon className="w-8 h-8" />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="pt-5 text-center space-y-2">
+                        <h3 className={`font-extrabold text-sm leading-snug group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors ${isDark ? "text-slate-200" : "text-slate-850"}`}>
+                          {groupName}
+                        </h3>
+                        <span className={`inline-block text-[10px] font-extrabold px-3 py-0.5 rounded-full ${
+                          isDark 
+                            ? "bg-indigo-950/60 text-indigo-300 border border-indigo-900/60" 
+                            : "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                        }`}>
+                          {photos.length} Photo(s)
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800/60 pb-4">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setSelectedGroup(null)}
+                    className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                      isDark
+                        ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    ← Back to Albums
+                  </button>
+                  <span className="text-slate-300 dark:text-slate-700 font-light">|</span>
+                  <div className="flex items-center gap-2">
+                    <Folder className="w-4.5 h-4.5 text-indigo-500" />
+                    <h2 className={`text-base font-extrabold font-display ${isDark ? "text-white" : "text-slate-850"}`}>
+                      {selectedGroup}
+                    </h2>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${isDark ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-600"}`}>
+                      {activePhotos.length} memory item(s)
+                    </span>
+                  </div>
+                </div>
+                
+                {totalGalleryPages > 1 && (
+                  <span className="text-xs font-bold text-slate-400 dark:text-slate-500">
+                    Showing {paginatedPhotos.length} of {activePhotos.length} images (Page {currentPage} of {totalGalleryPages})
+                  </span>
+                )}
+              </div>
+
+              {/* Interactive Image Grid */}
+              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6 animate-fade-in text-left">
+                {paginatedPhotos.map((photo, idx) => {
+                  const originalIndex = (currentPage - 1) * IMAGES_PER_PAGE + idx;
+                  return (
+                    <div
+                      key={photo.id}
+                      onClick={() => setActivePhotoIndex(originalIndex)}
+                      className={`rounded-2xl border overflow-hidden shadow-xs transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-md ${
+                        isDark 
+                          ? "bg-slate-900 border-slate-800 hover:border-indigo-500 hover:shadow-indigo-950/25" 
+                          : "bg-white border-slate-200 hover:border-indigo-300 hover:shadow-slate-100"
+                      }`}
+                    >
+                      <div className={`h-48 flex items-center justify-center relative overflow-hidden ${isDark ? "bg-slate-950" : "bg-slate-100"}`}>
+                        {photo.imageUrl ? (
+                          <>
+                            <img
+                              src={photo.imageUrl}
+                              alt={photo.title}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              referrerPolicy="no-referrer"
+                            />
+                            {/* Hover Overlay Visual Indicator */}
+                            <div className="absolute inset-0 bg-slate-950/20 group-hover:bg-slate-950/40 transition-colors duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                              <span className="px-3 py-1.5 bg-white/90 dark:bg-slate-900/90 text-slate-900 dark:text-white rounded-xl text-xs font-bold shadow-xs flex items-center gap-1.5 select-none transform translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+                                <ImageIcon className="w-3.5 h-3.5" /> View Image
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center text-slate-400 gap-2 p-4 text-center">
+                            <ImageIcon className="w-8 h-8 text-slate-500" />
+                            <span className="text-xs font-semibold uppercase tracking-wider">{photo.title}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-4 space-y-1">
+                        <h3 className={`font-bold text-sm leading-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-450 transition-colors ${isDark ? "text-slate-200" : "text-slate-850"}`}>{photo.title}</h3>
+                        {photo.description && (
+                          <p className={`text-xs leading-relaxed line-clamp-2 ${isDark ? "text-slate-400" : "text-slate-500"}`}>{photo.description}</p>
+                        )}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
 
-              <button
-                onClick={() => setGalleryPage(prev => Math.min(totalGalleryPages, prev + 1))}
-                disabled={currentPage === totalGalleryPages}
-                className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
-                  currentPage === totalGalleryPages
-                    ? "opacity-30 cursor-not-allowed border-slate-200/50 text-slate-400"
-                    : isDark
-                      ? "border-slate-800 hover:bg-slate-800 text-slate-300 bg-slate-900"
-                      : "border-slate-200 hover:bg-slate-50 text-slate-700 bg-white"
-                }`}
-                title="Next Page"
-              >
-                <ChevronRight className="w-4.5 h-4.5" />
-              </button>
+              {/* Pagination Controls */}
+              {totalGalleryPages > 1 && (
+                <div className="flex items-center justify-center gap-3 pt-4">
+                  <button
+                    onClick={() => setGalleryPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      currentPage === 1
+                        ? "opacity-30 cursor-not-allowed border-slate-200/50 text-slate-400"
+                        : isDark
+                          ? "border-slate-800 hover:bg-slate-800 text-slate-300 bg-slate-900"
+                          : "border-slate-200 hover:bg-slate-50 text-slate-700 bg-white"
+                    }`}
+                    title="Previous Page"
+                  >
+                    <ChevronLeft className="w-4.5 h-4.5" />
+                  </button>
+                  
+                  <div className="flex items-center gap-1.5">
+                    {Array.from({ length: totalGalleryPages }).map((_, pageIdx) => {
+                      const pageNum = pageIdx + 1;
+                      const isActive = currentPage === pageNum;
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setGalleryPage(pageNum)}
+                          className={`w-9.5 h-9.5 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+                            isActive
+                              ? "bg-indigo-650 text-white shadow-xs"
+                              : isDark
+                                ? "text-slate-400 bg-slate-900/55 border border-slate-800/80 hover:bg-slate-800 hover:text-white"
+                                : "text-slate-600 bg-white border border-slate-200/80 hover:bg-slate-50 hover:text-slate-900"
+                          }`}
+                        >
+                          {pageNum}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <button
+                    onClick={() => setGalleryPage(prev => Math.min(totalGalleryPages, prev + 1))}
+                    disabled={currentPage === totalGalleryPages}
+                    className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                      currentPage === totalGalleryPages
+                        ? "opacity-30 cursor-not-allowed border-slate-200/50 text-slate-400"
+                        : isDark
+                          ? "border-slate-800 hover:bg-slate-800 text-slate-300 bg-slate-900"
+                          : "border-slate-200 hover:bg-slate-50 text-slate-700 bg-white"
+                    }`}
+                    title="Next Page"
+                  >
+                    <ChevronRight className="w-4.5 h-4.5" />
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </section>
       )}
 
       {/* Lightbox Modal Popup */}
-      {activePhotoIndex !== null && previousPhotos[activePhotoIndex] && (
+      {activePhotoIndex !== null && activePhotos[activePhotoIndex] && (
         <div 
           className="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-[1000] flex flex-col justify-between p-4 md:p-8 animate-fade-in select-none"
           onClick={() => setActivePhotoIndex(null)}
@@ -604,10 +731,10 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
           <div className="flex items-center justify-between w-full max-w-5xl mx-auto text-white pb-3 border-b border-white/10">
             <div className="text-left">
               <span className="text-[10px] font-bold font-mono tracking-wider text-slate-400 uppercase">
-                SIH Gallery • Image {activePhotoIndex + 1} of {previousPhotos.length}
+                SIH Gallery • {selectedGroup || "Gallery"} • Image {activePhotoIndex + 1} of {activePhotos.length}
               </span>
               <h3 className="text-lg font-bold tracking-tight text-white mt-0.5">
-                {previousPhotos[activePhotoIndex].title}
+                {activePhotos[activePhotoIndex].title}
               </h3>
             </div>
             <button 
@@ -635,17 +762,17 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
               className="relative max-h-[68vh] max-w-full flex items-center justify-center rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-slate-900"
               onClick={(e) => e.stopPropagation()}
             >
-              {previousPhotos[activePhotoIndex].imageUrl ? (
+              {activePhotos[activePhotoIndex].imageUrl ? (
                 <img
-                  src={previousPhotos[activePhotoIndex].imageUrl}
-                  alt={previousPhotos[activePhotoIndex].title}
+                  src={activePhotos[activePhotoIndex].imageUrl}
+                  alt={activePhotos[activePhotoIndex].title}
                   className="max-h-[68vh] object-contain select-none rounded-xl"
                   referrerPolicy="no-referrer"
                 />
               ) : (
                 <div className="h-64 w-96 flex flex-col items-center justify-center text-slate-400 gap-3 p-8 text-center bg-slate-900">
                   <ImageIcon className="w-12 h-12 text-slate-500" />
-                  <span className="text-sm font-semibold uppercase tracking-wider">{previousPhotos[activePhotoIndex].title}</span>
+                  <span className="text-sm font-semibold uppercase tracking-wider">{activePhotos[activePhotoIndex].title}</span>
                 </div>
               )}
             </div>
@@ -662,9 +789,9 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
 
           {/* Bottom Caption & Pagination Dots */}
           <div className="w-full max-w-3xl mx-auto text-center text-white pt-2">
-            {previousPhotos[activePhotoIndex].description ? (
+            {activePhotos[activePhotoIndex].description ? (
               <p className="text-sm md:text-base leading-relaxed text-slate-300 max-w-2xl mx-auto font-medium">
-                {previousPhotos[activePhotoIndex].description}
+                {activePhotos[activePhotoIndex].description}
               </p>
             ) : (
               <p className="text-xs text-slate-500 italic">No description provided for this photo.</p>
@@ -672,7 +799,7 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
             
             {/* Dots */}
             <div className="flex justify-center items-center gap-1.5 mt-4 flex-wrap">
-              {previousPhotos.map((_, dotIdx) => (
+              {activePhotos.map((_, dotIdx) => (
                 <button
                   key={dotIdx}
                   onClick={(e) => { e.stopPropagation(); setActivePhotoIndex(dotIdx); }}

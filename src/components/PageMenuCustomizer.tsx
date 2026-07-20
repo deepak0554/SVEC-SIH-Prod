@@ -3,7 +3,8 @@ import { HomepageContent, CustomPage, MenuItem, Sponsor, Patron, TeamSpoc, Previ
 import { 
   Plus, Trash2, Edit2, CheckCircle, AlertCircle, Save, Layers, List, Link as LinkIcon, 
   UserPlus, Image as ImageIcon, Sparkles, FileText, LayoutGrid, Eye, ArrowUp, ArrowDown,
-  ShieldAlert, Shield, Bold, Italic, Heading1, Heading2, HelpCircle, Code, ExternalLink, FileJson
+  ShieldAlert, Shield, Bold, Italic, Heading1, Heading2, HelpCircle, Code, ExternalLink, FileJson,
+  X, FolderPlus, Folder
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import HtmlRichEditor from "./HtmlRichEditor";
@@ -73,6 +74,23 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
   const [photoTitle, setPhotoTitle] = useState("");
   const [photoDesc, setPhotoDesc] = useState("");
   const [photoBase64, setPhotoBase64] = useState("");
+  const [pendingPhotos, setPendingPhotos] = useState<{ id: string; base64: string; title: string; description: string; fileName: string }[]>([]);
+
+  // Photo edit state
+  const [editingPhotoId, setEditingPhotoId] = useState<string | null>(null);
+  const [editingPhotoTitle, setEditingPhotoTitle] = useState("");
+  const [editingPhotoDesc, setEditingPhotoDesc] = useState("");
+  const [editingPhotoBase64, setEditingPhotoBase64] = useState("");
+  const [editingPhotoGroup, setEditingPhotoGroup] = useState("");
+
+  // Group rename state
+  const [editingGroupName, setEditingGroupName] = useState<string | null>(null);
+  const [newGroupNameInput, setNewGroupNameInput] = useState("");
+
+  // Group selection state for batch upload
+  const [selectedBatchGroup, setSelectedBatchGroup] = useState("General Gallery");
+  const [customNewGroupName, setCustomNewGroupName] = useState("");
+  const [isCreatingNewGroup, setIsCreatingNewGroup] = useState(false);
 
   // Dynamic pages form state
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
@@ -90,6 +108,21 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     message: string;
     onConfirm: () => void | Promise<void>;
   } | null>(null);
+
+  // Memoized array of existing unique photo group titles for dropdowns
+  const existingGroups = React.useMemo(() => {
+    if (!homepage || !homepage.previousPhotos) return ["General Gallery"];
+    const groups = new Set<string>();
+    homepage.previousPhotos.forEach((p) => {
+      if (p.groupTitle) {
+        groups.add(p.groupTitle.trim());
+      }
+    });
+    if (groups.size === 0) {
+      groups.add("General Gallery");
+    }
+    return Array.from(groups);
+  }, [homepage]);
 
   // Fetch all customizable parameters
   const fetchAllData = async () => {
@@ -410,6 +443,61 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     });
   };
 
+  // Helper for reading File as Base64 with Promise
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      if (file.size > 2 * 1024 * 1024) {
+        reject(new Error(`File "${file.name}" is larger than 2MB.`));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error || new Error("Failed to read file."));
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Upload and queue multiple gallery images
+  const handleMultipleImagesUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setError("");
+    setSuccess("");
+
+    const newPending: { id: string; base64: string; title: string; description: string; fileName: string }[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      try {
+        const base64 = await readFileAsBase64(file);
+        // Clean up file name to form a default title
+        let defaultTitle = file.name;
+        const lastDot = defaultTitle.lastIndexOf(".");
+        if (lastDot !== -1) {
+          defaultTitle = defaultTitle.substring(0, lastDot);
+        }
+        defaultTitle = defaultTitle
+          .replace(/[-_]/g, " ")
+          .replace(/\b\w/g, c => c.toUpperCase());
+
+        newPending.push({
+          id: `${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+          base64,
+          title: defaultTitle,
+          description: "",
+          fileName: file.name
+        });
+      } catch (err: any) {
+        setError(err.message || "Failed to process one or more images.");
+      }
+    }
+
+    setPendingPhotos(prev => [...prev, ...newPending]);
+    // reset input so same files can be re-uploaded if cleared
+    e.target.value = "";
+  };
+
   // 4. Add Gallery Photo
   const handleAddPhoto = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -455,6 +543,53 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     }
   };
 
+  // Add the queued batch of gallery photos
+  const handleAddBatchPhotos = async () => {
+    if (!homepage || pendingPhotos.length === 0) return;
+
+    setError("");
+    setSuccess("");
+
+    const targetGroup = isCreatingNewGroup && customNewGroupName.trim()
+      ? customNewGroupName.trim()
+      : selectedBatchGroup.trim();
+
+    const newPhotos: PreviousPhoto[] = pendingPhotos.map((photo, i) => ({
+      id: `${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
+      title: photo.title.trim() || `SIH Photo ${i + 1}`,
+      description: photo.description.trim(),
+      imageUrl: photo.base64,
+      groupTitle: targetGroup || "General Gallery"
+    }));
+
+    const updatedHomepage: HomepageContent = {
+      ...homepage,
+      previousPhotos: [...(homepage.previousPhotos || []), ...newPhotos]
+    };
+
+    try {
+      const res = await fetch("/api/homepage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(updatedHomepage)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setHomepage(data.content);
+        setPendingPhotos([]);
+        setSuccess(`Successfully added ${newPhotos.length} photos to the gallery!`);
+      } else {
+        setError(data.error || "Failed to add gallery photos.");
+      }
+    } catch (err) {
+      setError("Network error. Could not add gallery photos.");
+    }
+  };
+
   // Delete Gallery Photo
   const handleDeletePhoto = (id: string) => {
     setDeleteConfirm({
@@ -487,6 +622,170 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
           }
         } catch (err) {
           setError("Network error. Could not delete gallery photo.");
+        } finally {
+          setDeleteConfirm(null);
+        }
+      }
+    });
+  };
+
+  // Start editing a gallery photo
+  const handleStartEditPhoto = (photo: PreviousPhoto) => {
+    setEditingPhotoId(photo.id);
+    setEditingPhotoTitle(photo.title);
+    setEditingPhotoDesc(photo.description || "");
+    setEditingPhotoBase64(photo.imageUrl || "");
+    setEditingPhotoGroup(photo.groupTitle || "General Gallery");
+  };
+
+  // Cancel photo editing
+  const handleCancelEditPhoto = () => {
+    setEditingPhotoId(null);
+    setEditingPhotoTitle("");
+    setEditingPhotoDesc("");
+    setEditingPhotoBase64("");
+    setEditingPhotoGroup("");
+  };
+
+  // Update an existing gallery photo
+  const handleUpdatePhoto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!homepage || !editingPhotoId || !editingPhotoTitle.trim()) return;
+
+    setError("");
+    setSuccess("");
+
+    const updatedPhotos = (homepage.previousPhotos || []).map((p) => {
+      if (p.id === editingPhotoId) {
+        return {
+          ...p,
+          title: editingPhotoTitle.trim(),
+          description: editingPhotoDesc.trim(),
+          imageUrl: editingPhotoBase64,
+          groupTitle: editingPhotoGroup.trim() || "General Gallery"
+        };
+      }
+      return p;
+    });
+
+    const updatedHomepage: HomepageContent = {
+      ...homepage,
+      previousPhotos: updatedPhotos
+    };
+
+    try {
+      const res = await fetch("/api/homepage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(updatedHomepage)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setHomepage(data.content);
+        handleCancelEditPhoto();
+        setSuccess("Gallery photo updated successfully!");
+      } else {
+        setError(data.error || "Failed to update gallery photo.");
+      }
+    } catch (err) {
+      setError("Network error. Could not update gallery photo.");
+    }
+  };
+
+  // Rename an entire gallery group (all photos in it get updated to the new name)
+  const handleRenameGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!homepage || !editingGroupName || !newGroupNameInput.trim()) return;
+
+    setError("");
+    setSuccess("");
+
+    const oldName = editingGroupName.trim();
+    const newName = newGroupNameInput.trim();
+
+    const updatedPhotos = (homepage.previousPhotos || []).map((p) => {
+      const pGroup = (p.groupTitle || "General Gallery").trim();
+      if (pGroup === oldName) {
+        return {
+          ...p,
+          groupTitle: newName
+        };
+      }
+      return p;
+    });
+
+    const updatedHomepage: HomepageContent = {
+      ...homepage,
+      previousPhotos: updatedPhotos
+    };
+
+    try {
+      const res = await fetch("/api/homepage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(updatedHomepage)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setHomepage(data.content);
+        setEditingGroupName(null);
+        setNewGroupNameInput("");
+        setSuccess(`Gallery group renamed from "${oldName}" to "${newName}" successfully!`);
+      } else {
+        setError(data.error || "Failed to rename gallery group.");
+      }
+    } catch (err) {
+      setError("Network error. Could not rename gallery group.");
+    }
+  };
+
+  // Delete an entire gallery group and all its photos
+  const handleDeleteGroup = (groupName: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Entire Gallery Group?",
+      message: `Are you sure you want to delete the gallery group "${groupName}" and ALL of its photos? This action cannot be undone.`,
+      onConfirm: async () => {
+        if (!homepage) return;
+        setError("");
+        setSuccess("");
+
+        const updatedPhotos = (homepage.previousPhotos || []).filter((p) => {
+          const pGroup = (p.groupTitle || "General Gallery").trim();
+          return pGroup !== groupName.trim();
+        });
+
+        const updatedHomepage: HomepageContent = {
+          ...homepage,
+          previousPhotos: updatedPhotos
+        };
+
+        try {
+          const res = await fetch("/api/homepage", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Admin-Passcode": passcode
+            },
+            body: JSON.stringify(updatedHomepage)
+          });
+          const data = await res.json();
+          if (res.ok) {
+            setHomepage(data.content);
+            setSuccess(`Gallery group "${groupName}" and all of its photos were removed successfully.`);
+          } else {
+            setError(data.error || "Failed to delete gallery group.");
+          }
+        } catch (err) {
+          setError("Network error. Could not delete gallery group.");
         } finally {
           setDeleteConfirm(null);
         }
@@ -1572,100 +1871,268 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
       {/* 4. PHOTOS TAB */}
       {activeSubTab === "photos" && homepage && (
         <div className="space-y-6">
-          <form onSubmit={handleAddPhoto} className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
-            <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Plus className="w-4 h-4 text-indigo-500" />
-              Add Previous SIH Photo
-            </h2>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Photo Title *</label>
-                <input
-                  type="text"
-                  required
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  value={photoTitle}
-                  onChange={(e) => setPhotoTitle(e.target.value)}
-                  placeholder="e.g. SIH 2024 Nodal Center Winners"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Short Description (Optional)</label>
-                <input
-                  type="text"
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
-                  value={photoDesc}
-                  onChange={(e) => setPhotoDesc(e.target.value)}
-                  placeholder="e.g. SVEC students receiving first prize of 1 Lakh INR."
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Upload Photo *</label>
-              <input
-                type="file"
-                accept="image/*"
-                required
-                className="w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100"
-                onChange={(e) => handleImageUpload(e, setPhotoBase64)}
-              />
-              {photoBase64 && (
-                <div className="mt-3">
-                  <span className="text-[10px] text-slate-400 block mb-1">Image Preview:</span>
-                  <img src={photoBase64} alt="Gallery Preview" className="h-28 max-w-[200px] object-cover rounded-xl border p-0.5" referrerPolicy="no-referrer" />
-                </div>
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between border-b pb-3 border-slate-100">
+              <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <FolderPlus className="w-4 h-4 text-indigo-500" />
+                Add Photos to SVEC Gallery
+              </h2>
+              {pendingPhotos.length > 0 && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
+                  {pendingPhotos.length} Draft Photo(s) Selected
+                </span>
               )}
             </div>
 
-            <div className="pt-2 flex justify-end">
-              <button
-                type="submit"
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <Plus className="w-4 h-4" />
-                Add Gallery Photo
-              </button>
+            {/* Selection Step (Always visible to let users add more files) */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                Select Photo(s) from your Device
+              </label>
+              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="block w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
+                  onChange={handleMultipleImagesUpload}
+                />
+                {pendingPhotos.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPendingPhotos([])}
+                    className="px-3.5 py-2 text-xs font-bold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-all cursor-pointer border border-transparent hover:border-red-150"
+                  >
+                    Clear Selected
+                  </button>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400">
+                Tip: You can select multiple images at once (limit 2MB per photo). Clean titles will be auto-generated from file names!
+              </p>
             </div>
-          </form>
+
+            {/* Batch Form Queue */}
+            {pendingPhotos.length > 0 && (
+              <div className="border-t pt-4 border-slate-100 space-y-4">
+                <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wide">
+                  Configure Upload Group Metadata
+                </h3>
+
+                {/* Album Group Selector for Batch */}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/60 grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Choose Gallery Group/Album *
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 bg-white text-slate-800"
+                      value={isCreatingNewGroup ? "NEW_GROUP" : selectedBatchGroup}
+                      onChange={(e) => {
+                        if (e.target.value === "NEW_GROUP") {
+                          setIsCreatingNewGroup(true);
+                        } else {
+                          setIsCreatingNewGroup(false);
+                          setSelectedBatchGroup(e.target.value);
+                        }
+                      }}
+                    >
+                      {existingGroups.map((group) => (
+                        <option key={group} value={group}>
+                          {group}
+                        </option>
+                      ))}
+                      <option value="NEW_GROUP" className="text-indigo-600 font-bold">
+                        + Create New Group/Album...
+                      </option>
+                    </select>
+                  </div>
+
+                  {isCreatingNewGroup && (
+                    <div className="animate-fade-in">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        New Group/Album Name *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 bg-white text-slate-800"
+                        value={customNewGroupName}
+                        onChange={(e) => setCustomNewGroupName(e.target.value)}
+                        placeholder="e.g. SIH Grand Finale 2026"
+                      />
+                    </div>
+                  )}
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[380px] overflow-y-auto p-1 border rounded-xl border-slate-100 bg-slate-50/35">
+                  {pendingPhotos.map((photo, index) => (
+                    <div 
+                      key={photo.id}
+                      className="bg-white p-3.5 rounded-xl border border-slate-150 shadow-2xs flex gap-3 items-start relative hover:border-indigo-200 transition-colors"
+                    >
+                      <div className="relative w-20 h-20 shrink-0 bg-slate-100 rounded-lg overflow-hidden border">
+                        <img 
+                          src={photo.base64} 
+                          alt="Thumbnail preview" 
+                          className="w-full h-full object-cover" 
+                          referrerPolicy="no-referrer"
+                        />
+                        <span className="absolute bottom-1 left-1 px-1.5 py-0.5 bg-slate-900/80 text-white text-[8px] font-bold rounded">
+                          #{index + 1}
+                        </span>
+                      </div>
+
+                      <div className="flex-1 space-y-2 text-left">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Photo Title *</label>
+                          <input
+                            type="text"
+                            required
+                            className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                            value={photo.title}
+                            onChange={(e) => {
+                              const updated = [...pendingPhotos];
+                              updated[index].title = e.target.value;
+                              setPendingPhotos(updated);
+                            }}
+                            placeholder="Photo title"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Description (Optional)</label>
+                          <input
+                            type="text"
+                            className="w-full px-2 py-1 border border-slate-200 rounded-lg text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                            value={photo.description}
+                            onChange={(e) => {
+                              const updated = [...pendingPhotos];
+                              updated[index].description = e.target.value;
+                              setPendingPhotos(updated);
+                            }}
+                            placeholder="Description"
+                          />
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setPendingPhotos(prev => prev.filter(p => p.id !== photo.id))}
+                        className="absolute top-2 right-2 p-1 bg-slate-100 hover:bg-red-50 text-slate-400 hover:text-red-600 rounded-full cursor-pointer transition-colors"
+                        title="Remove photo from batch"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="pt-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleAddBatchPhotos}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-sm transition-all"
+                  >
+                    <Save className="w-4 h-4" />
+                    Upload & Add {pendingPhotos.length} Photo(s) to Gallery
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* List photos */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs text-left">
             <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4">
-              Current Gallery Photos ({homepage.previousPhotos?.length || 0})
+              Current Gallery Groups & Photos ({homepage.previousPhotos?.length || 0} photos in total)
             </h2>
 
             {homepage.previousPhotos && homepage.previousPhotos.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-                {homepage.previousPhotos.map((p) => (
-                  <div
-                    key={p.id}
-                    className="border border-slate-200 rounded-xl overflow-hidden shadow-xs hover:border-slate-300 transition-all flex flex-col justify-between"
-                  >
-                    <div className="h-32 bg-slate-100 flex items-center justify-center relative">
-                      {p.imageUrl ? (
-                        <img src={p.imageUrl} alt={p.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                      ) : (
-                        <ImageIcon className="w-8 h-8 text-slate-300" />
-                      )}
-                    </div>
-                    <div className="p-3 bg-white flex-1 flex flex-col justify-between gap-2">
-                      <div>
-                        <h3 className="font-bold text-slate-800 text-xs truncate">{p.title}</h3>
-                        {p.description && <p className="text-[10px] text-slate-500 leading-normal line-clamp-2 mt-0.5">{p.description}</p>}
+              <div className="space-y-8">
+                {/* Group photos by group name */}
+                {(Object.entries(
+                  homepage.previousPhotos.reduce((acc, p) => {
+                    const g = (p.groupTitle || "General Gallery").trim();
+                    if (!acc[g]) acc[g] = [];
+                    acc[g].push(p);
+                    return acc;
+                  }, {} as Record<string, PreviousPhoto[]>)
+                ) as [string, PreviousPhoto[]][]).map(([groupName, photos]) => (
+                  <div key={groupName} className="border border-slate-150 rounded-2xl overflow-hidden bg-slate-50/20 shadow-2xs">
+                    {/* Group Folder Header */}
+                    <div className="bg-slate-100/80 px-5 py-3.5 border-b border-slate-150 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Folder className="w-4.5 h-4.5 text-indigo-500 fill-indigo-100" />
+                        <h3 className="font-extrabold text-sm text-slate-800 font-display">
+                          {groupName}
+                        </h3>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">
+                          {photos.length} Photo(s)
+                        </span>
                       </div>
-                      <div className="pt-2 border-t border-slate-100 flex justify-end">
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => handleDeletePhoto(p.id)}
-                          className="text-[10px] text-red-600 hover:bg-red-50 px-2 py-1.5 rounded-lg flex items-center gap-1 font-bold cursor-pointer transition-all border border-transparent hover:border-red-100"
+                          onClick={() => {
+                            setEditingGroupName(groupName);
+                            setNewGroupNameInput(groupName);
+                          }}
+                          className="text-[10px] text-indigo-600 hover:bg-indigo-50/80 px-2 py-1.5 rounded-lg flex items-center gap-1 font-bold cursor-pointer transition-all border border-slate-200/60 bg-white shadow-3xs"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          <span>Remove</span>
+                          <Edit2 className="w-3 h-3" />
+                          <span>Rename Album</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteGroup(groupName)}
+                          className="text-[10px] text-red-600 hover:bg-red-50/80 px-2 py-1.5 rounded-lg flex items-center gap-1 font-bold cursor-pointer transition-all border border-red-100 bg-white shadow-3xs"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Delete Album</span>
                         </button>
                       </div>
+                    </div>
+
+                    {/* Photos in this group */}
+                    <div className="p-5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 bg-white">
+                      {photos.map((p) => (
+                        <div
+                          key={p.id}
+                          className="border border-slate-200 rounded-xl overflow-hidden shadow-3xs hover:border-slate-300 hover:shadow-2xs transition-all flex flex-col justify-between bg-slate-50/10"
+                        >
+                          <div className="h-32 bg-slate-100 flex items-center justify-center relative">
+                            {p.imageUrl ? (
+                              <img src={p.imageUrl} alt={p.title} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            ) : (
+                              <ImageIcon className="w-8 h-8 text-slate-300" />
+                            )}
+                          </div>
+                          <div className="p-3 bg-white flex-1 flex flex-col justify-between gap-2 text-left">
+                            <div>
+                              <h4 className="font-bold text-slate-800 text-xs truncate">{p.title}</h4>
+                              {p.description && <p className="text-[10px] text-slate-500 leading-normal line-clamp-2 mt-0.5">{p.description}</p>}
+                            </div>
+                            <div className="pt-2 border-t border-slate-100 flex justify-between items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditPhoto(p)}
+                                className="text-[10px] text-indigo-600 hover:bg-indigo-50 px-2 py-1.5 rounded-lg flex items-center gap-1 font-bold cursor-pointer transition-all border border-transparent hover:border-indigo-100"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                                <span>Edit Details</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePhoto(p.id)}
+                                className="text-[10px] text-red-600 hover:bg-red-50 px-2 py-1.5 rounded-lg flex items-center gap-1 font-bold cursor-pointer transition-all border border-transparent hover:border-red-100"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Remove</span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -1983,6 +2450,208 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
                   Confirm Delete
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* EDIT PHOTO MODAL POPUP */}
+      <AnimatePresence>
+        {editingPhotoId !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={handleCancelEditPhoto}
+              className="absolute inset-0 bg-slate-900 opacity-50"
+            ></motion.div>
+
+            {/* Modal container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden relative z-10 p-6 text-slate-800"
+            >
+              <div className="flex items-center justify-between border-b pb-3 border-slate-150 mb-4">
+                <h3 className="font-bold font-display text-base text-slate-900 flex items-center gap-2">
+                  <Edit2 className="w-4 h-4 text-indigo-500" />
+                  Edit Gallery Photo Details
+                </h3>
+                <button
+                  type="button"
+                  onClick={handleCancelEditPhoto}
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleUpdatePhoto} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Photo Title *</label>
+                  <input
+                    type="text"
+                    required
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 text-slate-800 bg-white"
+                    value={editingPhotoTitle}
+                    onChange={(e) => setEditingPhotoTitle(e.target.value)}
+                    placeholder="e.g. Winner celebration"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Description (Optional)</label>
+                  <textarea
+                    rows={3}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 resize-none text-slate-800 bg-white"
+                    value={editingPhotoDesc}
+                    onChange={(e) => setEditingPhotoDesc(e.target.value)}
+                    placeholder="e.g. Cash prize of 1,00,000 INR awarded to Team Innovators."
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Gallery Group/Album</label>
+                  <input
+                    type="text"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 text-slate-800 bg-white"
+                    value={editingPhotoGroup}
+                    onChange={(e) => setEditingPhotoGroup(e.target.value)}
+                    placeholder="e.g. General Gallery"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Enter the Group/Album name to organize this photo. Existing group names are: {existingGroups.join(", ")}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Replace Image (Optional)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
+                    onChange={(e) => handleImageUpload(e, setEditingPhotoBase64)}
+                  />
+                  {editingPhotoBase64 && (
+                    <div className="mt-3">
+                      <span className="text-[10px] text-slate-400 block mb-1 font-bold">Image Preview:</span>
+                      <img 
+                        src={editingPhotoBase64} 
+                        alt="Edit Gallery Preview" 
+                        className="h-24 max-w-[180px] object-cover rounded-xl border p-0.5" 
+                        referrerPolicy="no-referrer" 
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex gap-3 pt-2 justify-end border-t border-slate-100 mt-5">
+                  <button
+                    type="button"
+                    onClick={handleCancelEditPhoto}
+                    className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded-xl border border-slate-200 cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md cursor-pointer flex items-center gap-1.5 transition-colors"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    Save Changes
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* RENAME ALBUM GROUP MODAL POPUP */}
+      <AnimatePresence>
+        {editingGroupName !== null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 0.5 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setEditingGroupName(null)}
+              className="absolute inset-0 bg-slate-900 opacity-50"
+            ></motion.div>
+
+            {/* Modal container */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden relative z-10 p-6 text-slate-800 text-left"
+            >
+              <div className="flex items-center justify-between border-b pb-3 border-slate-150 mb-4">
+                <h3 className="font-bold font-display text-base text-slate-900 flex items-center gap-2">
+                  <Folder className="w-4.5 h-4.5 text-indigo-500 fill-indigo-100" />
+                  Rename Gallery Album/Group
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingGroupName(null)}
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <form onSubmit={handleRenameGroup} className="space-y-4">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block tracking-wide">
+                    Current Name
+                  </span>
+                  <p className="text-xs font-bold text-slate-700 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200 mt-1">
+                    {editingGroupName}
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    New Album/Group Name *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500 text-slate-800 bg-white"
+                    value={newGroupNameInput}
+                    onChange={(e) => setNewGroupNameInput(e.target.value)}
+                    placeholder="e.g. SIH Hackathon Grand Finale 2026"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Note: This will rename the group for all {
+                      homepage.previousPhotos?.filter(
+                        (p) => (p.groupTitle || "General Gallery").trim() === editingGroupName.trim()
+                      ).length || 0
+                    } photos in this album.
+                  </p>
+                </div>
+
+                <div className="flex gap-3 pt-2 justify-end border-t border-slate-100 mt-5">
+                  <button
+                    type="button"
+                    onClick={() => setEditingGroupName(null)}
+                    className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-50 rounded-xl border border-slate-200 cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-md cursor-pointer flex items-center gap-1.5 transition-colors"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    Rename Album
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}

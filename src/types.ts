@@ -205,6 +205,7 @@ export interface PreviousPhoto {
   title: string;
   imageUrl?: string;
   description?: string;
+  groupTitle?: string; // The name of the gallery/album group
 }
 
 export interface HomepageContent {
