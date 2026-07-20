@@ -16,7 +16,32 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 app.use(express.json({ limit: "50mb" })); // Allow larger payloads for base64 images/PPT
 
 // Ensure data directory and files exist
-const DATA_DIR = path.join(process.cwd(), "data");
+const IS_VERCEL = !!process.env.VERCEL;
+const DATA_DIR = IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data");
+
+if (IS_VERCEL) {
+  const sourceDir = path.join(process.cwd(), "data");
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (fs.existsSync(sourceDir)) {
+    try {
+      const files = fs.readdirSync(sourceDir);
+      for (const file of files) {
+        if (file.endsWith(".json")) {
+          const sourcePath = path.join(sourceDir, file);
+          const destPath = path.join(DATA_DIR, file);
+          if (!fs.existsSync(destPath)) {
+            fs.copyFileSync(sourcePath, destPath);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("Error seeding Vercel /tmp directory:", err);
+    }
+  }
+}
+
 const STATEMENTS_FILE = path.join(DATA_DIR, "problem_statements.json");
 const REGISTRATIONS_FILE = path.join(DATA_DIR, "registrations.json");
 const STUDENTS_FILE = path.join(DATA_DIR, "students.json");
@@ -3574,9 +3599,13 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
-  });
+  if (!IS_VERCEL) {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  }
 }
 
 startServer();
+
+export default app;
