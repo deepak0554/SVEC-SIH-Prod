@@ -42,11 +42,13 @@ import {
   Database,
   Award,
   Upload,
-  Loader2
+  Loader2,
+  Bell
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
 import PageMenuCustomizer from "./PageMenuCustomizer";
+import LiveUpdatesCustomizer from "./LiveUpdatesCustomizer";
 import SvecLogo from "./SvecLogo";
 import ConsentLetterModal from "./ConsentLetterModal";
 import ParticipationCertificateModal from "./ParticipationCertificateModal";
@@ -226,7 +228,7 @@ export default function AdminPanel({
     return !!sessionStorage.getItem("svec_sih_admin_token");
   });
   const [loginError, setLoginError] = useState("");
-  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast" | "evaluation" | "evaluation-selection">(() => {
+  const [activeTab, setActiveTab] = useState<"registrations" | "statements" | "stats" | "settings" | "students" | "admins" | "security" | "customizer" | "broadcast" | "evaluation" | "evaluation-selection" | "updates">(() => {
     return (sessionStorage.getItem("svec_sih_admin_active_tab") as any) || "registrations";
   });
 
@@ -2002,6 +2004,19 @@ export default function AdminPanel({
                   id="admin-tab-customizer"
                 >
                   Landing Page & Menus
+                </button>
+              )}
+              {adminRole === "SPOC" && (
+                <button
+                  onClick={() => setActiveTab("updates")}
+                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === "updates"
+                      ? "bg-white text-indigo-600 shadow-sm"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                  id="admin-tab-updates"
+                >
+                  Live Updates
                 </button>
               )}
 
@@ -6359,6 +6374,28 @@ export default function AdminPanel({
               </div>
             </div>
             <PageMenuCustomizer passcode={passcode} />
+          </div>
+        </div>
+      )}
+
+      {/* LIVE UPDATES TAB */}
+      {activeTab === "updates" && adminRole === "SPOC" && (
+        <div className="animate-fade-in space-y-6">
+          <div className="bg-white rounded-3xl border border-slate-200 p-6 md:p-8 text-left shadow-sm">
+            <div className="flex items-center gap-3 mb-2 pb-4 border-b border-slate-100">
+              <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center text-indigo-600 shrink-0">
+                <Bell className="w-5 h-5 animate-bounce" />
+              </div>
+              <div>
+                <h2 className="text-xl font-extrabold font-display text-slate-800">
+                  Homepage Scrolling Live Updates
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Post new announcements, important messages, deadline alerts, or live hackathon results directly to the home page ticker.
+                </p>
+              </div>
+            </div>
+            <LiveUpdatesCustomizer passcode={passcode} />
           </div>
         </div>
       )}

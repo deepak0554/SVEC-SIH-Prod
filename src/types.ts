@@ -239,3 +239,11 @@ export interface MenuItem {
   order: number;
 }
 
+export interface LiveUpdate {
+  id: string;
+  text: string;
+  createdAt: string;
+  isImportant?: boolean;
+}
+
+

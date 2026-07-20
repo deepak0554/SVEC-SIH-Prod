@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Layers, ShieldCheck, HelpCircle, GraduationCap, LogOut, FileText, Menu, X, ChevronRight } from "lucide-react";
-import { ProblemStatement, Registration, HomepageContent, CustomPage, MenuItem } from "./types";
+import { ProblemStatement, Registration, HomepageContent, CustomPage, MenuItem, LiveUpdate } from "./types";
 import RegistrationForm from "./components/RegistrationForm";
 import StudentAuth from "./components/StudentAuth";
 import Receipt from "./components/Receipt";
@@ -26,6 +26,7 @@ export default function App() {
   const [homepageData, setHomepageData] = useState<HomepageContent | null>(null);
   const [customPages, setCustomPages] = useState<CustomPage[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [updates, setUpdates] = useState<LiveUpdate[]>([]);
   const [publicSettings, setPublicSettings] = useState<{
     portalTheme?: "light" | "dark";
     logoUrl?: string;
@@ -51,12 +52,13 @@ export default function App() {
   // Fetch initial content, navigation links and lists
   const fetchAllInitialData = async () => {
     try {
-      const [psRes, homeRes, pagesRes, menuRes, settingsRes] = await Promise.all([
+      const [psRes, homeRes, pagesRes, menuRes, settingsRes, updatesRes] = await Promise.all([
         fetch("/api/problem-statements"),
         fetch("/api/homepage"),
         fetch("/api/custom-pages"),
         fetch("/api/menu"),
-        fetch("/api/settings/public")
+        fetch("/api/settings/public"),
+        fetch("/api/updates")
       ]);
 
       if (psRes.ok) {
@@ -77,6 +79,10 @@ export default function App() {
 
       if (settingsRes.ok) {
         setPublicSettings(await settingsRes.json());
+      }
+
+      if (updatesRes.ok) {
+        setUpdates(await updatesRes.json());
       }
     } catch (err) {
       console.error("Failed to load initial workspace data", err);
@@ -421,6 +427,7 @@ export default function App() {
                 customPages={customPages}
                 isDark={isDark}
                 publicSettings={publicSettings}
+                updates={updates}
               />
             </motion.div>
           )}

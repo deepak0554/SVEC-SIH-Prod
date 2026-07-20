@@ -1,6 +1,6 @@
 import React from "react";
-import { HomepageContent, CustomPage } from "../types";
-import { Calendar, Phone, Mail, Award, Users, Shield, ArrowRight, Image as ImageIcon, Heart } from "lucide-react";
+import { HomepageContent, CustomPage, LiveUpdate } from "../types";
+import { Calendar, Phone, Mail, Award, Users, Shield, ArrowRight, Image as ImageIcon, Heart, Bell, Megaphone, Info } from "lucide-react";
 
 interface LandingPageProps {
   homepageData: HomepageContent;
@@ -12,9 +12,10 @@ interface LandingPageProps {
     creditsContent?: string;
     creditsEnabled?: boolean;
   } | null;
+  updates?: LiveUpdate[];
 }
 
-export default function LandingPage({ homepageData, onNavigate, customPages, isDark = false, publicSettings }: LandingPageProps) {
+export default function LandingPage({ homepageData, onNavigate, customPages, isDark = false, publicSettings, updates = [] }: LandingPageProps) {
   const { sihDetails, sponsors, patrons = [], studentSpocs, collegeSpocs, previousPhotos } = homepageData;
 
   // Simple and robust parser for custom page content / markdown
@@ -176,6 +177,75 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
           </div>
         </div>
       </section>
+
+      {/* Live Updates Scrolling Section */}
+      {updates && updates.length > 0 && (
+        <section className={`rounded-3xl border p-6 md:p-8 shadow-sm ${isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}>
+          <div className={`flex items-center justify-between border-b pb-4 mb-4 gap-4 flex-wrap ${isDark ? "border-slate-850" : "border-slate-100"}`}>
+            <div className="flex items-center gap-2.5">
+              <Megaphone className={`w-5 h-5 ${isDark ? "text-indigo-400" : "text-indigo-600"}`} />
+              <h2 className="text-lg font-bold tracking-tight">Latest Announcements</h2>
+            </div>
+            <span className={`text-[10px] uppercase font-bold tracking-wider ${isDark ? "text-slate-500" : "text-slate-400"}`}>
+              Live Feed
+            </span>
+          </div>
+
+          {/* Clean, simple vertical scrolling container with high visibility styling */}
+          <div className={`relative h-44 overflow-hidden rounded-xl border p-2 ${isDark ? "bg-slate-950/50 border-slate-800" : "bg-slate-50/70 border-slate-200/70"}`}>
+            <div className="animate-scroll-up space-y-2.5">
+              {[...updates, ...updates, ...updates, ...updates].map((update, idx) => {
+                const isImp = update.isImportant;
+                const dateObj = new Date(update.createdAt);
+                const formattedDate = isNaN(dateObj.getTime()) ? "" : dateObj.toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  hour: "2-digit",
+                  minute: "2-digit"
+                });
+
+                return (
+                  <div 
+                    key={`${update.id}-${idx}`}
+                    className={`p-3.5 rounded-lg flex items-start gap-3 border shadow-xs ${
+                      isDark 
+                        ? isImp 
+                          ? "bg-slate-900 border-red-900/60" 
+                          : "bg-slate-900 border-slate-800/80"
+                        : isImp 
+                          ? "bg-red-50/40 border-red-200/80" 
+                          : "bg-white border-slate-200/60"
+                    }`}
+                  >
+                    {isImp ? (
+                      <span className="mt-1.5 shrink-0 h-2.5 w-2.5 rounded-full bg-red-600 animate-pulse" />
+                    ) : (
+                      <span className={`mt-1.5 shrink-0 h-2 w-2 rounded-full ${isDark ? "bg-indigo-400" : "bg-indigo-600"}`} />
+                    )}
+                    <div className="flex-1 min-w-0 space-y-1 text-left">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {isImp && (
+                          <span className={`text-[9px] font-extrabold uppercase tracking-wider ${isDark ? "text-red-400" : "text-red-600"}`}>
+                            Urgent Notice
+                          </span>
+                        )}
+                        {formattedDate && (
+                          <span className={`text-[10px] font-medium font-mono ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+                            {formattedDate}
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-sm font-semibold leading-relaxed break-words ${isDark ? "text-slate-100" : "text-slate-800"}`}>
+                        {update.text}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Dynamic/Custom Pages Section in Landing (If published custom pages exist) */}
       {customPages.filter(p => p.published && p.slug === "guidelines").map((page) => (

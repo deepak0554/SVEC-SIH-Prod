@@ -50,6 +50,7 @@ const HOMEPAGE_FILE = path.join(DATA_DIR, "homepage_content.json");
 const PAGES_FILE = path.join(DATA_DIR, "custom_pages.json");
 const MENU_FILE = path.join(DATA_DIR, "menu_items.json");
 const BROADCAST_LOGS_FILE = path.join(DATA_DIR, "broadcast_logs.json");
+const UPDATES_FILE = path.join(DATA_DIR, "updates.json");
 
 const defaultHomepageContent: HomepageContent = {
   sihDetails: {
@@ -119,6 +120,14 @@ if (!fs.existsSync(PAGES_FILE)) {
 
 if (!fs.existsSync(MENU_FILE)) {
   fs.writeFileSync(MENU_FILE, JSON.stringify(defaultMenuItems, null, 2), "utf-8");
+}
+
+if (!fs.existsSync(UPDATES_FILE)) {
+  fs.writeFileSync(UPDATES_FILE, JSON.stringify([
+    { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
+    { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
+    { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
+  ], null, 2), "utf-8");
 }
 
 
@@ -275,6 +284,26 @@ function writeHomepage(content: HomepageContent) {
   fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(content, null, 2), "utf-8");
   syncMetadataToExternalDB("homepage_content", content).catch(err => {
     console.error("Failed to sync homepage content to DB:", err);
+  });
+}
+
+function readUpdates(): any[] {
+  try {
+    const data = fs.readFileSync(UPDATES_FILE, "utf-8");
+    return JSON.parse(data);
+  } catch (err) {
+    return [
+      { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
+      { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
+      { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
+    ];
+  }
+}
+
+function writeUpdates(updates: any[]) {
+  fs.writeFileSync(UPDATES_FILE, JSON.stringify(updates, null, 2), "utf-8");
+  syncMetadataToExternalDB("live_updates", updates).catch(err => {
+    console.error("Failed to sync live updates to DB:", err);
   });
 }
 
@@ -3498,6 +3527,23 @@ app.post("/api/homepage", validateAdmin, (req, res) => {
   }
   writeHomepage(content);
   res.json({ success: true, message: "Homepage details updated successfully!", content });
+});
+
+// Live Updates Endpoints (Public & Admin)
+app.get("/api/updates", (req, res) => {
+  res.json(readUpdates());
+});
+
+app.post("/api/updates", validateAdmin, (req, res) => {
+  if ((req as any).adminRole !== "SPOC") {
+    return res.status(403).json({ error: "Access Denied: Only SPOC is authorized to edit live updates." });
+  }
+  const updates = req.body;
+  if (!Array.isArray(updates)) {
+    return res.status(400).json({ error: "Updates must be an array." });
+  }
+  writeUpdates(updates);
+  res.json({ success: true, message: "Live updates updated successfully!", updates });
 });
 
 // 3. GET Custom dynamic pages list (Public)
