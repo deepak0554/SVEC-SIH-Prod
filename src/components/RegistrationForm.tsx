@@ -261,8 +261,173 @@ export default function RegistrationForm({
     }
   };
 
-  const loadRazorpayScript = () => {
+  const loadRazorpayScript = (keyId?: string) => {
     return new Promise((resolve) => {
+      if (keyId === "rzp_test_mock") {
+        (window as any).Razorpay = class {
+          options: any;
+          constructor(options: any) {
+            this.options = options;
+          }
+          open() {
+            const overlay = document.createElement("div");
+            overlay.id = "mock-razorpay-overlay";
+            overlay.style.position = "fixed";
+            overlay.style.inset = "0";
+            overlay.style.backgroundColor = "rgba(15, 23, 42, 0.75)";
+            overlay.style.backdropFilter = "blur(8px)";
+            overlay.style.display = "flex";
+            overlay.style.alignItems = "center";
+            overlay.style.justifyContent = "center";
+            overlay.style.zIndex = "999999";
+            overlay.style.padding = "16px";
+            overlay.style.fontFamily = "system-ui, -apple-system, sans-serif";
+
+            const modal = document.createElement("div");
+            modal.style.backgroundColor = "#ffffff";
+            modal.style.borderRadius = "24px";
+            modal.style.width = "100%";
+            modal.style.maxWidth = "460px";
+            modal.style.boxShadow = "0 25px 50px -12px rgba(0, 0, 0, 0.25)";
+            modal.style.border = "1px solid #e2e8f0";
+            modal.style.overflow = "hidden";
+            modal.style.display = "flex";
+            modal.style.flexDirection = "column";
+
+            const header = document.createElement("div");
+            header.style.backgroundColor = "#4f46e5";
+            header.style.color = "#ffffff";
+            header.style.padding = "24px";
+            header.style.textAlign = "center";
+
+            const title = document.createElement("h3");
+            title.innerText = "SVEC Hackathon Gateway";
+            title.style.fontSize = "18px";
+            title.style.fontWeight = "800";
+            title.style.margin = "0";
+
+            const subtitle = document.createElement("p");
+            subtitle.innerText = "SIMULATION SANDBOX (LOCALHOST FRIENDLY)";
+            subtitle.style.fontSize = "11px";
+            subtitle.style.fontWeight = "600";
+            subtitle.style.margin = "4px 0 0 0";
+            subtitle.style.opacity = "0.9";
+            subtitle.style.letterSpacing = "0.05em";
+
+            header.appendChild(title);
+            header.appendChild(subtitle);
+
+            const body = document.createElement("div");
+            body.style.padding = "28px 24px";
+            body.style.display = "flex";
+            body.style.flexDirection = "column";
+            body.style.gap = "20px";
+
+            const detailsBox = document.createElement("div");
+            detailsBox.style.backgroundColor = "#f8fafc";
+            detailsBox.style.border = "1px solid #e2e8f0";
+            detailsBox.style.borderRadius = "16px";
+            detailsBox.style.padding = "16px";
+            detailsBox.style.display = "flex";
+            detailsBox.style.flexDirection = "column";
+            detailsBox.style.gap = "10px";
+
+            const row1 = document.createElement("div");
+            row1.style.display = "flex";
+            row1.style.justifyContent = "space-between";
+            row1.style.fontSize = "12px";
+            row1.innerHTML = `<span style="color: #64748b; font-weight: 500;">Recipient</span><span style="color: #0f172a; font-weight: 600;">SVEC SIH Portal</span>`;
+
+            const row2 = document.createElement("div");
+            row2.style.display = "flex";
+            row2.style.justifyContent = "space-between";
+            row2.style.fontSize = "12px";
+            row2.innerHTML = `<span style="color: #64748b; font-weight: 500;">Payer Email</span><span style="color: #0f172a; font-weight: 600; word-break: break-all;">${this.options.prefill?.email || "student@svec.edu.in"}</span>`;
+
+            const row3 = document.createElement("div");
+            row3.style.display = "flex";
+            row3.style.justifyContent = "space-between";
+            row3.style.alignItems = "center";
+            row3.style.paddingTop = "10px";
+            row3.style.borderTop = "1px dashed #e2e8f0";
+            row3.innerHTML = `<span style="color: #0f172a; font-weight: 700; font-size: 14px;">Total Amount</span><span style="color: #4f46e5; font-weight: 800; font-size: 18px;">₹${(this.options.amount / 100).toFixed(2)}</span>`;
+
+            detailsBox.appendChild(row1);
+            detailsBox.appendChild(row2);
+            detailsBox.appendChild(row3);
+
+            const desc = document.createElement("p");
+            desc.innerText = "This modal simulates the Razorpay Checkout flow locally. You can proceed with a successful completion or simulate a cancelled transaction.";
+            desc.style.fontSize = "11px";
+            desc.style.color = "#64748b";
+            desc.style.lineHeight = "1.5";
+            desc.style.margin = "0";
+
+            const actions = document.createElement("div");
+            actions.style.display = "flex";
+            actions.style.flexDirection = "column";
+            actions.style.gap = "10px";
+
+            const successBtn = document.createElement("button");
+            successBtn.innerText = "Simulate Success (Complete Payment)";
+            successBtn.style.backgroundColor = "#10b981";
+            successBtn.style.color = "#ffffff";
+            successBtn.style.border = "none";
+            successBtn.style.borderRadius = "12px";
+            successBtn.style.padding = "14px";
+            successBtn.style.fontSize = "13px";
+            successBtn.style.fontWeight = "700";
+            successBtn.style.cursor = "pointer";
+
+            const cancelBtn = document.createElement("button");
+            cancelBtn.innerText = "Cancel / Dismiss Payment";
+            cancelBtn.style.backgroundColor = "#ffffff";
+            cancelBtn.style.color = "#64748b";
+            cancelBtn.style.border = "1px solid #cbd5e1";
+            cancelBtn.style.borderRadius = "12px";
+            cancelBtn.style.padding = "14px";
+            cancelBtn.style.fontSize = "13px";
+            cancelBtn.style.fontWeight = "600";
+            cancelBtn.style.cursor = "pointer";
+
+            successBtn.onclick = () => {
+              document.body.removeChild(overlay);
+              const paymentId = "pay_mock_" + Math.random().toString(36).substring(2, 11);
+              this.options.handler({
+                razorpay_payment_id: paymentId,
+                razorpay_order_id: this.options.order_id,
+                razorpay_signature: "mock_signature_svec_sih_2026"
+              });
+            };
+
+            cancelBtn.onclick = () => {
+              document.body.removeChild(overlay);
+              if (this.options.modal?.ondismiss) {
+                this.options.modal.ondismiss();
+              }
+            };
+
+            actions.appendChild(successBtn);
+            actions.appendChild(cancelBtn);
+
+            body.appendChild(detailsBox);
+            body.appendChild(desc);
+            body.appendChild(actions);
+
+            modal.appendChild(header);
+            modal.appendChild(body);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+          }
+        };
+        resolve(true);
+        return;
+      }
+
+      if ((window as any).Razorpay) {
+        resolve(true);
+        return;
+      }
       const script = document.createElement("script");
       script.src = "https://checkout.razorpay.com/v1/checkout.js";
       script.onload = () => resolve(true);
@@ -341,7 +506,7 @@ export default function RegistrationForm({
         }
 
         setPaymentStatusMessage("Opening Razorpay payment gateway...");
-        const isScriptLoaded = await loadRazorpayScript();
+        const isScriptLoaded = await loadRazorpayScript(orderData.keyId);
         if (!isScriptLoaded) {
           setErrors({ submit: "Failed to load payment checkout script. Please check your network connection." });
           setIsSubmitting(false);

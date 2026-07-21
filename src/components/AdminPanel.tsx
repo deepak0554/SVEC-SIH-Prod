@@ -1039,13 +1039,20 @@ export default function AdminPanel({
           parent = parent.parentElement;
         }
 
-        // Load html2pdf from CDN if it's not already loaded
+        // Load html2pdf from local path first, fallback to CDN if it fails
         if (!(window as any).html2pdf) {
           await new Promise<void>((resolve, reject) => {
             const script = document.createElement("script");
-            script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+            script.src = "/js/html2pdf.bundle.min.js";
             script.onload = () => resolve();
-            script.onerror = () => reject(new Error("Failed to load PDF library"));
+            script.onerror = () => {
+              // Try CDN fallback
+              const cdnScript = document.createElement("script");
+              cdnScript.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+              cdnScript.onload = () => resolve();
+              cdnScript.onerror = () => reject(new Error("Failed to load PDF library"));
+              document.head.appendChild(cdnScript);
+            };
             document.head.appendChild(script);
           });
         }
@@ -3219,6 +3226,13 @@ export default function AdminPanel({
                                 className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
                                 required={settingsForm.feeEnabled}
                               />
+                            </div>
+                            
+                            <div className="sm:col-span-2 bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 text-[11px] text-indigo-700 leading-relaxed flex items-start gap-2">
+                              <span className="text-sm">💡</span>
+                              <div>
+                                <span className="font-bold">Local Host Friendly Tip:</span> To test or run the entire registration fee & receipt workflow locally without configuring actual Razorpay credentials, simply enter <code className="bg-white px-1.5 py-0.5 rounded border border-indigo-200 font-bold font-mono">rzp_test_mock</code> as the Key ID and any value as the Key Secret. This unlocks an interactive offline simulation gateway!
+                              </div>
                             </div>
                           </div>
                         </motion.div>

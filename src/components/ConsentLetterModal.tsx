@@ -344,13 +344,20 @@ export default function ConsentLetterModal({
       parent = parent.parentElement;
     }
 
-    // Load html2pdf from CDN if it's not already loaded
+    // Load html2pdf from local path first, fallback to CDN if it fails
     if (!(window as any).html2pdf) {
       await new Promise<void>((resolve, reject) => {
         const script = document.createElement("script");
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+        script.src = "/js/html2pdf.bundle.min.js";
         script.onload = () => resolve();
-        script.onerror = () => reject(new Error("Failed to load PDF library"));
+        script.onerror = () => {
+          // Try CDN fallback
+          const cdnScript = document.createElement("script");
+          cdnScript.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+          cdnScript.onload = () => resolve();
+          cdnScript.onerror = () => reject(new Error("Failed to load PDF library"));
+          document.head.appendChild(cdnScript);
+        };
         document.head.appendChild(script);
       });
     }
