@@ -232,6 +232,8 @@ export default function AdminPanel({
     return (sessionStorage.getItem("svec_sih_admin_active_tab") as any) || "registrations";
   });
 
+  const [activeSettingsSubTab, setActiveSettingsSubTab] = useState<"rules" | "notifications" | "integrations" | "branding">("rules");
+
   useEffect(() => {
     sessionStorage.setItem("svec_sih_admin_active_tab", activeTab);
   }, [activeTab]);
@@ -1914,189 +1916,253 @@ export default function AdminPanel({
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-2">
-        {/* Tab Selection */}
-        <div className="flex flex-wrap gap-1 bg-slate-200/60 p-1.5 rounded-xl self-start md:self-center">
-          {adminRole === "Evaluator" ? (
-            <button
-              onClick={() => setActiveTab("evaluation")}
-              className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeTab === "evaluation"
-                  ? "bg-white text-indigo-600 shadow-sm"
-                  : "text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              My Evaluation Workspace
-            </button>
-          ) : (
-            <>
-              <button
-                onClick={() => setActiveTab("registrations")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "registrations"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Team Submissions ({registrations.length})
-              </button>
-              <button
-                onClick={() => setActiveTab("statements")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "statements"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Problem Statements ({problemStatements.length})
-              </button>
-              <button
-                onClick={() => setActiveTab("stats")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "stats"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Analytics & Metrics
-              </button>
-              <button
-                onClick={() => setActiveTab("evaluation-selection")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "evaluation-selection"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                Evaluation & Selection
-              </button>
-              {adminRole !== "Student SPOC" && (
-                <button
-                  onClick={() => setActiveTab("settings")}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    activeTab === "settings"
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  Settings
-                </button>
-              )}
-              <button
-                onClick={() => setActiveTab("broadcast")}
-                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === "broadcast"
-                    ? "bg-white text-indigo-600 shadow-sm"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-                id="admin-tab-broadcast"
-              >
-                Broadcast
-              </button>
-              {adminRole === "SPOC" && (
-                <button
-                  onClick={() => setActiveTab("customizer")}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    activeTab === "customizer"
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  id="admin-tab-customizer"
-                >
-                  Landing Page & Menus
-                </button>
-              )}
-              {adminRole === "SPOC" && (
-                <button
-                  onClick={() => setActiveTab("updates")}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    activeTab === "updates"
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                  id="admin-tab-updates"
-                >
-                  Live Updates
-                </button>
-              )}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start mb-8">
+        {/* Left Sidebar (Desktop) / Category Switcher (Mobile) */}
+        <div className="lg:col-span-3">
+          {(() => {
+            const navCategories = [
+              {
+                title: "Event Operations",
+                icon: Briefcase,
+                color: "text-indigo-600 bg-indigo-50 border border-indigo-100",
+                items: [
+                  {
+                    id: "registrations",
+                    label: "Team Submissions",
+                    icon: Users,
+                    badge: registrations.length,
+                    show: adminRole !== "Evaluator",
+                  },
+                  {
+                    id: "statements",
+                    label: "Problem Statements",
+                    icon: FileText,
+                    badge: problemStatements.length,
+                    show: adminRole !== "Evaluator",
+                  },
+                  {
+                    id: "evaluation",
+                    label: "My Evaluation Workspace",
+                    icon: Award,
+                    show: adminRole === "Evaluator",
+                  },
+                  {
+                    id: "evaluation-selection",
+                    label: "Evaluation & Selection",
+                    icon: CheckCircle,
+                    show: adminRole === "SPOC" || adminRole === "Student SPOC",
+                  },
+                  {
+                    id: "broadcast",
+                    label: "Broadcast Center",
+                    icon: Send,
+                    show: adminRole !== "Evaluator",
+                    idAttr: "admin-tab-broadcast"
+                  },
+                  {
+                    id: "stats",
+                    label: "Analytics & Metrics",
+                    icon: BarChart2,
+                    show: adminRole !== "Evaluator",
+                  }
+                ]
+              },
+              {
+                title: "Design & Content",
+                icon: Sparkles,
+                color: "text-pink-600 bg-pink-50 border border-pink-100",
+                items: [
+                  {
+                    id: "customizer",
+                    label: "Landing Page & Menus",
+                    icon: Image,
+                    show: adminRole === "SPOC",
+                    idAttr: "admin-tab-customizer"
+                  },
+                  {
+                    id: "updates",
+                    label: "Live Updates",
+                    icon: Bell,
+                    show: adminRole === "SPOC",
+                    idAttr: "admin-tab-updates"
+                  }
+                ]
+              },
+              {
+                title: "Developer & Settings",
+                icon: Settings,
+                color: "text-amber-600 bg-amber-50 border border-amber-100",
+                items: [
+                  {
+                    id: "settings",
+                    label: "System Settings",
+                    icon: Settings,
+                    show: adminRole !== "Student SPOC" && adminRole !== "Evaluator",
+                  },
+                  {
+                    id: "students",
+                    label: "Student Accounts",
+                    icon: UserPlus,
+                    show: adminRole !== "Evaluator",
+                  },
+                  {
+                    id: "admins",
+                    label: "Manage Admin Users",
+                    icon: Shield,
+                    show: adminRole === "SPOC",
+                  },
+                  {
+                    id: "security",
+                    label: "Change Password",
+                    icon: Lock,
+                    show: adminRole !== "Evaluator",
+                  }
+                ]
+              }
+            ];
 
-              {/* User & Security Grouped Dropdown */}
-              <div className="relative inline-block">
-                <button
-                  onClick={() => setIsUserDropdownOpen(prev => !prev)}
-                  className={`px-4 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    activeTab === "students" || activeTab === "admins" || activeTab === "security"
-                      ? "bg-white text-indigo-600 shadow-sm"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <span>User & Security</span>
-                  {isUserDropdownOpen ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
-                </button>
+            const activeCategory = navCategories.find(cat => 
+              cat.items.some(item => item.id === activeTab && item.show)
+            )?.title || "Event Operations";
 
-                {isUserDropdownOpen && (
-                  <>
-                    <div 
-                      className="fixed inset-0 z-40" 
-                      onClick={() => setIsUserDropdownOpen(false)}
-                    />
-                    <div
-                      className="absolute right-0 mt-1.5 w-52 bg-white rounded-xl border border-slate-200 shadow-xl py-1 z-50 overflow-hidden"
-                    >
-                  <button
-                    onClick={() => {
-                      setActiveTab("students");
-                      setIsUserDropdownOpen(false);
-                    }}
-                    className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors flex items-center gap-2 ${
-                      activeTab === "students"
-                        ? "bg-indigo-50 text-indigo-600 font-bold"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <Users className="w-3.5 h-3.5 text-indigo-500" />
-                    Student Logins
-                  </button>
-
-                  {adminRole === "SPOC" && (
-                    <button
-                      onClick={() => {
-                        setActiveTab("admins");
-                        setIsUserDropdownOpen(false);
-                      }}
-                      className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors flex items-center gap-2 ${
-                        activeTab === "admins"
-                          ? "bg-indigo-50 text-indigo-600 font-bold"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                      }`}
-                    >
-                      <Shield className="w-3.5 h-3.5 text-emerald-500" />
-                      Manage Admin Users
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      setActiveTab("security");
-                      setIsUserDropdownOpen(false);
-                    }}
-                    className={`w-full text-left px-4 py-2.5 text-xs font-medium transition-colors flex items-center gap-2 ${
-                      activeTab === "security"
-                        ? "bg-indigo-50 text-indigo-600 font-bold"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                    }`}
-                  >
-                    <Lock className="w-3.5 h-3.5 text-amber-500" />
-                    Change Password
-                  </button>
+            return (
+              <div className="space-y-4">
+                {/* Mobile Category Switcher */}
+                <div className="lg:hidden space-y-3">
+                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin">
+                    {navCategories.map((cat) => {
+                      const visibleItems = cat.items.filter(item => item.show);
+                      if (visibleItems.length === 0) return null;
+                      
+                      const isCatActive = cat.title === activeCategory;
+                      const CatIcon = cat.icon;
+                      
+                      return (
+                        <button
+                          type="button"
+                          key={cat.title}
+                          onClick={() => {
+                            const firstItem = visibleItems[0];
+                            if (firstItem) {
+                              setActiveTab(firstItem.id as any);
+                            }
+                          }}
+                          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold whitespace-nowrap border cursor-pointer transition-all ${
+                            isCatActive
+                              ? "bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-100"
+                              : "bg-white border-slate-200 text-slate-600 hover:text-slate-800"
+                          }`}
+                        >
+                          <CatIcon className="w-3.5 h-3.5" />
+                          <span>{cat.title}</span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isCatActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                            {visibleItems.length}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Compact sub-tabs for active category on mobile */}
+                  <div className="grid grid-cols-2 gap-2 bg-slate-50 border border-slate-200/60 p-2 rounded-2xl">
+                    {navCategories.find(cat => cat.title === activeCategory)?.items.filter(item => item.show).map((item) => {
+                      const ItemIcon = item.icon;
+                      const isTabActive = activeTab === item.id;
+                      return (
+                        <button
+                          type="button"
+                          key={item.id}
+                          id={item.idAttr}
+                          onClick={() => setActiveTab(item.id as any)}
+                          className={`flex items-center justify-center gap-1.5 p-3 rounded-xl text-center text-[11px] font-extrabold cursor-pointer transition-all border ${
+                            isTabActive
+                              ? "bg-white border-indigo-100 text-indigo-700 shadow-xs"
+                              : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          <ItemIcon className={`w-3.5 h-3.5 ${isTabActive ? 'text-indigo-600' : 'text-slate-400'}`} />
+                          <span>{item.label}</span>
+                          {item.badge !== undefined && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-none ${
+                              isTabActive ? "bg-indigo-100 text-indigo-700" : "bg-slate-200 text-slate-600"
+                            }`}>
+                              {item.badge}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </>
-            )}
-          </div>
-          </>
-          )}
+
+                {/* Desktop Grouped Sidebar */}
+                <div className="hidden lg:block bg-white rounded-3xl border border-slate-200 p-5 shadow-xs space-y-6 sticky top-6">
+                  <div className="border-b border-slate-100 pb-3">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Navigation Menu</span>
+                    <h3 className="font-extrabold font-display text-slate-800 text-sm">Control Center</h3>
+                  </div>
+                  
+                  {navCategories.map((cat) => {
+                    const visibleItems = cat.items.filter(item => item.show);
+                    if (visibleItems.length === 0) return null;
+                    
+                    const CatIcon = cat.icon;
+                    return (
+                      <div key={cat.title} className="space-y-2.5">
+                        <div className="flex items-center gap-2 px-1">
+                          <div className={`p-1 rounded-lg ${cat.color} shrink-0`}>
+                            <CatIcon className="w-3.5 h-3.5" />
+                          </div>
+                          <span className="text-[10px] font-extrabold tracking-wider uppercase text-slate-400 font-display">
+                            {cat.title}
+                          </span>
+                        </div>
+                        
+                        <div className="space-y-1">
+                          {visibleItems.map((item) => {
+                            const isItemActive = activeTab === item.id;
+                            const ItemIcon = item.icon;
+                            
+                            return (
+                              <button
+                                type="button"
+                                key={item.id}
+                                id={item.idAttr}
+                                onClick={() => setActiveTab(item.id as any)}
+                                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition-all text-left ${
+                                  isItemActive
+                                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-100/50"
+                                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2.5">
+                                  <ItemIcon className={`w-4 h-4 shrink-0 ${isItemActive ? 'text-white' : 'text-slate-400'}`} />
+                                  <span>{item.label}</span>
+                                </div>
+                                {item.badge !== undefined && (
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full leading-none shrink-0 ${
+                                    isItemActive
+                                      ? "bg-white/25 text-white"
+                                      : "bg-slate-100 text-slate-600 border border-slate-200/50"
+                                  }`}>
+                                    {item.badge}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
-      </div>
+
+        {/* Right Active Tab Content Workspace */}
+        <div className="lg:col-span-9 space-y-6">
 
       {/* REGISTRATIONS TAB */}
       {activeTab === "registrations" && (
@@ -2898,15 +2964,15 @@ export default function AdminPanel({
 
       {/* SETTINGS TAB */}
       {activeTab === "settings" && adminRole !== "Student SPOC" && (
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="max-w-4xl mx-auto space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs">
-            <h2 className="text-lg font-bold text-slate-800 font-display mb-1 flex items-center gap-2">
+            <div className="flex items-center gap-2 mb-1 border-b border-slate-100 pb-4">
               <Settings className="w-5 h-5 text-indigo-500" />
-              Registration Fee & Razorpay Configuration
-            </h2>
-            <p className="text-xs text-slate-500 mb-6">
-              Configure if teams must pay an institutional fee to register and provide Razorpay API credentials.
-            </p>
+              <div>
+                <h2 className="text-lg font-bold text-slate-800 font-display">System Settings & Configurations</h2>
+                <p className="text-xs text-slate-500">Configure team registration rules, dynamic portals, communications, and database synchronization.</p>
+              </div>
+            </div>
 
             {settingsLoading ? (
               <div className="py-12 text-center">
@@ -2929,167 +2995,247 @@ export default function AdminPanel({
                   </div>
                 )}
 
-                {/* Team Composition & Size Config */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-3">
-                  <div>
-                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-indigo-500" />
-                      Dynamic Team Size Settings
-                    </span>
-                    <span className="text-[11px] text-slate-400 block mt-0.5">
-                      Adjust the number of additional group members allowed/required in each registered team. (Default: 5 team members + 1 lead)
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label htmlFor="team-members-count" className="text-xs font-semibold text-slate-600">
-                      Number of Team Members:
-                    </label>
-                    <input
-                      type="number"
-                      id="team-members-count"
-                      min="0"
-                      max="5"
-                      disabled={adminRole === "Student SPOC"}
-                      value={settingsForm.teamMembersCount}
-                      onChange={(e) => {
-                        const val = Math.max(0, Math.min(5, parseInt(e.target.value, 10) ?? 0));
-                        setSettingsForm(prev => ({ ...prev, teamMembersCount: val }));
-                      }}
-                      className="w-20 px-2.5 py-1.5 border border-slate-200 bg-white rounded-xl outline-none text-xs text-center focus:border-indigo-500 font-bold font-mono transition-all"
-                    />
-                    <span className="text-[11px] text-slate-500 font-medium">
-                      (Total Team Size: {settingsForm.teamMembersCount + 1} students)
-                    </span>
-                  </div>
+                {/* Modern categorized Settings Subtabs Navigation */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-slate-50 p-1.5 rounded-2xl mb-6 border border-slate-200/50">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSettingsSubTab("rules")}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeSettingsSubTab === "rules"
+                        ? "bg-white border-slate-200/50 text-indigo-600 shadow-sm"
+                        : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    <span>Rules & Access</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveSettingsSubTab("notifications")}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeSettingsSubTab === "notifications"
+                        ? "bg-white border-slate-200/50 text-indigo-600 shadow-sm"
+                        : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Communications</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveSettingsSubTab("integrations")}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeSettingsSubTab === "integrations"
+                        ? "bg-white border-slate-200/50 text-indigo-600 shadow-sm"
+                        : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <Database className="w-3.5 h-3.5" />
+                    <span>Gateways & DB</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setActiveSettingsSubTab("branding")}
+                    className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                      activeSettingsSubTab === "branding"
+                        ? "bg-white border-slate-200/50 text-indigo-600 shadow-sm"
+                        : "bg-transparent border-transparent text-slate-500 hover:text-slate-800"
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Design & Output</span>
+                  </button>
                 </div>
 
-                {/* Toggle Gender Diversity Criteria */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
-                      <Users className="w-4 h-4 text-pink-500" />
-                      Gender Diversity Criteria (Compulsory Female Member)
-                    </span>
-                    <span className="text-[11px] text-slate-400 block mt-0.5">
-                      Toggle whether each team must contain at least one female student (SIH standards require a female member by default).
-                    </span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={settingsForm.genderDiversityRequired}
-                      disabled={adminRole !== "SPOC"}
-                      onChange={(e) => setSettingsForm(prev => ({ ...prev, genderDiversityRequired: e.target.checked }))}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
-                  </label>
-                </div>
+                {/* 1. RULES & ACCESS SUB-TAB */}
+                {activeSettingsSubTab === "rules" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Registration Rules & Platform Access</h3>
+                    </div>
 
-                {/* Toggle Fee Requirement */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-slate-700 block">Enable Registration Fee Collection</span>
-                    <span className="text-[11px] text-slate-400 block mt-0.5">
-                      Toggle whether students must pay a registration fee during form submission.
-                    </span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={settingsForm.feeEnabled}
-                      onChange={(e) => setSettingsForm(prev => ({ ...prev, feeEnabled: e.target.checked }))}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                  </label>
-                </div>
-
-                {/* Toggle JWT authentication */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
-                      <Lock className="w-4 h-4 text-indigo-500" />
-                      Enable JWT Authentication
-                    </span>
-                    <span className="text-[11px] text-slate-400 block mt-0.5">
-                      Enforce secure JSON Web Token (JWT) verification on all student registration and profile endpoints. Only SPOC (Super Admin) can toggle this configuration.
-                    </span>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={settingsForm.jwtEnabled}
-                      disabled={adminRole !== "SPOC"}
-                      onChange={(e) => setSettingsForm(prev => ({ ...prev, jwtEnabled: e.target.checked }))}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 peer-disabled:opacity-55"></div>
-                  </label>
-                </div>
-
-                {/* Config Fields */}
-                <AnimatePresence>
-                  {settingsForm.feeEnabled && (
-                    <motion.div
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      className="space-y-4 overflow-hidden"
-                    >
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {/* Fee Amount */}
-                        <div className="space-y-1.5 sm:col-span-2">
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                            Registration Fee Amount (₹)
-                          </label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={settingsForm.feeAmount || ""}
-                            onChange={(e) => setSettingsForm(prev => ({ ...prev, feeAmount: parseInt(e.target.value, 10) || 0 }))}
-                            placeholder="e.g. 500"
-                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono font-bold"
-                            required={settingsForm.feeEnabled}
-                          />
-                        </div>
-
-                        {/* Razorpay Key ID */}
-                        <div className="space-y-1.5">
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                            Razorpay Key ID
-                          </label>
-                          <input
-                            type="text"
-                            value={settingsForm.razorpayKeyId}
-                            onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeyId: e.target.value }))}
-                            placeholder="rzp_test_..."
-                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
-                            required={settingsForm.feeEnabled}
-                          />
-                        </div>
-
-                        {/* Razorpay Key Secret */}
-                        <div className="space-y-1.5">
-                          <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                            Razorpay Key Secret
-                          </label>
-                          <input
-                            type="password"
-                            value={settingsForm.razorpayKeySecret}
-                            onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeySecret: e.target.value }))}
-                            placeholder="••••••••••••••••••••••••"
-                            className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
-                            required={settingsForm.feeEnabled}
-                          />
-                        </div>
+                    {/* Team Composition & Size Config */}
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-3">
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-indigo-500" />
+                          Dynamic Team Size Settings
+                        </span>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          Adjust the number of additional group members allowed/required in each registered team. (Default: 5 team members + 1 lead)
+                        </span>
                       </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                      <div className="flex items-center gap-3">
+                        <label htmlFor="team-members-count" className="text-xs font-semibold text-slate-600">
+                          Number of Team Members:
+                        </label>
+                        <input
+                          type="number"
+                          id="team-members-count"
+                          min="0"
+                          max="5"
+                          disabled={adminRole === "Student SPOC"}
+                          value={settingsForm.teamMembersCount}
+                          onChange={(e) => {
+                            const val = Math.max(0, Math.min(5, parseInt(e.target.value, 10) ?? 0));
+                            setSettingsForm(prev => ({ ...prev, teamMembersCount: val }));
+                          }}
+                          className="w-20 px-2.5 py-1.5 border border-slate-200 bg-white rounded-xl outline-none text-xs text-center focus:border-indigo-500 font-bold font-mono transition-all"
+                        />
+                        <span className="text-[11px] text-slate-500 font-medium">
+                          (Total Team Size: {settingsForm.teamMembersCount + 1} students)
+                        </span>
+                      </div>
+                    </div>
 
-                {/* Toggle Email Service */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                    {/* Toggle Gender Diversity Criteria */}
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-pink-500" />
+                          Gender Diversity Criteria (Compulsory Female Member)
+                        </span>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          Toggle whether each team must contain at least one female student (SIH standards require a female member by default).
+                        </span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.genderDiversityRequired}
+                          disabled={adminRole !== "SPOC"}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, genderDiversityRequired: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-600"></div>
+                      </label>
+                    </div>
+
+                    {/* Toggle JWT authentication */}
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                          <Lock className="w-4 h-4 text-indigo-500" />
+                          Enable JWT Authentication
+                        </span>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          Enforce secure JSON Web Token (JWT) verification on all student registration and profile endpoints. Only SPOC (Super Admin) can toggle this configuration.
+                        </span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.jwtEnabled}
+                          disabled={adminRole !== "SPOC"}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, jwtEnabled: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 peer-disabled:opacity-55"></div>
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. GATEWAYS & DB INTEGRATIONS SUB-TAB */}
+                {activeSettingsSubTab === "integrations" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Payment Gateways & External Database Synchronization</h3>
+                    </div>
+
+                    {/* Toggle Fee Requirement */}
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-bold text-slate-700 block">Enable Registration Fee Collection</span>
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
+                          Toggle whether students must pay a registration fee during form submission.
+                        </span>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={settingsForm.feeEnabled}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, feeEnabled: e.target.checked }))}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                      </label>
+                    </div>
+
+                    {/* Config Fields */}
+                    <AnimatePresence>
+                      {settingsForm.feeEnabled && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          className="space-y-4 overflow-hidden"
+                        >
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {/* Fee Amount */}
+                            <div className="space-y-1.5 sm:col-span-2">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                Registration Fee Amount (₹)
+                              </label>
+                              <input
+                                type="number"
+                                min="1"
+                                value={settingsForm.feeAmount || ""}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, feeAmount: parseInt(e.target.value, 10) || 0 }))}
+                                placeholder="e.g. 500"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono font-bold"
+                                required={settingsForm.feeEnabled}
+                              />
+                            </div>
+
+                            {/* Razorpay Key ID */}
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                Razorpay Key ID
+                              </label>
+                              <input
+                                type="text"
+                                value={settingsForm.razorpayKeyId}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeyId: e.target.value }))}
+                                placeholder="rzp_test_..."
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                                required={settingsForm.feeEnabled}
+                              />
+                            </div>
+
+                            {/* Razorpay Key Secret */}
+                            <div className="space-y-1.5">
+                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                Razorpay Key Secret
+                              </label>
+                              <input
+                                type="password"
+                                value={settingsForm.razorpayKeySecret}
+                                onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeySecret: e.target.value }))}
+                                placeholder="••••••••••••••••••••••••"
+                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
+                                required={settingsForm.feeEnabled}
+                              />
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                )}
+
+                {/* 2. COMMUNICATIONS & NOTIFICATIONS SUB-TAB */}
+                {activeSettingsSubTab === "notifications" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Multi-Channel Broadcast & Alert Gateway Configurations</h3>
+                    </div>
+
+                    {/* Toggle Email Service */}
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
                       <Mail className="w-4 h-4 text-indigo-500" />
@@ -3506,9 +3652,13 @@ export default function AdminPanel({
                     </motion.div>
                   )}
                 </AnimatePresence>
+              </div>
+            )}
 
-                {/* External Database Sync Configuration (MongoDB / SQL) */}
-                <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
+                {/* External Database Sync Configuration (MongoDB / SQL) - Part of Integrations */}
+                {activeSettingsSubTab === "integrations" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-1">
@@ -3692,9 +3842,18 @@ export default function AdminPanel({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
 
-                {/* Public Portal Customization & Branding */}
-                <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
+                {/* 4. DESIGN & BRANDING SUB-TAB */}
+                {activeSettingsSubTab === "branding" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Landing Page Customization & Branding</h3>
+                    </div>
+
+                    {/* Public Portal Customization & Branding */}
+                    <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
                   <div>
                     <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-1">
                       <Sparkles className="w-4 h-4 text-indigo-500" />
@@ -3814,9 +3973,13 @@ export default function AdminPanel({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
 
-                {/* LOCK REGISTRATION UPDATES SECTION */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
+                {/* LOCK REGISTRATION UPDATES SECTION - Part of Rules */}
+                {activeSettingsSubTab === "rules" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
                   <div className="flex items-start gap-3">
                     <div className="p-2 bg-rose-50 border border-rose-100 rounded-lg text-rose-600">
                       <Lock className="w-5 h-5" />
@@ -3875,9 +4038,18 @@ export default function AdminPanel({
                     </div>
                   </div>
                 </div>
+              </div>
+            )}
 
-                {/* PARTICIPATION CERTIFICATES SECTION */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
+                {/* PARTICIPATION CERTIFICATES SECTION - Part of Branding */}
+                {activeSettingsSubTab === "branding" && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="border-b border-slate-100 pb-2">
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Completion & Student Certificates Designer</h3>
+                    </div>
+
+                    {/* PARTICIPATION CERTIFICATES SECTION */}
+                    <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
                   <div className="flex items-start gap-3">
                     <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-600">
                       <Award className="w-5 h-5" />
@@ -4162,71 +4334,9 @@ export default function AdminPanel({
                     </div>
                   )}
                 </div>
+              </div>
+            )}
 
-                {/* CREDITS PAGE SECTION */}
-                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 space-y-4">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-lg text-indigo-600">
-                      <Sparkles className="w-5 h-5" />
-                    </div>
-                    <div className="space-y-1 flex-1">
-                      <span className="text-xs font-bold text-slate-700 block">
-                        Landing Page Footer Credits Customizer
-                      </span>
-                      <span className="text-[11px] text-slate-400 block">
-                        Customize and edit the Credits Page linked from the footer of the Landing Page. SPOC Admin can edit the credits title (the link text, e.g., "Department of CSE") and edit the credits page content.
-                      </span>
-                    </div>
-                    <div className="flex items-center">
-                      <button
-                        type="button"
-                        onClick={() => setSettingsForm(prev => ({ ...prev, creditsEnabled: !prev.creditsEnabled }))}
-                        className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                          settingsForm.creditsEnabled ? "bg-indigo-600" : "bg-slate-200"
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
-                            settingsForm.creditsEnabled ? "translate-x-5" : "translate-x-0"
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </div>
-
-                  {settingsForm.creditsEnabled && (
-                    <div className="space-y-4 pt-3 border-t border-slate-200/60 transition-all">
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                          Credits Link Title (Displays in Footer)
-                        </label>
-                        <input
-                          type="text"
-                          value={settingsForm.creditsTitle}
-                          onChange={(e) => setSettingsForm(prev => ({ ...prev, creditsTitle: e.target.value }))}
-                          className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none"
-                          placeholder="e.g., Department of CSE"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                          Credits Page Content (Markdown / Text supported)
-                        </label>
-                        <textarea
-                          rows={6}
-                          value={settingsForm.creditsContent}
-                          onChange={(e) => setSettingsForm(prev => ({ ...prev, creditsContent: e.target.value }))}
-                          className="w-full text-xs border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:outline-none leading-relaxed font-mono"
-                          placeholder="Write information about the department, mentors, development team..."
-                        />
-                        <p className="text-[9px] text-slate-400 mt-1">
-                          Markdown headers, bullet points, bold text, and links are fully supported.
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
 
                 <div className="pt-4 border-t border-slate-100 flex justify-between items-center">
                   {adminRole === "Student SPOC" ? (
@@ -6399,6 +6509,9 @@ export default function AdminPanel({
           </div>
         </div>
       )}
+
+        </div> {/* closing lg:col-span-9 */}
+      </div> {/* closing grid grid-cols-1 lg:grid-cols-12 */}
 
       {/* CREATE/EDIT PROBLEM STATEMENT MODAL */}
       <AnimatePresence>

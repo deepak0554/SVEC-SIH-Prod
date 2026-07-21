@@ -180,6 +180,18 @@ export default function App() {
   // Parse Markdown formatting for custom pages
   const renderSimpleMarkdown = (text: string) => {
     if (!text) return null;
+
+    // Check if the content is rich HTML
+    const isHtml = /<[a-z][\s\S]*>/i.test(text) || text.includes("</") || text.includes("<img") || text.includes("<div");
+    if (isHtml) {
+      return (
+        <div 
+          dangerouslySetInnerHTML={{ __html: text }} 
+          className="rich-html-container max-w-none break-words"
+        />
+      );
+    }
+
     return text.split("\n").map((line, idx) => {
       const trimmed = line.trim();
       if (trimmed.startsWith("### ")) {
@@ -533,7 +545,11 @@ export default function App() {
                   {publicSettings?.creditsTitle || "Department of CSE"}
                 </h1>
                 <div className={`prose max-w-none ${isDark ? "text-slate-300" : "text-slate-600"}`}>
-                  {renderSimpleMarkdown(publicSettings?.creditsContent || "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026")}
+                  {publicSettings?.creditsContent && (publicSettings.creditsContent.includes("<") || publicSettings.creditsContent.includes("</")) ? (
+                    <div dangerouslySetInnerHTML={{ __html: publicSettings.creditsContent }} className="space-y-4" />
+                  ) : (
+                    renderSimpleMarkdown(publicSettings?.creditsContent || "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026")
+                  )}
                 </div>
                 <div className="pt-4 flex justify-start">
                   <button

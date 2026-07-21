@@ -15,12 +15,19 @@ interface PageMenuCustomizerProps {
 
 export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps) {
   // Global tab within customizer
-  const [activeSubTab, setActiveSubTab] = useState<"details" | "guidelines" | "sponsors" | "spocs" | "photos" | "pages" | "menu">("details");
+  const [activeSubTab, setActiveSubTab] = useState<"details" | "guidelines" | "sponsors" | "spocs" | "photos" | "pages" | "menu" | "credits">("details");
 
   // State variables
   const [homepage, setHomepage] = useState<HomepageContent | null>(null);
   const [pagesList, setPagesList] = useState<CustomPage[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  
+  // Footer Credits customizer states
+  const [settingsData, setSettingsData] = useState<any>(null);
+  const [creditsTitle, setCreditsTitle] = useState<string>("Department of CSE");
+  const [creditsContent, setCreditsContent] = useState<string>("");
+  const [creditsEnabled, setCreditsEnabled] = useState<boolean>(true);
+  const [savingCredits, setSavingCredits] = useState<boolean>(false);
   
   // Guidelines form state
   const [guidelinesPageId, setGuidelinesPageId] = useState<string>("");
@@ -129,10 +136,13 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     setLoading(true);
     setError("");
     try {
-      const [homeRes, pagesRes, menuRes] = await Promise.all([
+      const [homeRes, pagesRes, menuRes, settingsRes] = await Promise.all([
         fetch("/api/homepage"),
         fetch("/api/custom-pages"),
-        fetch("/api/menu")
+        fetch("/api/menu"),
+        fetch("/api/settings", {
+          headers: { "X-Admin-Passcode": passcode }
+        })
       ]);
 
       if (homeRes.ok) {
@@ -165,6 +175,14 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         const menuData: MenuItem[] = await menuRes.json();
         setMenuItems(menuData);
         setEditingMenu(menuData.sort((a, b) => a.order - b.order));
+      }
+
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json();
+        setSettingsData(settings);
+        setCreditsTitle(settings.creditsTitle || "Department of CSE");
+        setCreditsContent(settings.creditsContent || "");
+        setCreditsEnabled(settings.creditsEnabled !== undefined ? settings.creditsEnabled : true);
       }
     } catch (err) {
       setError("Failed to load layout or configuration data from server.");
@@ -1110,6 +1128,43 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     }
   };
 
+  // Save Footer Credits config
+  const handleSaveCreditsConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setSavingCredits(true);
+
+    const mergedSettings = {
+      ...(settingsData || {}),
+      creditsTitle: creditsTitle.trim() || "Department of CSE",
+      creditsContent: creditsContent,
+      creditsEnabled: creditsEnabled
+    };
+
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(mergedSettings)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSettingsData(data.settings);
+        setSuccess("Footer Credits Page configuration updated and published successfully!");
+      } else {
+        setError(data.error || "Failed to update Footer Credits configuration.");
+      }
+    } catch (err) {
+      setError("Network error. Could not save Footer Credits configuration.");
+    } finally {
+      setSavingCredits(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="py-12 text-center">
@@ -1180,7 +1235,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
           }`}
         >
           <ImageIcon className="w-4 h-4" />
-          Previous SIH Photos
+          Multiple Galleries & Albums
         </button>
         <button
           onClick={() => { setActiveSubTab("pages"); setError(""); setSuccess(""); }}
@@ -1199,6 +1254,15 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         >
           <List className="w-4 h-4" />
           Front-End Navigation Menu
+        </button>
+        <button
+          onClick={() => { setActiveSubTab("credits"); setError(""); setSuccess(""); }}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+            activeSubTab === "credits" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-amber-500" />
+          Footer Credits
         </button>
       </div>
 
@@ -1875,7 +1939,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             <div className="flex items-center justify-between border-b pb-3 border-slate-100">
               <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                 <FolderPlus className="w-4 h-4 text-indigo-500" />
-                Add Photos to SVEC Gallery
+                Add Photos to Multiple Galleries & Albums
               </h2>
               {pendingPhotos.length > 0 && (
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600">
@@ -1908,7 +1972,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
                 )}
               </div>
               <p className="text-[10px] text-slate-400">
-                Tip: You can select multiple images at once (limit 2MB per photo). Clean titles will be auto-generated from file names!
+                Tip: You can organize your photos into multiple distinct galleries. Each unique group name creates a physical cover-album stack on the home page!
               </p>
             </div>
 
@@ -2393,6 +2457,107 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
                 Save & Publish Navigation
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* FOOTER CREDITS TAB */}
+      {activeSubTab === "credits" && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
+              <div className="space-y-1">
+                <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-indigo-500" />
+                  Customize Footer Credits Page
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Enable or disable the credits link, change the link title shown in the landing page footer, and edit the credits page as a fully customizable HTML page.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 bg-slate-50 border border-slate-150 px-3.5 py-2 rounded-xl shrink-0">
+                <span className="text-xs font-bold text-slate-600">Enable Credits Page Link</span>
+                <button
+                  type="button"
+                  onClick={() => setCreditsEnabled(!creditsEnabled)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    creditsEnabled ? "bg-indigo-600" : "bg-slate-200"
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-xs ring-0 transition duration-200 ease-in-out ${
+                      creditsEnabled ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {creditsEnabled ? (
+              <form onSubmit={handleSaveCreditsConfig} className="space-y-6">
+                <div className="max-w-xl">
+                  <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                    Credits Link Title (Displays in Footer)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={creditsTitle}
+                    onChange={(e) => setCreditsTitle(e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs font-bold focus:outline-none focus:border-indigo-500 text-slate-800 bg-white"
+                    placeholder="e.g. Department of CSE"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    This text serves as the anchor link in the footer (e.g., "Maintained & Developed by Department of CSE").
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Credits Page HTML Content
+                  </label>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mb-2">
+                    Design your credits page with custom HTML tags, styles, layouts, or links. Use the visual editor below to insert layouts, alert banners, cards, or raw code structures.
+                  </p>
+                  
+                  <HtmlRichEditor
+                    value={creditsContent}
+                    onChange={(val) => setCreditsContent(val)}
+                    placeholder="Enter credits page content in rich HTML format..."
+                    title="Credits Page Rich Content Designer"
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-4 border-t border-slate-100 justify-end">
+                  <button
+                    type="submit"
+                    disabled={savingCredits}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md transition-colors disabled:opacity-50"
+                  >
+                    {savingCredits ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin inline-block"></span>
+                        Saving Credits...
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-4 h-4" />
+                        Save & Publish Credits Page
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="text-center py-10 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
+                <Sparkles className="w-10 h-10 text-slate-300 mx-auto mb-2" />
+                <h3 className="text-xs font-bold text-slate-700">Credits Link is Disabled</h3>
+                <p className="text-[11px] text-slate-400 max-w-sm mx-auto mt-1 leading-relaxed">
+                  The credits anchor link in the footer is currently hidden. Toggle the switch above to enable and design the Credits Page.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}
