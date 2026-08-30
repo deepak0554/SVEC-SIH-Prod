@@ -51,7 +51,9 @@ import {
   ShieldCheck,
   CheckCircle2,
   XCircle,
-  BadgeCheck
+  BadgeCheck,
+  HardDrive,
+  RefreshCw
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -947,6 +949,105 @@ export default function AdminPanel({
       }));
     } finally {
       setDbTesting(false);
+    }
+  };
+
+  const [dbRestoring, setDbRestoring] = useState(false);
+  const [dbRestoreMessage, setDbRestoreMessage] = useState("");
+  const [dbRestoreError, setDbRestoreError] = useState("");
+
+  const [backupImporting, setBackupImporting] = useState(false);
+  const [backupMessage, setBackupMessage] = useState("");
+  const [backupError, setBackupError] = useState("");
+
+  const handleRestoreFromDB = async () => {
+    if (!window.confirm("Restore all registrations, students, and settings from the configured database?")) {
+      return;
+    }
+    setDbRestoring(true);
+    setDbRestoreMessage("");
+    setDbRestoreError("");
+    try {
+      const res = await fetch("/api/admin/restore-from-db", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        }
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setDbRestoreMessage(data.message || "Data restored successfully!");
+        fetchRegistrations();
+        fetchStudents();
+        fetchSettings();
+      } else {
+        setDbRestoreError(data.message || data.error || "Failed to restore data from database.");
+      }
+    } catch (err: any) {
+      setDbRestoreError("Network error while restoring data.");
+    } finally {
+      setDbRestoring(false);
+    }
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      const res = await fetch("/api/admin/backup/export", {
+        headers: {
+          "X-Admin-Passcode": passcode
+        }
+      });
+      if (!res.ok) throw new Error("Failed to export backup");
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `SVEC_SIH_Full_Backup_${new Date().toISOString().split("T")[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Failed to export system backup.");
+    }
+  };
+
+  const handleImportBackup = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!window.confirm(`Are you sure you want to restore application data from "${file.name}"?`)) {
+      e.target.value = "";
+      return;
+    }
+    setBackupImporting(true);
+    setBackupMessage("");
+    setBackupError("");
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const res = await fetch("/api/admin/backup/import", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(parsed)
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBackupMessage(data.message || "Backup imported successfully!");
+        fetchRegistrations();
+        fetchStudents();
+        fetchSettings();
+      } else {
+        setBackupError(data.error || "Failed to restore backup.");
+      }
+    } catch (err: any) {
+      setBackupError("Failed to parse JSON backup file.");
+    } finally {
+      setBackupImporting(false);
+      e.target.value = "";
     }
   };
 
@@ -4134,6 +4235,115 @@ export default function AdminPanel({
                       )}
                     </div>
                   )}
+                </div>
+
+                {/* Server Storage & Data Persistence Across Redeployments */}
+                <div className="border border-slate-100 rounded-2xl p-6 bg-slate-50/30 space-y-5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider flex items-center gap-1.5 mb-1">
+                        <HardDrive className="w-4 h-4 text-indigo-500" />
+                        Server File Storage & Redeployment Data Persistence
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Uploaded presentation PPTs, portal logos, and images are stored in dedicated server directories (<code className="font-mono bg-slate-100 px-1 py-0.5 rounded text-indigo-600">/app/data/uploads</code>).
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                    {/* Cloud DB Restore */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                          <RefreshCw className="w-4 h-4" />
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-700">Restore from Cloud Database</h4>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Re-sync and restore all registrations, student accounts, and metadata from your configured external MongoDB or PostgreSQL database.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleRestoreFromDB}
+                        disabled={dbRestoring || !settingsForm.dbEnabled || settingsForm.dbType === "none"}
+                        className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        {dbRestoring ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></span>
+                            Restoring Data...
+                          </>
+                        ) : (
+                          <>
+                            <Database className="w-3.5 h-3.5" />
+                            Restore All Data from DB
+                          </>
+                        )}
+                      </button>
+
+                      {dbRestoreError && (
+                        <p className="text-[11px] text-rose-600 font-medium">⚠️ {dbRestoreError}</p>
+                      )}
+                      {dbRestoreMessage && (
+                        <p className="text-[11px] text-emerald-600 font-medium">✅ {dbRestoreMessage}</p>
+                      )}
+                    </div>
+
+                    {/* Snapshot JSON Backup / Restore */}
+                    <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+                          <Download className="w-4 h-4" />
+                        </div>
+                        <h4 className="text-xs font-bold text-slate-700">JSON Snapshot Backup</h4>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Download a complete JSON backup of the portal or restore a previous snapshot before redeploying.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleExportBackup}
+                          className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Export Backup
+                        </button>
+                        <label className="flex-1 py-2 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer text-center">
+                          <Upload className="w-3.5 h-3.5 text-slate-500" />
+                          <span>{backupImporting ? "Importing..." : "Import Backup"}</span>
+                          <input
+                            type="file"
+                            accept=".json,application/json"
+                            onChange={handleImportBackup}
+                            disabled={backupImporting}
+                            className="hidden"
+                          />
+                        </label>
+                      </div>
+
+                      {backupError && (
+                        <p className="text-[11px] text-rose-600 font-medium">⚠️ {backupError}</p>
+                      )}
+                      {backupMessage && (
+                        <p className="text-[11px] text-emerald-600 font-medium">✅ {backupMessage}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Docker Volume Command Note */}
+                  <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 space-y-1">
+                    <p className="font-bold flex items-center gap-1.5 text-amber-800">
+                      💡 Container Volume Persistence Note:
+                    </p>
+                    <p>
+                      To ensure all data and uploads survive Docker redeployments, run your container with a persistent volume mounted to <code className="font-mono bg-amber-100 px-1 py-0.5 rounded font-bold">/app/data</code>:
+                    </p>
+                    <div className="font-mono bg-slate-900 text-slate-100 p-2 rounded-lg text-[10px] select-all overflow-x-auto">
+                      docker run -d -p 3000:3000 -v svec_hackathon_data:/app/data --name svec-sih &lt;image-name&gt;
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -7728,15 +7938,25 @@ export default function AdminPanel({
                           <span className="text-[10px] text-slate-400">Presentation attachment</span>
                         </div>
                       </div>
-                      {selectedRegProposal.pptBase64 && (
+                      {(selectedRegProposal.pptFileUrl || selectedRegProposal.id || selectedRegProposal.pptBase64) && (
                         <button
                           onClick={() => {
-                            const link = document.createElement("a");
-                            link.href = selectedRegProposal.pptBase64!;
-                            link.download = selectedRegProposal.pptFileName || "presentation.pptx";
-                            document.body.appendChild(link);
-                            link.click();
-                            document.body.removeChild(link);
+                            if (selectedRegProposal.pptFileUrl) {
+                              window.open(selectedRegProposal.pptFileUrl, "_blank");
+                              return;
+                            }
+                            if (selectedRegProposal.id) {
+                              window.open(`/api/registrations/${selectedRegProposal.id}/ppt`, "_blank");
+                              return;
+                            }
+                            if (selectedRegProposal.pptBase64) {
+                              const link = document.createElement("a");
+                              link.href = selectedRegProposal.pptBase64!;
+                              link.download = selectedRegProposal.pptFileName || "presentation.pptx";
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                            }
                           }}
                           className="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md transition-colors flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                         >

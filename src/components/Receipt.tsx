@@ -660,15 +660,24 @@ export default function Receipt({
     }
   };
 
-  // Helper to trigger download of the base64 encoded PPT
+  // Helper to trigger download of the PPT (server URL or fallback)
   const downloadPpt = () => {
-    if (!pptBase64) return;
-    const link = document.createElement("a");
-    link.href = pptBase64;
-    link.download = pptFileName || "project-presentation.pptx";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (registration.pptFileUrl) {
+      window.open(registration.pptFileUrl, "_blank");
+      return;
+    }
+    if (registration.id) {
+      window.open(`/api/registrations/${registration.id}/ppt`, "_blank");
+      return;
+    }
+    if (pptBase64) {
+      const link = document.createElement("a");
+      link.href = pptBase64;
+      link.download = pptFileName || "project-presentation.pptx";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
   return (

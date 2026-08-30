@@ -53,6 +53,7 @@ export interface Registration {
   implementationSteps?: string;
   pptFileName?: string;
   pptBase64?: string;
+  pptFileUrl?: string;
   proposalStatus?: "saved" | "submitted";
   assignedEvaluator?: string;
   evaluatorScores?: Record<string, number>;
@@ -165,6 +166,7 @@ export interface FeeConfig {
   samplePptUrl?: string;
   samplePptFileName?: string;
   samplePptFileBase64?: string;
+  samplePptFileUrl?: string;
   samplePptDescription?: string;
 }
 

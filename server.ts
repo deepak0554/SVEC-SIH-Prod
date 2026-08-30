@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
 import { ProblemStatement, Registration, Student, FeeConfig, HomepageContent, CustomPage, MenuItem } from "./src/types";
+import { db, TeamEvaluation, defaultCriteria, defaultStatements } from "./server/db";
 
 const JWT_SECRET = process.env.JWT_SECRET || "svec_sih_hackathon_jwt_secret_2026";
 
@@ -15,15 +16,28 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: "50mb" })); // Allow larger payloads for base64 images/PPT
 
-// Ensure data directory and files exist
+// Ensure data directory and file uploads storage exist
 const IS_VERCEL = !!process.env.VERCEL;
-const DATA_DIR = IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data");
+const DATA_DIR = process.env.DATA_DIR || (IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data"));
+const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+const UPLOADS_PPTS_DIR = path.join(UPLOADS_DIR, "ppts");
+const UPLOADS_IMAGES_DIR = path.join(UPLOADS_DIR, "images");
+const UPLOADS_DOCS_DIR = path.join(UPLOADS_DIR, "documents");
+const UPLOADS_SAMPLE_PPTS_DIR = path.join(UPLOADS_DIR, "sample_ppts");
+
+// Ensure all persistent storage directories exist
+[DATA_DIR, UPLOADS_DIR, UPLOADS_PPTS_DIR, UPLOADS_IMAGES_DIR, UPLOADS_DOCS_DIR, UPLOADS_SAMPLE_PPTS_DIR].forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
+// Serve uploads statically directly from server disk
+app.use("/api/uploads", express.static(UPLOADS_DIR));
+app.use("/uploads", express.static(UPLOADS_DIR));
 
 if (IS_VERCEL) {
   const sourceDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
   if (fs.existsSync(sourceDir)) {
     try {
       const files = fs.readdirSync(sourceDir);
@@ -142,45 +156,6 @@ if (!fs.existsSync(SETTINGS_FILE)) {
 }
 
 
-// Seed default Problem Statements if empty
-const defaultStatements: ProblemStatement[] = [
-  {
-    id: "1",
-    code: "SIH1627",
-    title: "AI-powered crop health monitoring using drone or satellite imagery and leaf analysis",
-    category: "Software",
-    organization: "Ministry of Agriculture & Farmers Welfare"
-  },
-  {
-    id: "2",
-    code: "SIH1628",
-    title: "Smart IoT-based real-time leakage and quality tracking for rural water supply lines",
-    category: "Hardware",
-    organization: "Ministry of Jal Shakti"
-  },
-  {
-    id: "3",
-    code: "SIH1629",
-    title: "Blockchain-enabled secure verification and retrieval of academic certificates & transcripts",
-    category: "Software",
-    organization: "Ministry of Education"
-  },
-  {
-    id: "4",
-    code: "SIH1630",
-    title: "Deep learning based automated sorting of recyclable waste utilizing robotics & computer vision",
-    category: "Hardware",
-    organization: "Ministry of Housing and Urban Affairs"
-  },
-  {
-    id: "5",
-    code: "SIH1631",
-    title: "Intelligent emergency-vehicle routing and dynamic traffic signal controller using live camera feed",
-    category: "Software",
-    organization: "Ministry of Road Transport and Highways"
-  }
-];
-
 if (!fs.existsSync(STATEMENTS_FILE)) {
   fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(defaultStatements, null, 2), "utf-8");
 }
@@ -190,15 +165,118 @@ if (!fs.existsSync(REGISTRATIONS_FILE)) {
 }
 
 const CRITERIA_FILE = path.join(DATA_DIR, "evaluation_criteria.json");
-const defaultCriteria = [
-  { id: "c1", name: "Novelty & Innovation", maxScore: 20, description: "Uniqueness and creativity of the solution approach" },
-  { id: "c2", name: "Technical Feasibility", maxScore: 20, description: "Practicality of implementation and choice of tech stack" },
-  { id: "c3", name: "Impact & Scalability", maxScore: 20, description: "Societal/economic value and potential to scale" },
-  { id: "c4", name: "Presentation & Pitch", maxScore: 20, description: "Clarity of delivery, PPT organization and prototype quality" }
-];
 
 if (!fs.existsSync(CRITERIA_FILE)) {
   fs.writeFileSync(CRITERIA_FILE, JSON.stringify(defaultCriteria, null, 2), "utf-8");
+}
+
+// Helper to decode and save base64 files (images, PPTs, templates) directly to server disk
+function saveBase64File(
+  base64Data: string,
+  category: "ppts" | "images" | "documents" | "sample_ppts",
+  suggestedName?: string
+): { url: string; filename: string; size: number; relativePath: string } | null {
+  if (!base64Data || typeof base64Data !== "string") return null;
+
+  try {
+    let cleanBase64 = base64Data.trim();
+    let ext = ".bin";
+
+    // Detect MIME type and extension if Data URL
+    if (cleanBase64.startsWith("data:")) {
+      const match = cleanBase64.match(/^data:([^;]+);base64,/);
+      if (match) {
+        const mime = match[1].toLowerCase();
+        if (mime.includes("presentation") || mime.includes("powerpoint") || mime.includes("pptx")) ext = ".pptx";
+        else if (mime.includes("pdf")) ext = ".pdf";
+        else if (mime.includes("png")) ext = ".png";
+        else if (mime.includes("jpeg") || mime.includes("jpg")) ext = ".jpg";
+        else if (mime.includes("webp")) ext = ".webp";
+        else if (mime.includes("gif")) ext = ".gif";
+        else if (mime.includes("svg")) ext = ".svg";
+        cleanBase64 = cleanBase64.replace(/^data:[^;]+;base64,/, "");
+      }
+    }
+
+    if (suggestedName) {
+      const parsedExt = path.extname(suggestedName);
+      if (parsedExt) ext = parsedExt;
+    }
+
+    const safeBaseName = (suggestedName ? path.basename(suggestedName, ext) : "file")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .substring(0, 50);
+
+    const uniqueFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${safeBaseName}${ext}`;
+    const targetDir = path.join(UPLOADS_DIR, category);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    const targetPath = path.join(targetDir, uniqueFilename);
+    const buffer = Buffer.from(cleanBase64, "base64");
+    fs.writeFileSync(targetPath, buffer);
+
+    const relativeUrl = `/api/uploads/${category}/${encodeURIComponent(uniqueFilename)}`;
+    return {
+      url: relativeUrl,
+      filename: uniqueFilename,
+      size: buffer.length,
+      relativePath: `/uploads/${category}/${uniqueFilename}`
+    };
+  } catch (err) {
+    console.error(`[Upload Storage Error] Failed to save base64 file to ${category}:`, err);
+    return null;
+  }
+}
+
+// Automatically save homepage base64 images (banner, patrons, sponsors, gallery) to server disk
+function processHomepageImages(content: HomepageContent): HomepageContent {
+  if (!content) return content;
+  const updated = { ...content };
+
+  // 1. Process Banner URL
+  if (updated.sihDetails?.bannerUrl && updated.sihDetails.bannerUrl.startsWith("data:")) {
+    const saved = saveBase64File(updated.sihDetails.bannerUrl, "images", "hero_banner.png");
+    if (saved) {
+      updated.sihDetails = { ...updated.sihDetails, bannerUrl: saved.url };
+    }
+  }
+
+  // 2. Process Sponsors logos
+  if (Array.isArray(updated.sponsors)) {
+    updated.sponsors = updated.sponsors.map(sp => {
+      if (sp.logoUrl && sp.logoUrl.startsWith("data:")) {
+        const saved = saveBase64File(sp.logoUrl, "images", `sponsor_${sp.name || sp.id}.png`);
+        return { ...sp, logoUrl: saved ? saved.url : sp.logoUrl };
+      }
+      return sp;
+    });
+  }
+
+  // 3. Process Patrons images
+  if (Array.isArray(updated.patrons)) {
+    updated.patrons = updated.patrons.map(patron => {
+      if (patron.imageUrl && patron.imageUrl.startsWith("data:")) {
+        const saved = saveBase64File(patron.imageUrl, "images", `patron_${patron.name || patron.id}.png`);
+        return { ...patron, imageUrl: saved ? saved.url : patron.imageUrl };
+      }
+      return patron;
+    });
+  }
+
+  // 4. Process Previous Photos gallery images
+  if (Array.isArray(updated.previousPhotos)) {
+    updated.previousPhotos = updated.previousPhotos.map(photo => {
+      if (photo.imageUrl && photo.imageUrl.startsWith("data:")) {
+        const saved = saveBase64File(photo.imageUrl, "images", `gallery_${photo.title || photo.id}.png`);
+        return { ...photo, imageUrl: saved ? saved.url : photo.imageUrl };
+      }
+      return photo;
+    });
+  }
+
+  return updated;
 }
 
 // Helpers to read/write files
@@ -244,6 +322,12 @@ function readRegistrations(): Registration[] {
 
 function writeRegistrations(registrations: Registration[]) {
   fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(registrations, null, 2), "utf-8");
+  const settings = readSettings();
+  if (settings.dbEnabled && settings.dbType !== "none") {
+    Promise.all(registrations.map(r => syncRegistrationToExternalDB(r))).catch(err => {
+      console.error("Failed to sync registrations batch to external DB:", err);
+    });
+  }
 }
 
 function readStudents(): Student[] {
@@ -282,8 +366,9 @@ function readHomepage(): HomepageContent {
 }
 
 function writeHomepage(content: HomepageContent) {
-  fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(content, null, 2), "utf-8");
-  syncMetadataToExternalDB("homepage_content", content).catch(err => {
+  const processed = processHomepageImages(content);
+  fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(processed, null, 2), "utf-8");
+  syncMetadataToExternalDB("homepage_content", processed).catch(err => {
     console.error("Failed to sync homepage content to DB:", err);
   });
 }
@@ -518,9 +603,35 @@ function readSettings(): FeeConfig {
 }
 
 function writeSettings(settings: FeeConfig) {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), "utf-8");
-  if (settings.dbEnabled) {
-    syncSettingsToExternalDB(settings).catch(err => {
+  const updatedSettings = { ...settings };
+
+  // If sample PPT is base64, save to uploads folder
+  if (updatedSettings.samplePptFileBase64 && updatedSettings.samplePptFileBase64.startsWith("data:")) {
+    const filename = updatedSettings.samplePptFileName || "SVEC_SIH_Sample_Proposal_Template.pptx";
+    const saved = saveBase64File(updatedSettings.samplePptFileBase64, "sample_ppts", filename);
+    if (saved) {
+      updatedSettings.samplePptFileUrl = saved.url;
+    }
+  }
+
+  // If custom logo or certificate BG is base64, save to uploads folder
+  if (updatedSettings.logoUrl && updatedSettings.logoUrl.startsWith("data:")) {
+    const saved = saveBase64File(updatedSettings.logoUrl, "images", "portal_custom_logo.png");
+    if (saved) {
+      updatedSettings.logoUrl = saved.url;
+    }
+  }
+
+  if (updatedSettings.certificateBgUrl && updatedSettings.certificateBgUrl.startsWith("data:")) {
+    const saved = saveBase64File(updatedSettings.certificateBgUrl, "images", "certificate_bg.png");
+    if (saved) {
+      updatedSettings.certificateBgUrl = saved.url;
+    }
+  }
+
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updatedSettings, null, 2), "utf-8");
+  if (updatedSettings.dbEnabled) {
+    syncSettingsToExternalDB(updatedSettings).catch(err => {
       console.error("Failed to sync settings to external DB on write:", err);
     });
     // Trigger dynamic metadata sync in background to keep all portal configurations updated in DB
@@ -905,6 +1016,245 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
   } catch (err: any) {
     console.error(`[External DB Error] Sync failed for registration ${registration.id}:`, err);
     return { success: false, error: err.message };
+  }
+}
+
+// Restore data from external PostgreSQL or MongoDB database on server boot or on-demand
+async function restoreDataFromExternalDB(): Promise<{ success: boolean; message: string; counts?: any }> {
+  const settings = readSettings();
+  const dbType = settings.dbType || (process.env.MONGODB_URI ? "mongodb" : (process.env.DATABASE_URL || process.env.PG_HOST ? "sql" : "none"));
+  
+  if (!settings.dbEnabled && !process.env.DATABASE_URL && !process.env.MONGODB_URI && !process.env.PG_HOST) {
+    return { success: false, message: "No external database configured or enabled." };
+  }
+
+  if (dbType === "none") {
+    return { success: false, message: "Database type is set to none." };
+  }
+
+  try {
+    const counts = { registrations: 0, students: 0, metadata: 0 };
+
+    if (dbType === "mongodb") {
+      const { MongoClient } = await import("mongodb");
+      let mongoUrl = process.env.MONGODB_URI || "";
+      if (!mongoUrl) {
+        if (settings.dbUsername && settings.dbPassword) {
+          mongoUrl = `mongodb://${encodeURIComponent(settings.dbUsername)}:${encodeURIComponent(settings.dbPassword)}@${settings.dbHost}:${settings.dbPort || 27017}/${settings.dbName || "svec_sih"}`;
+        } else {
+          mongoUrl = `mongodb://${settings.dbHost}:${settings.dbPort || 27017}/${settings.dbName || "svec_sih"}`;
+        }
+        if (settings.dbHost?.startsWith("mongodb://") || settings.dbHost?.startsWith("mongodb+srv://")) {
+          mongoUrl = settings.dbHost;
+        }
+      }
+
+      if (!mongoUrl) return { success: false, message: "Missing MongoDB connection string." };
+
+      const client = new MongoClient(mongoUrl);
+      await client.connect();
+      const db = client.db(settings.dbName || "svec_sih");
+
+      // 1. Restore Registrations
+      const regColl = db.collection(settings.dbCollectionOrTable || "registrations");
+      const dbRegistrations = (await regColl.find({}).toArray()) as any[];
+      if (dbRegistrations && dbRegistrations.length > 0) {
+        const localRegs = readRegistrations();
+        const localMap = new Map(localRegs.map(r => [r.id, r]));
+        for (const reg of dbRegistrations) {
+          const { _id, ...cleanReg } = reg;
+          if (cleanReg.id) {
+            // Restore PPT to disk if base64 exists and local file does not exist
+            if (cleanReg.pptBase64 && (!cleanReg.pptFileUrl || !fs.existsSync(path.join(DATA_DIR, cleanReg.pptFileUrl.replace(/^\/api\//, ""))))) {
+              const saved = saveBase64File(cleanReg.pptBase64, "ppts", cleanReg.pptFileName || `${cleanReg.teamName}_presentation.pptx`);
+              if (saved) cleanReg.pptFileUrl = saved.url;
+            }
+            localMap.set(cleanReg.id, cleanReg as Registration);
+          }
+        }
+        const mergedRegs = Array.from(localMap.values());
+        fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(mergedRegs, null, 2), "utf-8");
+        counts.registrations = mergedRegs.length;
+        console.log(`[External DB] Restored ${mergedRegs.length} registrations from MongoDB.`);
+      }
+
+      // 2. Restore Students
+      const studentColl = db.collection("students");
+      const dbStudents = (await studentColl.find({}).toArray()) as any[];
+      if (dbStudents && dbStudents.length > 0) {
+        const localStudents = readStudents();
+        const studentMap = new Map(localStudents.map(s => [s.email.toLowerCase(), s]));
+        for (const st of dbStudents) {
+          const { _id, ...cleanStudent } = st;
+          if (cleanStudent.email) {
+            studentMap.set(cleanStudent.email.toLowerCase(), cleanStudent as Student);
+          }
+        }
+        const mergedStudents = Array.from(studentMap.values());
+        fs.writeFileSync(STUDENTS_FILE, JSON.stringify(mergedStudents, null, 2), "utf-8");
+        counts.students = mergedStudents.length;
+        console.log(`[External DB] Restored ${mergedStudents.length} students from MongoDB.`);
+      }
+
+      // 3. Restore Metadata (Problem statements, homepage, pages, criteria, menu)
+      const metaColl = db.collection("app_metadata");
+      const metaDocs = await metaColl.find({}).toArray();
+      for (const doc of metaDocs) {
+        if (doc.key === "problem_statements" && Array.isArray(doc.data)) {
+          fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+          counts.metadata++;
+        } else if (doc.key === "homepage_content" && doc.data?.sihDetails) {
+          fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+          counts.metadata++;
+        } else if (doc.key === "custom_pages" && Array.isArray(doc.data)) {
+          fs.writeFileSync(PAGES_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+          counts.metadata++;
+        } else if (doc.key === "evaluation_criteria" && Array.isArray(doc.data)) {
+          fs.writeFileSync(CRITERIA_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+          counts.metadata++;
+        } else if (doc.key === "menu_items" && Array.isArray(doc.data)) {
+          fs.writeFileSync(MENU_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+          counts.metadata++;
+        }
+      }
+
+      await client.close();
+      return { success: true, message: `Successfully restored data from MongoDB (${counts.registrations} registrations, ${counts.students} students).`, counts };
+
+    } else if (dbType === "sql") {
+      const { default: pg } = await import("pg");
+      const clientConfig = process.env.DATABASE_URL 
+        ? { connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL.includes("localhost") ? undefined : { rejectUnauthorized: false } }
+        : {
+            host: settings.dbHost,
+            port: settings.dbPort || 5432,
+            database: settings.dbName,
+            user: settings.dbUsername,
+            password: settings.dbPassword,
+            ssl: (settings.dbHost?.includes("localhost") || settings.dbHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
+          };
+
+      const client = new pg.Client(clientConfig);
+      await client.connect();
+
+      const tableName = settings.dbCollectionOrTable || "registrations";
+      
+      const tableCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = $1
+        );
+      `, [tableName]);
+
+      if (tableCheck.rows[0]?.exists) {
+        const result = await client.query(`SELECT * FROM ${tableName}`);
+        if (result.rows && result.rows.length > 0) {
+          const localRegs = readRegistrations();
+          const localMap = new Map(localRegs.map(r => [r.id, r]));
+          for (const row of result.rows) {
+            const mappedReg: Registration = {
+              id: row.id,
+              registrationId: row.registration_id,
+              teamName: row.team_name,
+              leadName: row.lead_name,
+              leadDepartment: row.lead_department,
+              leadMobile: row.lead_mobile,
+              leadGender: row.lead_gender,
+              member1: row.member1,
+              member1Gender: row.member1_gender,
+              member1Email: row.member1_email,
+              member1Phone: row.member1_phone,
+              member2: row.member2,
+              member2Gender: row.member2_gender,
+              member2Email: row.member2_email,
+              member2Phone: row.member2_phone,
+              member3: row.member3,
+              member3Gender: row.member3_gender,
+              member3Email: row.member3_email,
+              member3Phone: row.member3_phone,
+              member4: row.member4,
+              member4Gender: row.member4_gender,
+              member4Email: row.member4_email,
+              member4Phone: row.member4_phone,
+              member5: row.member5,
+              member5Gender: row.member5_gender,
+              member5Email: row.member5_email,
+              member5Phone: row.member5_phone,
+              hasFemaleMember: row.has_female_member,
+              mentorName: row.mentor_name,
+              problemStatementId: row.problem_statement_id,
+              submittedAt: row.submitted_at,
+              studentEmail: row.student_email,
+              paymentStatus: row.payment_status,
+              paymentId: row.payment_id,
+              orderId: row.order_id,
+              amountPaid: row.amount_paid,
+              abstract: row.abstract,
+              implementationSteps: row.implementation_steps,
+              pptFileName: row.ppt_file_name,
+              pptBase64: row.ppt_base64,
+              proposalStatus: row.proposal_status
+            };
+
+            if (mappedReg.pptBase64) {
+              const saved = saveBase64File(mappedReg.pptBase64, "ppts", mappedReg.pptFileName || `${mappedReg.teamName}_presentation.pptx`);
+              if (saved) mappedReg.pptFileUrl = saved.url;
+            }
+
+            localMap.set(mappedReg.id, mappedReg);
+          }
+          const mergedRegs = Array.from(localMap.values());
+          fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(mergedRegs, null, 2), "utf-8");
+          counts.registrations = mergedRegs.length;
+          console.log(`[External DB] Restored ${mergedRegs.length} registrations from PostgreSQL.`);
+        }
+      }
+
+      const metaCheck = await client.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables 
+          WHERE table_name = 'app_metadata'
+        );
+      `);
+
+      if (metaCheck.rows[0]?.exists) {
+        const metaRes = await client.query(`SELECT key, data_json FROM app_metadata`);
+        for (const row of metaRes.rows) {
+          try {
+            const data = JSON.parse(row.data_json);
+            if (row.key === "problem_statements" && Array.isArray(data)) {
+              fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
+              counts.metadata++;
+            } else if (row.key === "homepage_content" && data?.sihDetails) {
+              fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(data, null, 2), "utf-8");
+              counts.metadata++;
+            } else if (row.key === "custom_pages" && Array.isArray(data)) {
+              fs.writeFileSync(PAGES_FILE, JSON.stringify(data, null, 2), "utf-8");
+              counts.metadata++;
+            } else if (row.key === "evaluation_criteria" && Array.isArray(data)) {
+              fs.writeFileSync(CRITERIA_FILE, JSON.stringify(data, null, 2), "utf-8");
+              counts.metadata++;
+            } else if (row.key === "menu_items" && Array.isArray(data)) {
+              fs.writeFileSync(MENU_FILE, JSON.stringify(data, null, 2), "utf-8");
+              counts.metadata++;
+            } else if (row.key === "students" && Array.isArray(data)) {
+              fs.writeFileSync(STUDENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
+              counts.students = data.length;
+            }
+          } catch (e) {
+            console.error(`Error parsing metadata ${row.key}:`, e);
+          }
+        }
+      }
+
+      await client.end();
+      return { success: true, message: `Successfully restored data from PostgreSQL (${counts.registrations} registrations, ${counts.students} students).`, counts };
+    }
+
+    return { success: false, message: "Unknown database type." };
+  } catch (err: any) {
+    console.error("[External DB Restore Error]:", err);
+    return { success: false, message: err.message };
   }
 }
 
@@ -1346,6 +1696,147 @@ function validateAdmin(req: express.Request, res: express.Response, next: expres
 
 // ------------------- API ROUTES -------------------
 
+// Upload files (Images, PPTs, Templates) directly to server storage
+app.post("/api/upload", (req, res) => {
+  const { data, category, filename } = req.body;
+  if (!data || typeof data !== "string") {
+    return res.status(400).json({ error: "Missing or invalid file data." });
+  }
+
+  const validCategory = (category === "ppts" || category === "images" || category === "sample_ppts" || category === "documents") 
+    ? category 
+    : "documents";
+
+  const result = saveBase64File(data, validCategory, filename);
+  if (!result) {
+    return res.status(500).json({ error: "Failed to save file to server storage." });
+  }
+
+  res.json({ success: true, ...result });
+});
+
+// Stream or download team PPT presentation directly from server disk
+app.get("/api/registrations/:id/ppt", (req, res) => {
+  const { id } = req.params;
+  const registrations = readRegistrations();
+  const reg = registrations.find(r => r.id === id || r.registrationId === id);
+
+  if (!reg) {
+    return res.status(404).json({ error: "Registration not found." });
+  }
+
+  // 1. Check if stored on disk via pptFileUrl
+  if (reg.pptFileUrl) {
+    const filename = path.basename(reg.pptFileUrl);
+    const category = reg.pptFileUrl.includes("/ppts/") ? "ppts" : "documents";
+    const filePath = path.join(UPLOADS_DIR, category, filename);
+    if (fs.existsSync(filePath)) {
+      const downloadName = reg.pptFileName || `${reg.teamName || "team"}_presentation.pptx`;
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      return res.sendFile(filePath);
+    }
+  }
+
+  // 2. Fallback to pptBase64
+  if (reg.pptBase64) {
+    try {
+      const match = reg.pptBase64.match(/^data:([^;]+);base64,(.+)$/);
+      const mimeType = match ? match[1] : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      const base64Data = match ? match[2] : reg.pptBase64;
+      const buffer = Buffer.from(base64Data, "base64");
+      const downloadName = reg.pptFileName || `${reg.teamName || "team"}_presentation.pptx`;
+
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
+      return res.send(buffer);
+    } catch (err) {
+      console.error("Error serving PPT base64 buffer:", err);
+      return res.status(500).json({ error: "Failed to generate PPT download buffer." });
+    }
+  }
+
+  return res.status(404).json({ error: "No presentation file found for this team." });
+});
+
+// Admin: Manual Database Restore Trigger
+app.post("/api/admin/restore-from-db", validateAdmin, async (req, res) => {
+  const result = await restoreDataFromExternalDB();
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+// Admin: Export Full JSON State Backup
+app.get("/api/admin/backup/export", validateAdmin, (req, res) => {
+  const backup = {
+    version: "2026.1",
+    exportedAt: new Date().toISOString(),
+    registrations: readRegistrations(),
+    students: readStudents(),
+    statements: readStatements(),
+    settings: readSettings(),
+    homepage: readHomepage(),
+    customPages: readCustomPages(),
+    evaluationCriteria: readCriteria(),
+    menuItems: readMenuItems(),
+    updates: readUpdates()
+  };
+
+  const filename = `SVEC_SIH_Backup_${new Date().toISOString().split("T")[0]}.json`;
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Content-Type", "application/json");
+  res.send(JSON.stringify(backup, null, 2));
+});
+
+// Admin: Import and Restore Full JSON State Backup
+app.post("/api/admin/backup/import", validateAdmin, (req, res) => {
+  const backup = req.body;
+  if (!backup || typeof backup !== "object") {
+    return res.status(400).json({ error: "Invalid backup JSON format." });
+  }
+
+  if (Array.isArray(backup.registrations)) {
+    writeRegistrations(backup.registrations);
+  }
+  if (Array.isArray(backup.students)) {
+    writeStudents(backup.students);
+  }
+  if (Array.isArray(backup.statements)) {
+    writeStatements(backup.statements);
+  }
+  if (backup.settings && typeof backup.settings === "object") {
+    writeSettings(backup.settings);
+  }
+  if (backup.homepage && typeof backup.homepage === "object") {
+    writeHomepage(backup.homepage);
+  }
+  if (Array.isArray(backup.customPages)) {
+    writeCustomPages(backup.customPages);
+  }
+  if (Array.isArray(backup.evaluationCriteria)) {
+    writeCriteria(backup.evaluationCriteria);
+  }
+  if (Array.isArray(backup.menuItems)) {
+    writeMenuItems(backup.menuItems);
+  }
+  if (Array.isArray(backup.updates)) {
+    writeUpdates(backup.updates);
+  }
+
+  res.json({
+    success: true,
+    message: "Full application state restored successfully from backup!",
+    counts: {
+      registrations: backup.registrations?.length || 0,
+      students: backup.students?.length || 0,
+      statements: backup.statements?.length || 0
+    }
+  });
+});
+
 // Student Auth: Register
 app.post("/api/auth/register", (req, res) => {
   const { email, password, gender, department, mobile } = req.body;
@@ -1691,6 +2182,20 @@ app.post("/api/settings", validateAdmin, (req, res) => {
 // Download/Redirect to Sample PPT Presentation File
 app.get("/api/settings/sample-ppt/download", (req, res) => {
   const settings = readSettings();
+
+  // 1. Check if stored on disk
+  if (settings.samplePptFileUrl) {
+    const filename = path.basename(settings.samplePptFileUrl);
+    const filePath = path.join(UPLOADS_SAMPLE_PPTS_DIR, filename);
+    if (fs.existsSync(filePath)) {
+      const downloadName = settings.samplePptFileName || "SVEC_SIH_Sample_Proposal_Template.pptx";
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      return res.sendFile(filePath);
+    }
+  }
+
+  // 2. Fallback to base64
   if (settings.samplePptFileBase64) {
     try {
       const match = settings.samplePptFileBase64.match(/^data:([^;]+);base64,(.+)$/);
@@ -1725,138 +2230,45 @@ app.post("/api/settings/test-db", validateAdmin, async (req, res) => {
   }
 
   try {
-    if (dbType === "mongodb") {
-      const { MongoClient } = await import("mongodb");
-      let mongoUrl = "";
-      if (dbUsername && dbPassword) {
-        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
-      } else {
-        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
-      }
-      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
-        mongoUrl = dbHost;
-      }
+    const initResult = await db.init({
+      dbEnabled: true,
+      dbType,
+      dbHost,
+      dbPort,
+      dbName,
+      dbUsername,
+      dbPassword,
+      dbCollectionOrTable
+    });
 
-      const client = new MongoClient(mongoUrl);
-      await client.connect();
-      const db = client.db(dbName || "svec_sih");
-      
-      const collectionName = dbCollectionOrTable || "registrations";
-      // Create collection (install schema) if it doesn't exist
-      const collections = await db.listCollections({ name: collectionName }).toArray();
-      if (collections.length === 0) {
-        await db.createCollection(collectionName);
-      }
-      // Ensure app_settings and app_metadata collections exist
-      const collectionsSettings = await db.listCollections({ name: "app_settings" }).toArray();
-      if (collectionsSettings.length === 0) {
-        await db.createCollection("app_settings");
-      }
-      const collectionsMetadata = await db.listCollections({ name: "app_metadata" }).toArray();
-      if (collectionsMetadata.length === 0) {
-        await db.createCollection("app_metadata");
-      }
-      await client.close();
-
-      // Read current settings, update status to "Connected", write settings
+    if (initResult.success) {
       const settings = readSettings();
-      settings.dbStatus = `Connected Successfully (Mongo: ${new Date().toLocaleTimeString()})`;
+      settings.dbStatus = `Connected Successfully (${dbType.toUpperCase()} Structured: ${new Date().toLocaleTimeString()})`;
       writeSettings(settings);
 
-      return res.json({ success: true, message: `Successfully connected to MongoDB and verified/created collection "${collectionName}"!` });
+      // Trigger immediate synchronization of all existing datasets into the database
+      const registrations = readRegistrations();
+      for (const r of registrations) {
+        await db.saveRegistration(r);
+      }
+      const students = readStudents();
+      for (const s of students) {
+        await db.saveStudent(s);
+      }
+      await db.saveProblemStatements(readStatements());
+      await db.saveEvaluationCriteria(readCriteria());
 
-    } else if (dbType === "sql") {
-      const { default: pg } = await import("pg");
-      const client = new pg.Client({
-        host: dbHost,
-        port: dbPort || 5432,
-        database: dbName,
-        user: dbUsername,
-        password: dbPassword,
-        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
+      return res.json({ 
+        success: true, 
+        message: `Successfully connected to ${dbType.toUpperCase()}! All 10 industry-standard database tables & indexes (registrations, students, problem_statements, evaluation_criteria, team_evaluations, custom_pages, menu_items, live_updates, broadcast_logs, app_settings) structured and synced.` 
       });
-
-      await client.connect();
-
-      const tableName = dbCollectionOrTable || "registrations";
-
-      // Execute schema creation SQL to install schemas
-      const createTableSql = `
-        CREATE TABLE IF NOT EXISTS ${tableName} (
-          id VARCHAR(255) PRIMARY KEY,
-          registration_id VARCHAR(255),
-          team_name VARCHAR(255),
-          lead_name VARCHAR(255),
-          lead_department VARCHAR(255),
-          lead_mobile VARCHAR(20),
-          lead_gender VARCHAR(50),
-          member1 VARCHAR(255),
-          member1_gender VARCHAR(50),
-          member1_email VARCHAR(255),
-          member1_phone VARCHAR(20),
-          member2 VARCHAR(255),
-          member2_gender VARCHAR(50),
-          member2_email VARCHAR(255),
-          member2_phone VARCHAR(20),
-          member3 VARCHAR(255),
-          member3_gender VARCHAR(50),
-          member3_email VARCHAR(255),
-          member3_phone VARCHAR(20),
-          member4 VARCHAR(255),
-          member4_gender VARCHAR(50),
-          member4_email VARCHAR(255),
-          member4_phone VARCHAR(20),
-          member5 VARCHAR(255),
-          member5_gender VARCHAR(50),
-          member5_email VARCHAR(255),
-          member5_phone VARCHAR(20),
-          has_female_member BOOLEAN,
-          mentor_name VARCHAR(255),
-          problem_statement_id VARCHAR(255),
-          submitted_at VARCHAR(255),
-          student_email VARCHAR(255),
-          payment_status VARCHAR(50),
-          payment_id VARCHAR(255),
-          order_id VARCHAR(255),
-          amount_paid INT,
-          abstract TEXT,
-          implementation_steps TEXT,
-          ppt_file_name VARCHAR(255),
-          ppt_base64 TEXT,
-          proposal_status VARCHAR(50)
-        );
-      `;
-      await client.query(createTableSql);
-
-      const createAppSettingsTableSql = `
-        CREATE TABLE IF NOT EXISTS app_settings (
-          id VARCHAR(255) PRIMARY KEY,
-          settings_json TEXT
-        );
-      `;
-      await client.query(createAppSettingsTableSql);
-
-      const createAppMetadataTableSql = `
-        CREATE TABLE IF NOT EXISTS app_metadata (
-          id VARCHAR(255) PRIMARY KEY,
-          metadata_json TEXT
-        );
-      `;
-      await client.query(createAppMetadataTableSql);
-
-      await client.end();
-
-      // Read current settings, update status to "Connected", write settings
+    } else {
       const settings = readSettings();
-      settings.dbStatus = `Connected Successfully (SQL Table: ${new Date().toLocaleTimeString()})`;
+      settings.dbStatus = `Connection Failed: ${initResult.message}`;
       writeSettings(settings);
-
-      return res.json({ success: true, message: `Successfully connected to SQL database and installed/verified table "${tableName}" schema!` });
+      return res.status(500).json({ error: initResult.message });
     }
-
-    return res.status(400).json({ error: "Invalid database type configured." });
   } catch (err: any) {
-    // Save status as connection failed
     const settings = readSettings();
     settings.dbStatus = `Connection Failed: ${err.message}`;
     writeSettings(settings);
@@ -2604,12 +3016,23 @@ app.post("/api/admin/registrations/:id/assign-evaluator", validateAdmin, (req, r
   res.json({ success: true, message: "Evaluator assigned successfully." });
 });
 
+// GET all evaluations or for specific registration (Admin / Evaluator / SPOC)
+app.get("/api/admin/evaluations", validateAdmin, async (req, res) => {
+  try {
+    const { registrationId } = req.query;
+    const evaluations = await db.getEvaluations(registrationId as string | undefined);
+    res.json(evaluations);
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to fetch evaluations from database: " + err.message });
+  }
+});
+
 // POST evaluate/score team (Evaluator role)
-app.post("/api/admin/registrations/:id/evaluate", validateAdmin, (req, res) => {
+app.post("/api/admin/registrations/:id/evaluate", validateAdmin, async (req, res) => {
   const role = (req as any).adminRole;
   const username = (req as any).adminUser;
-  if (role !== "Evaluator") {
-    return res.status(403).json({ error: "Access Denied: Only Evaluators can score teams." });
+  if (role !== "Evaluator" && role !== "SPOC" && role !== "Student SPOC") {
+    return res.status(403).json({ error: "Access Denied: Only Evaluators and SPOC admins can score teams." });
   }
 
   const { id } = req.params;
@@ -2621,17 +3044,32 @@ app.post("/api/admin/registrations/:id/evaluate", validateAdmin, (req, res) => {
     return res.status(404).json({ error: "Registration not found." });
   }
 
-  // Ensure evaluator is the assigned one
-  if (registrations[idx].assignedEvaluator !== username) {
+  // Ensure evaluator is the assigned one if role is Evaluator
+  if (role === "Evaluator" && registrations[idx].assignedEvaluator !== username) {
     return res.status(403).json({ error: "Access Denied: You are not assigned to evaluate this team." });
   }
+
+  const totalScore = scores ? Object.values(scores).reduce((a: any, b: any) => Number(a) + (Number(b) || 0), 0) : 0;
 
   registrations[idx].evaluatorScores = scores || {};
   registrations[idx].evaluationNotes = notes || "";
   registrations[idx].evaluationStatus = status || "completed";
 
   writeRegistrations(registrations);
-  res.json({ success: true, message: "Team evaluation submitted successfully." });
+
+  // Save into structured database table
+  await db.saveEvaluation({
+    id: `eval_${id}_${Date.now()}`,
+    registrationId: id,
+    evaluatorUsername: username || "SPOC",
+    scores: scores || {},
+    totalScore: Number(totalScore),
+    notes: notes || "",
+    status: status || "completed",
+    evaluatedAt: new Date().toISOString()
+  });
+
+  res.json({ success: true, message: "Team evaluation submitted and stored in database successfully." });
 });
 
 // POST finalize student selection (SPOC only)
@@ -2755,12 +3193,22 @@ app.put("/api/registrations/my/proposal", validateStudentJWT, (req, res) => {
     }
   }
 
+  let pptFileUrl = current.pptFileUrl || "";
+  if (pptBase64 && typeof pptBase64 === "string" && pptBase64.startsWith("data:")) {
+    const safePptName = pptFileName || `${current.teamName || "team"}_presentation.pptx`;
+    const savedPpt = saveBase64File(pptBase64, "ppts", safePptName);
+    if (savedPpt) {
+      pptFileUrl = savedPpt.url;
+    }
+  }
+
   registrations[idx] = {
     ...current,
     abstract: abstract !== undefined ? abstract.trim() : current.abstract,
     implementationSteps: implementationSteps !== undefined ? implementationSteps.trim() : current.implementationSteps,
     pptFileName: pptFileName !== undefined ? pptFileName : current.pptFileName,
     pptBase64: pptBase64 !== undefined ? pptBase64 : current.pptBase64,
+    pptFileUrl: pptFileUrl || current.pptFileUrl,
     proposalStatus: proposalStatus || current.proposalStatus || "saved"
   };
 
@@ -3281,6 +3729,15 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
   }
   const registrationId = `SIH-REG-${nextSeq}`;
 
+  let pptFileUrl = "";
+  if (req.body.pptBase64 && typeof req.body.pptBase64 === "string" && req.body.pptBase64.startsWith("data:")) {
+    const safePptName = req.body.pptFileName || `${teamName.trim()}_presentation.pptx`;
+    const savedPpt = saveBase64File(req.body.pptBase64, "ppts", safePptName);
+    if (savedPpt) {
+      pptFileUrl = savedPpt.url;
+    }
+  }
+
   const newRegistration: Registration = {
     id: Date.now().toString(),
     registrationId,
@@ -3324,7 +3781,13 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     paymentId,
     orderId,
     amountPaid: paymentStatus === "paid" ? amountPaid : undefined,
-    approvalStatus: "pending"
+    approvalStatus: "pending",
+    abstract: req.body.abstract?.trim() || undefined,
+    implementationSteps: req.body.implementationSteps?.trim() || undefined,
+    pptFileName: req.body.pptFileName || undefined,
+    pptBase64: req.body.pptBase64 || undefined,
+    pptFileUrl: pptFileUrl || undefined,
+    proposalStatus: req.body.proposalStatus || (req.body.pptBase64 ? "saved" : undefined)
   };
 
   registrations.push(newRegistration);
@@ -3597,9 +4060,19 @@ app.put("/api/registrations/:id", validateAdmin, (req, res) => {
     (member4Gender || "").toLowerCase() === "female" ||
     (member5Gender || "").toLowerCase() === "female";
 
+  let pptFileUrl = current.pptFileUrl || "";
+  if (updatedBody.pptBase64 && typeof updatedBody.pptBase64 === "string" && updatedBody.pptBase64.startsWith("data:")) {
+    const safePptName = updatedBody.pptFileName || current.pptFileName || `${current.teamName || "team"}_presentation.pptx`;
+    const savedPpt = saveBase64File(updatedBody.pptBase64, "ppts", safePptName);
+    if (savedPpt) {
+      pptFileUrl = savedPpt.url;
+    }
+  }
+
   const updated = {
     ...current,
     ...req.body,
+    pptFileUrl: pptFileUrl || current.pptFileUrl,
     hasFemaleMember: calculatedHasFemale,
     id: current.id, // cannot modify id
     registrationId: current.registrationId // cannot modify registrationId
@@ -3756,6 +4229,21 @@ app.post("/api/menu", validateAdmin, (req, res) => {
 // ------------------- VITE OR STATIC FRONTEND -------------------
 
 async function startServer() {
+  // Initialize and connect database on startup
+  try {
+    const settings = readSettings();
+    if (settings.dbEnabled && settings.dbType && settings.dbType !== "none") {
+      await db.init(settings);
+    }
+  } catch (dbErr) {
+    console.error("[Database Startup Initialization Error]:", dbErr);
+  }
+
+  // Trigger background database restore/sync if external DB is configured
+  restoreDataFromExternalDB().catch(err => {
+    console.error("[Startup DB Restore Error]:", err);
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
