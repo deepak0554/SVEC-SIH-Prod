@@ -132,8 +132,8 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
   };
 
   // Insert Image HTML tag at cursor
-  const handleInsertImageSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleInsertImageSubmit = (e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => {
+    if (e) e.preventDefault();
     if (!imageUrl.trim()) return;
 
     // Use specific layout styles
@@ -152,8 +152,8 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
   };
 
   // Insert Hyperlink HTML tag
-  const handleInsertLinkSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleInsertLinkSubmit = (e?: React.FormEvent | React.MouseEvent | React.KeyboardEvent) => {
+    if (e) e.preventDefault();
     if (!linkUrl.trim()) return;
 
     const textToInsert = linkText.trim() || linkUrl.trim();
@@ -671,7 +671,7 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                 </button>
               </div>
 
-              <form onSubmit={handleInsertImageSubmit} className="space-y-4">
+              <div className="space-y-4">
                 {/* Drag and drop / local file picker */}
                 <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4 text-center space-y-2">
                   <Upload className="w-6 h-6 text-indigo-500 mx-auto" />
@@ -700,6 +700,12 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500 font-mono"
                     value={imageUrl}
                     onChange={(e) => setImageUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleInsertImageSubmit();
+                      }
+                    }}
                     placeholder="e.g. https://images.unsplash.com/photo-..."
                   />
                 </div>
@@ -711,6 +717,12 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
                     value={imageAlt}
                     onChange={(e) => setImageAlt(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleInsertImageSubmit();
+                      }
+                    }}
                     placeholder="e.g. Winners of SVEC Internal SIH round receiving Awards"
                   />
                 </div>
@@ -774,13 +786,14 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                     Cancel
                   </button>
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={() => handleInsertImageSubmit()}
                     className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg cursor-pointer"
                   >
                     Insert Image
                   </button>
                 </div>
-              </form>
+              </div>
             </motion.div>
           </div>
         )}
@@ -811,7 +824,7 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                 </button>
               </div>
 
-              <form onSubmit={handleInsertLinkSubmit} className="space-y-4">
+              <div className="space-y-4">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-700 uppercase mb-1">Target Address (URL) *</label>
                   <input
@@ -820,6 +833,12 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
                     value={linkUrl}
                     onChange={(e) => setLinkUrl(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleInsertLinkSubmit();
+                      }
+                    }}
                     placeholder="e.g. https://sih.gov.in/ or /register"
                   />
                   <span className="text-[9px] text-slate-400 mt-0.5 block">Use full addresses starting with https://, or relative page slugs</span>
@@ -833,6 +852,12 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-indigo-500"
                     value={linkText}
                     onChange={(e) => setLinkText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleInsertLinkSubmit();
+                      }
+                    }}
                     placeholder="e.g. Read Selection Guidelines"
                   />
                 </div>
@@ -846,13 +871,14 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                     Cancel
                   </button>
                   <button
-                    type="submit"
+                    type="button"
+                    onClick={() => handleInsertLinkSubmit()}
                     className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg cursor-pointer"
                   >
                     Insert Link
                   </button>
                 </div>
-              </form>
+              </div>
             </motion.div>
           </div>
         )}

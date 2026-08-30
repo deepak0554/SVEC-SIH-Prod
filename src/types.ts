@@ -60,6 +60,10 @@ export interface Registration {
   evaluationStatus?: "pending" | "completed";
   isFinalSelected?: boolean;
   selectionNotes?: string;
+  approvalStatus?: "pending" | "verified" | "under_review" | "rejected";
+  approvalNotes?: string;
+  verifiedAt?: string;
+  verifiedBy?: string;
 }
 
 export interface EvaluationCriterion {
@@ -155,6 +159,13 @@ export interface FeeConfig {
   creditsTitle?: string;
   creditsContent?: string;
   creditsEnabled?: boolean;
+
+  // Project Proposal Sample PPT & Demo Link
+  samplePptEnabled?: boolean;
+  samplePptUrl?: string;
+  samplePptFileName?: string;
+  samplePptFileBase64?: string;
+  samplePptDescription?: string;
 }
 
 export interface Signatory {
@@ -208,6 +219,22 @@ export interface PreviousPhoto {
   groupTitle?: string; // The name of the gallery/album group
 }
 
+export interface TimelineItem {
+  id: string;
+  phase: string;
+  title: string;
+  subtitle: string;
+  date: string;
+  timeText: string;
+  description: string;
+  deliverables: string[];
+  status: "completed" | "active" | "deadline" | "upcoming" | "event";
+  statusLabel: string;
+  isKeyDate?: boolean;
+  keyLabel?: string;
+  enabled?: boolean;
+}
+
 export interface HomepageContent {
   sihDetails: {
     title: string;
@@ -221,6 +248,10 @@ export interface HomepageContent {
   studentSpocs: TeamSpoc[];
   collegeSpocs: TeamSpoc[];
   previousPhotos: PreviousPhoto[];
+  showTimeline?: boolean;
+  timelineTitle?: string;
+  timelineSubtitle?: string;
+  timelineEvents?: TimelineItem[];
 }
 
 export interface CustomPage {

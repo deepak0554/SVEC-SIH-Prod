@@ -25,11 +25,14 @@ import {
   Download,
   Trophy,
   Sparkles,
-  Award
+  Award,
+  Link2,
+  ExternalLink
 } from "lucide-react";
 import { Registration, ProblemStatement } from "../types";
 import SvecLogo from "./SvecLogo";
 import ParticipationCertificateModal from "./ParticipationCertificateModal";
+import ConsentLetterModal from "./ConsentLetterModal";
 
 interface ReceiptProps {
   registration: Registration;
@@ -92,6 +95,22 @@ export default function Receipt({
   const [enableCertificates, setEnableCertificates] = useState<boolean>(false);
   const [certificateConfig, setCertificateConfig] = useState<any>(null);
   const [selectedCertStudentName, setSelectedCertStudentName] = useState<string | null>(null);
+  const [showConsentLetter, setShowConsentLetter] = useState<boolean>(false);
+
+  // Sample PPT Demo & Presentation Template Config
+  const [samplePptConfig, setSamplePptConfig] = useState<{
+    enabled: boolean;
+    url: string;
+    fileName: string;
+    fileBase64: string;
+    description: string;
+  }>({
+    enabled: true,
+    url: "",
+    fileName: "",
+    fileBase64: "",
+    description: ""
+  });
 
   useEffect(() => {
     fetch("/api/settings/public")
@@ -115,6 +134,15 @@ export default function Receipt({
           if (!data.enableCertificates) {
             setActiveTab(prev => prev === "certificates" ? "slip" : prev);
           }
+        }
+        if (data.samplePptEnabled !== undefined) {
+          setSamplePptConfig({
+            enabled: !!data.samplePptEnabled,
+            url: data.samplePptUrl || "",
+            fileName: data.samplePptFileName || "",
+            fileBase64: data.samplePptFileBase64 || "",
+            description: data.samplePptDescription || ""
+          });
         }
       })
       .catch(err => console.error("Error loading public settings in Receipt", err));
@@ -915,26 +943,76 @@ export default function Receipt({
 
                 {/* Members Info */}
                 <div>
-                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-slate-400" />
-                    Team Members
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Users className="w-3.5 h-3.5 text-slate-400" />
+                      Team Members {teamMembersCount > 0 ? `(${teamMembersCount})` : ""}
+                    </span>
+                    {teamMembersCount > 0 && (
+                      <span className="text-[10px] font-normal text-slate-400">
+                        Total Team Size: {teamMembersCount + 1}
+                      </span>
+                    )}
                   </h3>
-                  <div className="space-y-2">
-                    {[
-                      registration.member1,
-                      registration.member2,
-                      registration.member3,
-                      registration.member4,
-                      registration.member5
-                    ].map((name, idx) => (
-                      <div key={idx} className="flex items-center gap-2 py-2 px-3 hover:bg-slate-50 rounded-lg transition-colors border-b border-slate-50">
-                        <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-600 text-xs flex items-center justify-center font-bold font-mono">
-                          {idx + 1}
-                        </span>
-                        <span className="text-sm text-slate-700 font-medium">{name}</span>
-                      </div>
-                    ))}
-                  </div>
+
+                  {teamMembersCount === 0 ? (
+                    <div className="bg-slate-50/70 border border-slate-100 rounded-xl p-3.5 text-xs text-slate-500 italic flex items-center gap-2">
+                      <span>Solo Registration (Individual participant — No additional team members configured).</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {Array.from({ length: teamMembersCount }, (_, idx) => idx + 1).map((num) => {
+                        const name = (registration as any)[`member${num}`] || "";
+                        const gender = (registration as any)[`member${num}Gender`];
+                        const email = (registration as any)[`member${num}Email`];
+                        const phone = (registration as any)[`member${num}Phone`];
+                        const year = (registration as any)[`member${num}AcademicYear`];
+
+                        return (
+                          <div
+                            key={num}
+                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2.5 px-3.5 bg-slate-50/50 hover:bg-slate-50 rounded-xl transition-colors border border-slate-100/80"
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="w-6 h-6 rounded-full bg-indigo-50 text-indigo-600 text-xs flex items-center justify-center font-bold font-mono border border-indigo-100 shrink-0">
+                                {num}
+                              </span>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-semibold text-slate-800">
+                                    {name || <span className="text-slate-400 italic">Member {num}</span>}
+                                  </span>
+                                  {gender && (
+                                    <span
+                                      className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                        gender.toLowerCase() === "female"
+                                          ? "bg-pink-50 text-pink-700 border border-pink-200"
+                                          : "bg-blue-50 text-blue-700 border border-blue-200"
+                                      }`}
+                                    >
+                                      {gender}
+                                    </span>
+                                  )}
+                                </div>
+                                {(email || phone) && (
+                                  <div className="flex items-center gap-2.5 text-[11px] text-slate-500 mt-0.5">
+                                    {email && <span className="truncate">{email}</span>}
+                                    {email && phone && <span className="text-slate-300">•</span>}
+                                    {phone && <span className="font-mono">{phone}</span>}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            {year && (
+                              <span className="text-[10px] font-medium text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 self-start sm:self-center">
+                                {year}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {/* Payment Status / Information */}
@@ -1018,18 +1096,29 @@ export default function Receipt({
             <div className="flex flex-col sm:flex-row gap-3 mt-8 print:hidden">
               <button
                 onClick={handlePrint}
-                className="flex-1 py-3 px-4 rounded-xl font-bold bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer"
+                className="flex-1 py-3 px-4 rounded-xl font-bold bg-slate-800 hover:bg-slate-900 text-white flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer shadow-xs"
               >
-                <Printer className="w-5 h-5" />
-                Print / Save PDF
+                <Printer className="w-4 h-4" />
+                Print / Save Slip
               </button>
+              
+              <button
+                type="button"
+                onClick={() => setShowConsentLetter(true)}
+                className="flex-1 py-3 px-4 rounded-xl font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer shadow-xs"
+                title="Generate & Download official SIH Consent / Nomination Letter"
+              >
+                <FileText className="w-4 h-4 text-indigo-600" />
+                Nomination Letter
+              </button>
+
               {lockRegisterAnotherTeam ? (
                 <button
                   disabled
                   className="flex-1 py-3 px-4 rounded-xl font-bold bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center gap-2 cursor-not-allowed"
                 >
                   <Lock className="w-4 h-4 text-slate-400" />
-                  Register Another Team (Locked)
+                  Register Another (Locked)
                 </button>
               ) : (
                 <button
@@ -1143,6 +1232,65 @@ export default function Receipt({
               {/* Sidebar Checklist & File Uploader */}
               <div className="space-y-6">
                 
+                {/* SAMPLE PPT DEMO & TEMPLATE REFERENCE DOWNLOAD */}
+                {samplePptConfig.enabled && (
+                  <div className="bg-gradient-to-br from-indigo-50/90 via-slate-50 to-blue-50/60 border border-indigo-100/90 rounded-2xl p-4 md:p-5 space-y-3.5 shadow-xs">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs shrink-0">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h4 className="text-xs font-bold text-slate-800 font-display">
+                            Sample Pitch PPT & Demo Template
+                          </h4>
+                          <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100/80 px-2 py-0.5 rounded-full border border-indigo-200">
+                            Official Resource
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                          {samplePptConfig.description || "Download the official PowerPoint presentation template to structure your project pitch slides according to SIH guidelines."}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-2 pt-1 border-t border-indigo-100/70">
+                      {samplePptConfig.fileBase64 ? (
+                        <a
+                          href={samplePptConfig.fileBase64}
+                          download={samplePptConfig.fileName || "SVEC_SIH_Sample_Proposal_Template.pptx"}
+                          className="flex-1 py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 text-center"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Download Sample PPT
+                        </a>
+                      ) : (
+                        <a
+                          href="/api/settings/sample-ppt/download"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 py-2 px-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 text-center"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          Download Sample PPT
+                        </a>
+                      )}
+
+                      {samplePptConfig.url && (
+                        <a
+                          href={samplePptConfig.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="py-2 px-3.5 bg-white hover:bg-slate-50 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 shrink-0"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-indigo-600" />
+                          Demo Link
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* PPT File upload */}
                 <div className="space-y-2">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -2041,100 +2189,29 @@ export default function Receipt({
                   </div>
                 )}
 
-                {/* Member 1 Card */}
-                {registration.member1 && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
-                    <div className="space-y-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 1</span>
-                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member1}</h4>
-                      <p className="text-[10px] text-slate-500 truncate">{registration.member1Email || "No Email listed"}</p>
+                {/* Team Members Certificates */}
+                {Array.from({ length: teamMembersCount }, (_, idx) => idx + 1).map((num) => {
+                  const name = (registration as any)[`member${num}`];
+                  const email = (registration as any)[`member${num}Email`];
+                  if (!name) return null;
+                  return (
+                    <div key={num} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
+                      <div className="space-y-1">
+                        <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member {num}</span>
+                        <h4 className="text-sm font-bold truncate text-slate-800">{name}</h4>
+                        <p className="text-[10px] text-slate-500 truncate">{email || "No Email listed"}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedCertStudentName(name)}
+                        className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Get Certificate
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCertStudentName(registration.member1)}
-                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Get Certificate
-                    </button>
-                  </div>
-                )}
-
-                {/* Member 2 Card */}
-                {registration.member2 && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
-                    <div className="space-y-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 2</span>
-                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member2}</h4>
-                      <p className="text-[10px] text-slate-500 truncate">{registration.member2Email || "No Email listed"}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCertStudentName(registration.member2)}
-                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Get Certificate
-                    </button>
-                  </div>
-                )}
-
-                {/* Member 3 Card */}
-                {registration.member3 && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
-                    <div className="space-y-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 3</span>
-                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member3}</h4>
-                      <p className="text-[10px] text-slate-500 truncate">{registration.member3Email || "No Email listed"}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCertStudentName(registration.member3)}
-                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Get Certificate
-                    </button>
-                  </div>
-                )}
-
-                {/* Member 4 Card */}
-                {registration.member4 && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
-                    <div className="space-y-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 4</span>
-                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member4}</h4>
-                      <p className="text-[10px] text-slate-500 truncate">{registration.member4Email || "No Email listed"}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCertStudentName(registration.member4)}
-                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Get Certificate
-                    </button>
-                  </div>
-                )}
-
-                {/* Member 5 Card */}
-                {registration.member5 && (
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex flex-col justify-between hover:bg-slate-100 transition-all">
-                    <div className="space-y-1">
-                      <span className="text-[9px] uppercase tracking-wider text-slate-400 font-extrabold font-mono">Team Member 5</span>
-                      <h4 className="text-sm font-bold truncate text-slate-800">{registration.member5}</h4>
-                      <p className="text-[10px] text-slate-500 truncate">{registration.member5Email || "No Email listed"}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCertStudentName(registration.member5)}
-                      className="mt-4 w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-1.5 cursor-pointer border border-transparent"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Get Certificate
-                    </button>
-                  </div>
-                )}
+                  );
+                })}
               </div>
             </div>
           </motion.div>
@@ -2166,6 +2243,15 @@ export default function Receipt({
           registration={registration}
           config={certificateConfig}
           problemStatement={problemStatements.find(p => p.id === registration.problemStatementId)}
+        />
+      )}
+
+      {showConsentLetter && (
+        <ConsentLetterModal
+          isOpen={true}
+          onClose={() => setShowConsentLetter(false)}
+          registration={registration}
+          isReadOnly={false}
         />
       )}
 

@@ -15,7 +15,10 @@ import {
   ExternalLink,
   ShieldCheck,
   UserPlus,
-  Mail
+  Mail,
+  RotateCcw,
+  Clock,
+  Sparkles
 } from "lucide-react";
 import { ProblemStatement, Registration } from "../types";
 import SvecLogo from "./SvecLogo";
@@ -31,8 +34,9 @@ export default function RegistrationForm({
   onSuccess,
   problemStatements
 }: RegistrationFormProps) {
-  const [step, setStep] = useState(1);
-  const [formData, setFormData] = useState({
+  const STORAGE_KEY = `svec_sih_reg_draft_${student.email || student.id || "default"}`;
+
+  const defaultFormData = {
     teamName: "",
     leadName: "",
     leadDepartment: student.department || "",
@@ -67,7 +71,48 @@ export default function RegistrationForm({
     hasFemaleMember: null as boolean | null,
     mentorName: "",
     problemStatementId: ""
+  };
+
+  // Initialize step from sessionStorage if available
+  const [step, setStep] = useState<number>(() => {
+    try {
+      const saved = sessionStorage.getItem(`svec_sih_reg_draft_${student.email || student.id || "default"}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.step === "number" && parsed.step >= 1 && parsed.step <= 3) {
+          return parsed.step;
+        }
+      }
+    } catch (e) {
+      console.warn("Could not read initial step from sessionStorage", e);
+    }
+    return 1;
   });
+
+  // Initialize formData from sessionStorage if available
+  const [formData, setFormData] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(`svec_sih_reg_draft_${student.email || student.id || "default"}`);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object" && parsed.formData) {
+          return {
+            ...defaultFormData,
+            ...parsed.formData,
+            leadDepartment: parsed.formData.leadDepartment || student.department || "",
+            leadMobile: parsed.formData.leadMobile || student.mobile || "",
+            leadGender: parsed.formData.leadGender || student.gender || ""
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("Could not read initial formData from sessionStorage", e);
+    }
+    return defaultFormData;
+  });
+
+  const [hasRestoredDraft, setHasRestoredDraft] = useState(false);
+  const [lastSavedTime, setLastSavedTime] = useState<string | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -79,6 +124,62 @@ export default function RegistrationForm({
   const [teamMembersCount, setTeamMembersCount] = useState<number>(5);
   const [genderDiversityRequired, setGenderDiversityRequired] = useState<boolean>(true);
   const [paymentStatusMessage, setPaymentStatusMessage] = useState("");
+
+  // Check if draft was previously saved on mount
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.formData) {
+          const hasCustomData = Object.entries(parsed.formData).some(([k, v]) => {
+            if (!v && v !== false) return false;
+            if (k === "leadDepartment" && v === student.department) return false;
+            if (k === "leadMobile" && v === student.mobile) return false;
+            if (k === "leadGender" && v === student.gender) return false;
+            return true;
+          });
+          if (hasCustomData) {
+            setHasRestoredDraft(true);
+            if (parsed.updatedAt) {
+              const dt = new Date(parsed.updatedAt);
+              setLastSavedTime(dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+            }
+          }
+        }
+      }
+    } catch (e) {}
+  }, [STORAGE_KEY, student]);
+
+  // Auto-save form progress to sessionStorage on every change
+  useEffect(() => {
+    try {
+      const payload = {
+        formData,
+        step,
+        updatedAt: new Date().toISOString()
+      };
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      const now = new Date();
+      setLastSavedTime(now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    } catch (e) {
+      console.error("Failed to auto-save draft to sessionStorage", e);
+    }
+  }, [formData, step, STORAGE_KEY]);
+
+  const handleResetDraft = () => {
+    if (window.confirm("Are you sure you want to clear your saved draft and reset the form? All unsaved inputs will be cleared.")) {
+      try {
+        sessionStorage.removeItem(STORAGE_KEY);
+      } catch (e) {}
+      setFormData(defaultFormData);
+      setStep(1);
+      setHasRestoredDraft(false);
+      setLastSavedTime(null);
+      setErrors({});
+      setTeamNameStatus("idle");
+    }
+  };
 
   // Fetch public settings on mount
   useEffect(() => {
@@ -469,6 +570,11 @@ export default function RegistrationForm({
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        try {
+          sessionStorage.removeItem(STORAGE_KEY);
+        } catch (e) {
+          console.warn("Failed to clear sessionStorage draft", e);
+        }
         onSuccess(data.registration);
       } else {
         setErrors({ submit: data.error || "Submission failed. Please try again." });
@@ -657,6 +763,38 @@ export default function RegistrationForm({
           </div>
         </div>
       )}
+
+      {/* Auto-save session status bar & draft restore notice */}
+      <div className="mb-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-50 border border-slate-200/80 rounded-xl px-4 py-2.5 text-xs text-slate-600">
+        <div className="flex items-center gap-2">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="font-semibold text-slate-700">Auto-Save Active:</span>
+          <span className="text-slate-500">
+            Progress cached in session {lastSavedTime ? `(Last saved: ${lastSavedTime})` : ""}
+          </span>
+        </div>
+
+        <div className="flex items-center justify-between sm:justify-end gap-3">
+          {hasRestoredDraft && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md">
+              <Sparkles className="w-3 h-3 text-indigo-500" />
+              Draft Restored
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleResetDraft}
+            className="inline-flex items-center gap-1.5 text-slate-500 hover:text-red-600 font-medium transition-colors ml-auto sm:ml-0"
+            title="Clear all fields and reset saved draft"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reset Form
+          </button>
+        </div>
+      </div>
 
       {/* Form Card */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">

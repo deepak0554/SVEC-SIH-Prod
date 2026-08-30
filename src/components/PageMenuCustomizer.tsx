@@ -4,7 +4,7 @@ import {
   Plus, Trash2, Edit2, CheckCircle, AlertCircle, Save, Layers, List, Link as LinkIcon, 
   UserPlus, Image as ImageIcon, Sparkles, FileText, LayoutGrid, Eye, ArrowUp, ArrowDown,
   ShieldAlert, Shield, Bold, Italic, Heading1, Heading2, HelpCircle, Code, ExternalLink, FileJson,
-  X, FolderPlus, Folder
+  X, FolderPlus, Folder, CalendarCheck, Clock, EyeOff, Check, ToggleLeft, ToggleRight, Rocket, Zap, Trophy
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import HtmlRichEditor from "./HtmlRichEditor";
@@ -15,7 +15,7 @@ interface PageMenuCustomizerProps {
 
 export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps) {
   // Global tab within customizer
-  const [activeSubTab, setActiveSubTab] = useState<"details" | "guidelines" | "sponsors" | "spocs" | "photos" | "pages" | "menu" | "credits">("details");
+  const [activeSubTab, setActiveSubTab] = useState<"details" | "timeline" | "guidelines" | "sponsors" | "spocs" | "photos" | "pages" | "menu" | "credits">("details");
 
   // State variables
   const [homepage, setHomepage] = useState<HomepageContent | null>(null);
@@ -251,6 +251,46 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
       }
     } catch (err) {
       setError("Network error. Could not save homepage details.");
+    }
+  };
+
+  // Toggle Timeline Panel Visibility for SPOC Admin
+  const handleToggleTimeline = async (explicitState?: boolean) => {
+    if (!homepage) return;
+    const currentVal = homepage.showTimeline !== false;
+    const nextVal = explicitState !== undefined ? explicitState : !currentVal;
+
+    setError("");
+    setSuccess("");
+
+    const updatedHomepage: HomepageContent = {
+      ...homepage,
+      showTimeline: nextVal
+    };
+
+    try {
+      const res = await fetch("/api/homepage", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify(updatedHomepage)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setHomepage(data.content);
+        setSuccess(
+          nextVal 
+            ? "Registration & Hackathon Timeline panel is now VISIBLE on the Landing Page." 
+            : "Registration & Hackathon Timeline panel is now HIDDEN from the Landing Page."
+        );
+      } else {
+        setError(data.error || "Failed to update timeline visibility.");
+      }
+    } catch (err) {
+      setError("Network error. Could not toggle timeline panel visibility.");
     }
   };
 
@@ -1202,6 +1242,20 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
           SIH Banner Details
         </button>
         <button
+          onClick={() => { setActiveSubTab("timeline"); setError(""); setSuccess(""); }}
+          className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+            activeSubTab === "timeline" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:text-slate-800"
+          }`}
+        >
+          <CalendarCheck className="w-4 h-4" />
+          Event Timeline
+          {homepage?.showTimeline === false ? (
+            <span className="ml-1 px-1.5 py-0.2 text-[9px] font-bold rounded bg-rose-100 text-rose-700">Hidden</span>
+          ) : (
+            <span className="ml-1 px-1.5 py-0.2 text-[9px] font-bold rounded bg-emerald-100 text-emerald-700">Active</span>
+          )}
+        </button>
+        <button
           onClick={() => { setActiveSubTab("guidelines"); setError(""); setSuccess(""); }}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
             activeSubTab === "guidelines" ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:text-slate-800"
@@ -1544,9 +1598,57 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
                 placeholder="Write a clear introductory paragraph detailing SVEC selection norms..."
               />
             </div>
+
+            {/* Quick Visibility Switch for Timeline Section */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <CalendarCheck className="w-4 h-4 text-indigo-600" />
+                  <h3 className="text-xs font-bold text-slate-800">Registration & Event Timeline Panel</h3>
+                  {homepage.showTimeline !== false ? (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                      Visible on Landing Page
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-700 border border-rose-200">
+                      Hidden from Students
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 max-w-xl">
+                  Show or hide the interactive multi-phase Registration & Event Timeline roadmap on the landing page.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleToggleTimeline()}
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shrink-0 ${
+                  homepage.showTimeline !== false
+                    ? "bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100"
+                    : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs"
+                }`}
+              >
+                {homepage.showTimeline !== false ? (
+                  <>
+                    <EyeOff className="w-4 h-4" />
+                    <span>Hide Timeline Panel</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-4 h-4" />
+                    <span>Show Timeline Panel</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
-          <div className="pt-3 border-t border-slate-100 flex justify-end">
+          <div className="pt-3 border-t border-slate-100 flex justify-between items-center">
+            <span className="text-[11px] text-slate-400">
+              Timeline status: <strong className={homepage.showTimeline !== false ? "text-emerald-600" : "text-rose-600"}>
+                {homepage.showTimeline !== false ? "Enabled" : "Disabled (Hidden)"}
+              </strong>
+            </span>
             <button
               type="submit"
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-xs"
@@ -1558,7 +1660,182 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         </form>
       )}
 
-      {/* 2. COLLEGE PATRONS TAB */}
+      {/* 2. REGISTRATION & EVENT TIMELINE TAB */}
+      {activeSubTab === "timeline" && homepage && (
+        <div className="space-y-6">
+          {/* Master Visibility Control Card */}
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 space-y-5 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                    <CalendarCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-800">
+                      Registration & Event Timeline Display Settings
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Manage whether the official 6-phase roadmap is visible to applicants on the landing page.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Master Toggle Button */}
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleToggleTimeline()}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-all shadow-xs ${
+                    homepage.showTimeline !== false
+                      ? "bg-rose-600 hover:bg-rose-700 text-white"
+                      : "bg-emerald-600 hover:bg-emerald-700 text-white"
+                  }`}
+                >
+                  {homepage.showTimeline !== false ? (
+                    <>
+                      <EyeOff className="w-4 h-4" />
+                      <span>Hide Timeline from Students</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-4 h-4" />
+                      <span>Enable Timeline on Landing Page</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Current Status Overview Banner */}
+            <div className={`p-4 rounded-2xl border flex items-start gap-3.5 transition-all ${
+              homepage.showTimeline !== false
+                ? "bg-emerald-50/70 border-emerald-200 text-emerald-950"
+                : "bg-slate-100/80 border-slate-200 text-slate-800"
+            }`}>
+              <div className={`p-2 rounded-xl shrink-0 ${
+                homepage.showTimeline !== false ? "bg-emerald-500 text-white" : "bg-slate-400 text-white"
+              }`}>
+                {homepage.showTimeline !== false ? <Check className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+              </div>
+              <div className="space-y-1 text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-bold text-sm">
+                    {homepage.showTimeline !== false
+                      ? "Timeline Panel is currently ACTIVE & VISIBLE"
+                      : "Timeline Panel is currently HIDDEN from Landing Page"}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide ${
+                    homepage.showTimeline !== false
+                      ? "bg-emerald-200/80 text-emerald-900"
+                      : "bg-slate-200 text-slate-700"
+                  }`}>
+                    {homepage.showTimeline !== false ? "Live in Production" : "Disabled by SPOC"}
+                  </span>
+                </div>
+                <p className="leading-relaxed opacity-90">
+                  {homepage.showTimeline !== false
+                    ? "Students visiting the homepage will see the key deadline cards (Registration Opening, Registration Deadline, Hackathon Day), the full interactive 6-stage roadmap, and the 'Event Timeline' shortcut in the header hero."
+                    : "The timeline section and the 'Event Timeline' shortcut button are entirely hidden from the landing page. Students will only see the hero banner, guidelines, sponsors, SPOC contacts, and photo galleries."}
+                </p>
+              </div>
+            </div>
+
+            {/* Timeline Stages Preview Grid */}
+            <div className="space-y-3 pt-2">
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                Configured Event Phases & Milestones
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {[
+                  {
+                    phase: "Phase 01",
+                    title: "Registration Opening",
+                    date: "August 1, 2026",
+                    time: "Portal Active",
+                    badge: "Completed",
+                    badgeColor: "bg-emerald-100 text-emerald-800",
+                    isKey: true
+                  },
+                  {
+                    phase: "Phase 02",
+                    title: "Problem Selection & PPT Upload",
+                    date: "August 15, 2026",
+                    time: "Submission Window",
+                    badge: "In Progress",
+                    badgeColor: "bg-indigo-100 text-indigo-800",
+                    isKey: false
+                  },
+                  {
+                    phase: "Phase 03",
+                    title: "Registration Deadline",
+                    date: "August 25, 2026",
+                    time: "11:59 PM IST",
+                    badge: "Final Deadline",
+                    badgeColor: "bg-rose-100 text-rose-800",
+                    isKey: true
+                  },
+                  {
+                    phase: "Phase 04",
+                    title: "Faculty & Jury Scrutiny",
+                    date: "Sept 2 - 5, 2026",
+                    time: "Evaluation",
+                    badge: "Upcoming",
+                    badgeColor: "bg-slate-100 text-slate-700",
+                    isKey: false
+                  },
+                  {
+                    phase: "Phase 05",
+                    title: "Grand Hackathon Day",
+                    date: "Sept 15, 2026",
+                    time: "08:30 AM - 08:30 PM",
+                    badge: "Flagship Event",
+                    badgeColor: "bg-amber-100 text-amber-900",
+                    isKey: true
+                  },
+                  {
+                    phase: "Phase 06",
+                    title: "SIH National Nomination",
+                    date: "Sept 25, 2026",
+                    time: "Official Submission",
+                    badge: "National Final",
+                    badgeColor: "bg-purple-100 text-purple-800",
+                    isKey: false
+                  }
+                ].map((item, idx) => (
+                  <div 
+                    key={idx} 
+                    className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-indigo-200 transition-all space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                        {item.phase}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${item.badgeColor}`}>
+                        {item.badge}
+                      </span>
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-800">{item.title}</h4>
+                      <p className="text-[11px] text-indigo-600 font-semibold">{item.date} • {item.time}</p>
+                    </div>
+                    {item.isKey && (
+                      <span className="inline-block text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        ⭐ Highlight Key Date
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. COLLEGE PATRONS TAB */}
       {activeSubTab === "sponsors" && homepage && (
         <div className="space-y-6">
           {/* Add/Edit Patron form */}

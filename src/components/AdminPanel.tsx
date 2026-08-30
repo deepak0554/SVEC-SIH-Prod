@@ -43,7 +43,15 @@ import {
   Award,
   Upload,
   Loader2,
-  Bell
+  Bell,
+  Link2,
+  ExternalLink,
+  FileUp,
+  FileCheck,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
+  BadgeCheck
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -693,7 +701,14 @@ export default function AdminPanel({
     certificateDateText: "July 17, 2026",
     creditsTitle: "Department of CSE",
     creditsContent: "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-    creditsEnabled: true
+    creditsEnabled: true,
+
+    // Project Proposal Sample PPT & Demo
+    samplePptEnabled: true,
+    samplePptUrl: "",
+    samplePptFileName: "",
+    samplePptFileBase64: "",
+    samplePptDescription: ""
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -788,7 +803,14 @@ export default function AdminPanel({
           certificateDateText: data.certificateDateText || "July 17, 2026",
           creditsTitle: data.creditsTitle || "Department of CSE",
           creditsContent: data.creditsContent || "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-          creditsEnabled: data.creditsEnabled !== undefined ? data.creditsEnabled : true
+          creditsEnabled: data.creditsEnabled !== undefined ? data.creditsEnabled : true,
+
+          // Project Proposal Sample PPT
+          samplePptEnabled: data.samplePptEnabled !== undefined ? data.samplePptEnabled : true,
+          samplePptUrl: data.samplePptUrl || "",
+          samplePptFileName: data.samplePptFileName || "",
+          samplePptFileBase64: data.samplePptFileBase64 || "",
+          samplePptDescription: data.samplePptDescription || ""
         });
       } else {
         setSettingsError("Failed to fetch current settings.");
@@ -933,6 +955,7 @@ export default function AdminPanel({
   const [regSearchTerm, setRegSearchTerm] = useState("");
   const [regFilterDept, setRegFilterDept] = useState("All");
   const [regFilterPS, setRegFilterPS] = useState("All");
+  const [regFilterStatus, setRegFilterStatus] = useState<string>("All");
 
   // Payment details popup state
   const [selectedRegPayment, setSelectedRegPayment] = useState<Registration | null>(null);
@@ -1251,6 +1274,55 @@ export default function AdminPanel({
       }
     } catch (err) {
       console.error("Failed to finalize selection", err);
+    }
+  };
+
+  const handleUpdateApprovalStatus = async (
+    registrationId: string,
+    approvalStatus: "pending" | "verified" | "under_review" | "rejected",
+    approvalNotes?: string
+  ) => {
+    const adminUser = sessionStorage.getItem("svec_sih_admin_username") || adminRole || "Admin";
+
+    // Optimistic UI state update
+    setRegistrations(prev => prev.map(r => {
+      if (r.id === registrationId) {
+        return {
+          ...r,
+          approvalStatus,
+          approvalNotes: approvalNotes !== undefined ? approvalNotes : r.approvalNotes,
+          verifiedAt: approvalStatus === "verified" ? new Date().toISOString() : (approvalStatus === "pending" ? undefined : r.verifiedAt),
+          verifiedBy: approvalStatus === "verified" ? adminUser : (approvalStatus === "pending" ? undefined : r.verifiedBy)
+        };
+      }
+      return r;
+    }));
+
+    if (selectedRegProposal && selectedRegProposal.id === registrationId) {
+      setSelectedRegProposal(prev => prev ? {
+        ...prev,
+        approvalStatus,
+        approvalNotes: approvalNotes !== undefined ? approvalNotes : prev.approvalNotes,
+        verifiedAt: approvalStatus === "verified" ? new Date().toISOString() : (approvalStatus === "pending" ? undefined : prev.verifiedAt),
+        verifiedBy: approvalStatus === "verified" ? adminUser : (approvalStatus === "pending" ? undefined : prev.verifiedBy)
+      } : null);
+    }
+
+    try {
+      const res = await fetch(`/api/admin/registrations/${registrationId}/approval-status`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({ approvalStatus, approvalNotes })
+      });
+      if (res.ok) {
+        fetchRegistrations();
+      }
+    } catch (err) {
+      console.error("Failed to update approval status", err);
+      fetchRegistrations();
     }
   };
 
@@ -1619,6 +1691,9 @@ export default function AdminPanel({
 
     const headers = [
       "Registration ID",
+      "Approval Status",
+      "Verified By",
+      "Verified Date",
       "Team Name",
       "Lead Name",
       "Lead Academic Year",
@@ -1638,6 +1713,7 @@ export default function AdminPanel({
       "Faculty Mentor",
       "Problem Statement Code",
       "Problem Statement Title",
+      "Payment Status",
       "Registration Time"
     ];
 
@@ -1645,6 +1721,9 @@ export default function AdminPanel({
       const ps = problemStatements.find(p => p.id === reg.problemStatementId);
       return [
         reg.registrationId,
+        `"${(reg.approvalStatus || "pending").toUpperCase()}"`,
+        `"${(reg.verifiedBy || "N/A").replace(/"/g, '""')}"`,
+        `"${(reg.verifiedAt ? new Date(reg.verifiedAt).toLocaleString() : "N/A").replace(/"/g, '""')}"`,
         `"${reg.teamName.replace(/"/g, '""')}"`,
         `"${reg.leadName.replace(/"/g, '""')}"`,
         `"${(reg.leadAcademicYear || "").replace(/"/g, '""')}"`,
@@ -1664,6 +1743,7 @@ export default function AdminPanel({
         `"${reg.mentorName.replace(/"/g, '""')}"`,
         ps ? ps.code : "N/A",
         ps ? `"${ps.title.replace(/"/g, '""')}"` : "N/A",
+        `"${(reg.paymentStatus || "free").toUpperCase()}"`,
         reg.submittedAt
       ];
     });
@@ -1683,12 +1763,20 @@ export default function AdminPanel({
   // Filtering registrations
   const filteredRegs = registrations.filter(reg => {
     const ps = problemStatements.find(p => p.id === reg.problemStatementId);
-    const searchStr = `${reg.teamName} ${reg.leadName} ${reg.mentorName} ${reg.registrationId} ${ps?.code || ""} ${ps?.title || ""}`.toLowerCase();
+    const approval = reg.approvalStatus || "pending";
+    const searchStr = `${reg.teamName} ${reg.leadName} ${reg.mentorName} ${reg.registrationId} ${approval} ${ps?.code || ""} ${ps?.title || ""}`.toLowerCase();
     const matchesSearch = searchStr.includes(regSearchTerm.toLowerCase());
     const matchesDept = regFilterDept === "All" || reg.leadDepartment.trim().toLowerCase() === regFilterDept.trim().toLowerCase();
     const matchesPS = regFilterPS === "All" || reg.problemStatementId === regFilterPS;
-    return matchesSearch && matchesDept && matchesPS;
+    const matchesStatus = regFilterStatus === "All" || approval === regFilterStatus;
+    return matchesSearch && matchesDept && matchesPS && matchesStatus;
   });
+
+  // Approval status counter helpers
+  const pendingApprovalCount = registrations.filter(r => (r.approvalStatus || "pending") === "pending").length;
+  const verifiedApprovalCount = registrations.filter(r => r.approvalStatus === "verified").length;
+  const underReviewApprovalCount = registrations.filter(r => r.approvalStatus === "under_review").length;
+  const rejectedApprovalCount = registrations.filter(r => r.approvalStatus === "rejected").length;
 
   // Sorting logic
   const sortedRegs = [...filteredRegs].sort((a, b) => {
@@ -2174,6 +2262,104 @@ export default function AdminPanel({
       {/* REGISTRATIONS TAB */}
       {activeTab === "registrations" && (
         <div className="space-y-6">
+          {/* Status Filter Metric Pills */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <button
+              type="button"
+              onClick={() => setRegFilterStatus("All")}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                regFilterStatus === "All"
+                  ? "bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/20"
+                  : "bg-white text-slate-700 border-slate-200 hover:border-slate-300 hover:bg-slate-50/70"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">All Teams</span>
+                <Users className={`w-3.5 h-3.5 ${regFilterStatus === "All" ? "text-indigo-300" : "text-slate-400"}`} />
+              </div>
+              <div className="mt-2 flex items-baseline gap-1.5">
+                <span className="text-xl font-black font-display">{registrations.length}</span>
+                <span className="text-[10px] opacity-70">registered</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRegFilterStatus(regFilterStatus === "pending" ? "All" : "pending")}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                regFilterStatus === "pending"
+                  ? "bg-amber-500 text-white border-amber-500 shadow-md ring-2 ring-amber-500/20"
+                  : "bg-amber-50/50 text-amber-900 border-amber-200/80 hover:bg-amber-50"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Pending</span>
+                <Clock className={`w-3.5 h-3.5 ${regFilterStatus === "pending" ? "text-white" : "text-amber-500"}`} />
+              </div>
+              <div className="mt-2 flex items-baseline gap-1.5">
+                <span className="text-xl font-black font-display">{pendingApprovalCount}</span>
+                <span className="text-[10px] opacity-75">awaiting</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRegFilterStatus(regFilterStatus === "verified" ? "All" : "verified")}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                regFilterStatus === "verified"
+                  ? "bg-emerald-600 text-white border-emerald-600 shadow-md ring-2 ring-emerald-600/20"
+                  : "bg-emerald-50/50 text-emerald-900 border-emerald-200/80 hover:bg-emerald-50"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Verified</span>
+                <ShieldCheck className={`w-3.5 h-3.5 ${regFilterStatus === "verified" ? "text-white" : "text-emerald-600"}`} />
+              </div>
+              <div className="mt-2 flex items-baseline gap-1.5">
+                <span className="text-xl font-black font-display">{verifiedApprovalCount}</span>
+                <span className="text-[10px] opacity-75">approved</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRegFilterStatus(regFilterStatus === "under_review" ? "All" : "under_review")}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                regFilterStatus === "under_review"
+                  ? "bg-blue-600 text-white border-blue-600 shadow-md ring-2 ring-blue-600/20"
+                  : "bg-blue-50/50 text-blue-900 border-blue-200/80 hover:bg-blue-50"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Under Review</span>
+                <Search className={`w-3.5 h-3.5 ${regFilterStatus === "under_review" ? "text-white" : "text-blue-500"}`} />
+              </div>
+              <div className="mt-2 flex items-baseline gap-1.5">
+                <span className="text-xl font-black font-display">{underReviewApprovalCount}</span>
+                <span className="text-[10px] opacity-75">in review</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setRegFilterStatus(regFilterStatus === "rejected" ? "All" : "rejected")}
+              className={`p-3 rounded-2xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
+                regFilterStatus === "rejected"
+                  ? "bg-rose-600 text-white border-rose-600 shadow-md ring-2 ring-rose-600/20"
+                  : "bg-rose-50/50 text-rose-900 border-rose-200/80 hover:bg-rose-50"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider opacity-80">Rejected</span>
+                <XCircle className={`w-3.5 h-3.5 ${regFilterStatus === "rejected" ? "text-white" : "text-rose-500"}`} />
+              </div>
+              <div className="mt-2 flex items-baseline gap-1.5">
+                <span className="text-xl font-black font-display">{rejectedApprovalCount}</span>
+                <span className="text-[10px] opacity-75">flagged</span>
+              </div>
+            </button>
+          </div>
+
           {/* Controls Panel */}
           <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs flex flex-wrap gap-3 items-center justify-between">
             <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[280px]">
@@ -2188,6 +2374,22 @@ export default function AdminPanel({
                   className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 bg-slate-50 outline-none focus:bg-white focus:border-indigo-500 pl-8 transition-all"
                 />
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              </div>
+
+              {/* Approval Status Filter */}
+              <div className="flex items-center gap-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  value={regFilterStatus}
+                  onChange={(e) => setRegFilterStatus(e.target.value)}
+                  className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs bg-white outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  <option value="All">All Statuses ({registrations.length})</option>
+                  <option value="pending">Pending ({pendingApprovalCount})</option>
+                  <option value="verified">Verified ({verifiedApprovalCount})</option>
+                  <option value="under_review">Under Review ({underReviewApprovalCount})</option>
+                  <option value="rejected">Rejected ({rejectedApprovalCount})</option>
+                </select>
               </div>
 
               {/* Department Filter */}
@@ -2251,6 +2453,11 @@ export default function AdminPanel({
                           Team Details <ArrowUpDown className="w-3 h-3" />
                         </div>
                       </th>
+                      <th className="py-4 px-6 cursor-pointer hover:bg-slate-100" onClick={() => handleSort("approvalStatus")}>
+                        <div className="flex items-center gap-1">
+                          Approval Status <ArrowUpDown className="w-3 h-3" />
+                        </div>
+                      </th>
                       <th className="py-4 px-6 cursor-pointer hover:bg-slate-100" onClick={() => handleSort("leadName")}>
                         <div className="flex items-center gap-1">
                           Team Lead <ArrowUpDown className="w-3 h-3" />
@@ -2268,6 +2475,7 @@ export default function AdminPanel({
                   <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
                     {sortedRegs.map((reg) => {
                       const ps = problemStatements.find(p => p.id === reg.problemStatementId);
+                      const currentStatus = reg.approvalStatus || "pending";
                       return (
                         <tr key={reg.id} className="hover:bg-indigo-50/10 transition-colors">
                           <td className="py-4 px-6 font-mono font-bold whitespace-nowrap">
@@ -2280,12 +2488,83 @@ export default function AdminPanel({
                             </button>
                           </td>
                           <td className="py-4 px-6 font-medium">
-                            <span className="font-bold text-slate-900 font-display text-sm block">
-                              {reg.teamName}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-slate-900 font-display text-sm block">
+                                {reg.teamName}
+                              </span>
+                              {currentStatus === "verified" ? (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <Check className="w-2.5 h-2.5" /> Verified
+                                </span>
+                              ) : currentStatus === "under_review" ? (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                                  Review
+                                </span>
+                              ) : currentStatus === "rejected" ? (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                                  Rejected
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                                  Pending
+                                </span>
+                              )}
+                            </div>
                             <span className="text-[10px] text-slate-400 block mt-0.5 font-mono">
                               Sub: {new Date(reg.submittedAt).toLocaleDateString()}
                             </span>
+                          </td>
+                          <td className="py-4 px-6 whitespace-nowrap">
+                            <div className="flex flex-col gap-1">
+                              <div className="relative inline-block">
+                                <select
+                                  value={currentStatus}
+                                  onChange={(e) => handleUpdateApprovalStatus(reg.id, e.target.value as any)}
+                                  className={`appearance-none pl-7 pr-7 py-1.5 rounded-full text-xs font-bold border transition-all cursor-pointer shadow-2xs outline-none focus:ring-2 ${
+                                    currentStatus === "verified"
+                                      ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100/80 focus:ring-emerald-400"
+                                      : currentStatus === "under_review"
+                                      ? "bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100/80 focus:ring-blue-400"
+                                      : currentStatus === "rejected"
+                                      ? "bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100/80 focus:ring-rose-400"
+                                      : "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100/80 focus:ring-amber-400"
+                                  }`}
+                                  title="Click to update verification and approval status"
+                                >
+                                  <option value="pending">⏳ Pending</option>
+                                  <option value="under_review">🔍 Under Review</option>
+                                  <option value="verified">✅ Verified</option>
+                                  <option value="rejected">❌ Rejected</option>
+                                </select>
+                                <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+                                  {currentStatus === "verified" ? (
+                                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : currentStatus === "under_review" ? (
+                                    <Search className="w-3.5 h-3.5 text-blue-600" />
+                                  ) : currentStatus === "rejected" ? (
+                                    <XCircle className="w-3.5 h-3.5 text-rose-600" />
+                                  ) : (
+                                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                  )}
+                                </div>
+                                <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+                                  <ChevronDown className="w-3.5 h-3.5 opacity-50" />
+                                </div>
+                              </div>
+                              {reg.approvalStatus === "verified" && reg.verifiedBy && (
+                                <span className="text-[10px] text-emerald-600/90 font-medium pl-1 flex items-center gap-1">
+                                  <span>By {reg.verifiedBy}</span>
+                                  {reg.verifiedAt && (
+                                    <span className="text-slate-400">• {new Date(reg.verifiedAt).toLocaleDateString()}</span>
+                                  )}
+                                </span>
+                              )}
+                              {reg.approvalNotes && (
+                                <span className="text-[10px] text-slate-500 italic truncate max-w-[160px] pl-1" title={reg.approvalNotes}>
+                                  "{reg.approvalNotes}"
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-4 px-6">
                             <span className="font-semibold text-slate-800 block">{reg.leadName} ({reg.leadGender || "N/A"})</span>
@@ -4051,6 +4330,174 @@ export default function AdminPanel({
                       </button>
                     </div>
                   </div>
+                </div>
+
+                {/* PROJECT PROPOSAL SAMPLE PPT & DEMO LINK SETTINGS */}
+                <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-5 space-y-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-indigo-50 border border-indigo-100 rounded-xl text-indigo-600 shrink-0">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <span className="text-xs font-bold text-slate-800 block flex items-center gap-1.5">
+                          Project Proposal Sample PPT & Demo Download Link
+                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+                            Proposal Resource
+                          </span>
+                        </span>
+                        <span className="text-[11px] text-slate-500 block leading-relaxed">
+                          Upload a sample presentation template file (PPT / PPTX / PDF) or provide a cloud link (Google Drive, OneDrive, Canva) so registered teams can download and reference the official format for project submission.
+                        </span>
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer select-none shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={settingsForm.samplePptEnabled}
+                        onChange={(e) => setSettingsForm(prev => ({ ...prev, samplePptEnabled: e.target.checked }))}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+
+                  {settingsForm.samplePptEnabled && (
+                    <div className="space-y-4 pt-3 border-t border-slate-200/60 transition-all">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* File Upload Option */}
+                        <div className="space-y-2 p-4 bg-white border border-slate-200/80 rounded-2xl">
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                            <FileUp className="w-3.5 h-3.5 text-indigo-600" />
+                            1. Upload PPT / Presentation File
+                          </label>
+                          <p className="text-[10px] text-slate-400">
+                            Upload the official .ppt, .pptx, or .pdf template file directly to the portal server.
+                          </p>
+
+                          {settingsForm.samplePptFileName && settingsForm.samplePptFileBase64 ? (
+                            <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2.5">
+                              <div className="flex items-center gap-2.5">
+                                <div className="p-2 bg-indigo-600 text-white rounded-lg shrink-0">
+                                  <FileCheck className="w-4 h-4" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="text-xs font-bold text-slate-800 truncate" title={settingsForm.samplePptFileName}>
+                                    {settingsForm.samplePptFileName}
+                                  </p>
+                                  <span className="inline-block text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded mt-0.5">
+                                    File Attached & Ready
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2 pt-1">
+                                <a
+                                  href={settingsForm.samplePptFileBase64}
+                                  download={settingsForm.samplePptFileName}
+                                  className="flex-1 py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                                >
+                                  <Download className="w-3 h-3 text-indigo-600" />
+                                  Test Download
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => setSettingsForm(prev => ({ ...prev, samplePptFileName: "", samplePptFileBase64: "" }))}
+                                  className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-100 cursor-pointer"
+                                  title="Remove uploaded file"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <label className="border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/20 rounded-xl p-4 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 block">
+                              <Upload className="w-6 h-6 text-indigo-500" />
+                              <div>
+                                <span className="text-xs font-bold text-slate-700 block">Click to upload template file</span>
+                                <span className="text-[10px] text-slate-400 block mt-0.5">Supports .ppt, .pptx, .pdf (Max 15MB)</span>
+                              </div>
+                              <input
+                                type="file"
+                                accept=".ppt,.pptx,.pdf,.odp"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    if (file.size > 15 * 1024 * 1024) {
+                                      alert("File size exceeds 15MB limit. Please upload a smaller file or provide a cloud link.");
+                                      return;
+                                    }
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => {
+                                      setSettingsForm(prev => ({
+                                        ...prev,
+                                        samplePptFileName: file.name,
+                                        samplePptFileBase64: reader.result as string
+                                      }));
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                            </label>
+                          )}
+                        </div>
+
+                        {/* External Cloud Link Option */}
+                        <div className="space-y-2 p-4 bg-white border border-slate-200/80 rounded-2xl flex flex-col justify-between">
+                          <div className="space-y-2">
+                            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                              <Link2 className="w-3.5 h-3.5 text-indigo-600" />
+                              2. External Download / Demo URL (Optional or Alternative)
+                            </label>
+                            <p className="text-[10px] text-slate-400">
+                              Paste a Google Drive, Microsoft OneDrive, Dropbox, or Canva link.
+                            </p>
+                            <input
+                              type="url"
+                              value={settingsForm.samplePptUrl}
+                              onChange={(e) => setSettingsForm(prev => ({ ...prev, samplePptUrl: e.target.value }))}
+                              placeholder="https://drive.google.com/file/d/... or https://onedrive.live.com/..."
+                              className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 font-mono transition-all"
+                            />
+                          </div>
+
+                          {settingsForm.samplePptUrl && (
+                            <div className="pt-2 flex items-center justify-between gap-2 border-t border-slate-100">
+                              <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 truncate">
+                                <CheckCircle className="w-3 h-3" /> Link configured
+                              </span>
+                              <a
+                                href={settingsForm.samplePptUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 shrink-0"
+                              >
+                                Test Open <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Instructions / Guidance notes */}
+                      <div className="space-y-1.5 bg-white p-4 border border-slate-200/80 rounded-2xl">
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                          3. Presentation Guidelines / Instructions for Students
+                        </label>
+                        <textarea
+                          rows={2}
+                          value={settingsForm.samplePptDescription}
+                          onChange={(e) => setSettingsForm(prev => ({ ...prev, samplePptDescription: e.target.value }))}
+                          placeholder="e.g. Follow the standard 8-slide presentation deck: Problem statement, Proposed solution, Novelty, Architecture, Tech Stack, Milestones, Budget, Team."
+                          className="w-full px-3 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all resize-none"
+                        />
+                        <p className="text-[10px] text-slate-400">
+                          This guidance note will be displayed alongside the download button in the Student Proposal submission view.
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -7016,6 +7463,36 @@ export default function AdminPanel({
                   </div>
                 </div>
 
+                {/* Section: Approval Status */}
+                <div className="space-y-4 pt-2">
+                  <h4 className="text-xs font-bold text-indigo-600 uppercase tracking-wider border-b border-slate-100 pb-1 text-left">Registration Approval & Verification</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Approval Status</label>
+                      <select
+                        value={editForm.approvalStatus || "pending"}
+                        onChange={(e) => setEditForm(prev => ({ ...prev, approvalStatus: e.target.value as any }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs bg-white outline-none focus:border-indigo-500 cursor-pointer font-bold"
+                      >
+                        <option value="pending">⏳ Pending Verification</option>
+                        <option value="under_review">🔍 Under Review</option>
+                        <option value="verified">✅ Verified & Approved</option>
+                        <option value="rejected">❌ Rejected / Flagged</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Verification Notes / Remarks</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Identity verified, all student IDs matched"
+                        value={editForm.approvalNotes || ""}
+                        onChange={(e) => setEditForm(prev => ({ ...prev, approvalNotes: e.target.value }))}
+                        className="w-full px-3 py-2 border border-slate-200 rounded-xl text-xs outline-none focus:border-indigo-500 bg-slate-50/50"
+                      />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="flex gap-2 pt-4 border-t border-slate-100 justify-end shrink-0">
                   <button
                     type="button"
@@ -7061,6 +7538,23 @@ export default function AdminPanel({
                   <span className="font-mono text-xs bg-white/10 text-white border border-white/10 px-2.5 py-1 rounded-lg font-bold">
                     {selectedRegProposal.registrationId}
                   </span>
+                  {(selectedRegProposal.approvalStatus || "pending") === "verified" ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500 text-white shadow-xs">
+                      <ShieldCheck className="w-3.5 h-3.5" /> Verified
+                    </span>
+                  ) : (selectedRegProposal.approvalStatus || "pending") === "under_review" ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-500 text-white shadow-xs">
+                      <Search className="w-3.5 h-3.5" /> Under Review
+                    </span>
+                  ) : (selectedRegProposal.approvalStatus || "pending") === "rejected" ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-rose-500 text-white shadow-xs">
+                      <XCircle className="w-3.5 h-3.5" /> Rejected
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-amber-500 text-white shadow-xs">
+                      <Clock className="w-3.5 h-3.5" /> Pending
+                    </span>
+                  )}
                   <button
                     onClick={() => setSelectedRegProposal(null)}
                     className="text-white/70 hover:text-white hover:bg-white/15 p-1.5 rounded-lg transition-colors cursor-pointer"
@@ -7072,6 +7566,71 @@ export default function AdminPanel({
 
               {/* Modal Body */}
               <div className="p-6 md:p-8 overflow-y-auto space-y-6 text-left">
+                {/* Admin Approval Quick Action Bar */}
+                <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 block">Admin Registration Status Action</span>
+                      <span className="text-xs text-slate-300 font-medium">Change the verification status of this team:</span>
+                    </div>
+                    {selectedRegProposal.verifiedBy && (
+                      <span className="text-[10px] text-slate-400 bg-white/10 px-2 py-0.5 rounded">
+                        Last verified by {selectedRegProposal.verifiedBy}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateApprovalStatus(selectedRegProposal.id, "verified")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                        (selectedRegProposal.approvalStatus || "pending") === "verified"
+                          ? "bg-emerald-500 text-white shadow-sm ring-2 ring-emerald-400/50"
+                          : "bg-emerald-950/80 text-emerald-300 hover:bg-emerald-900 border border-emerald-800/50"
+                      }`}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      Mark Verified & Approved
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateApprovalStatus(selectedRegProposal.id, "under_review")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                        (selectedRegProposal.approvalStatus || "pending") === "under_review"
+                          ? "bg-blue-500 text-white shadow-sm ring-2 ring-blue-400/50"
+                          : "bg-blue-950/80 text-blue-300 hover:bg-blue-900 border border-blue-800/50"
+                      }`}
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      Mark Under Review
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateApprovalStatus(selectedRegProposal.id, "rejected")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                        (selectedRegProposal.approvalStatus || "pending") === "rejected"
+                          ? "bg-rose-500 text-white shadow-sm ring-2 ring-rose-400/50"
+                          : "bg-rose-950/80 text-rose-300 hover:bg-rose-900 border border-rose-800/50"
+                      }`}
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      Flag / Reject
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleUpdateApprovalStatus(selectedRegProposal.id, "pending")}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 ${
+                        (selectedRegProposal.approvalStatus || "pending") === "pending"
+                          ? "bg-amber-500 text-white shadow-sm ring-2 ring-amber-400/50"
+                          : "bg-amber-950/80 text-amber-300 hover:bg-amber-900 border border-amber-800/50"
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      Reset to Pending
+                    </button>
+                  </div>
+                </div>
+
                 {/* Proposal Status Tag */}
                 <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-150 rounded-2xl text-xs">
                   <div>

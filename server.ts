@@ -81,7 +81,8 @@ const defaultHomepageContent: HomepageContent = {
   previousPhotos: [
     { id: "1", title: "SIH 2024 Winning Ceremony", imageUrl: "", description: "SVEC team receiving the 1st prize at nodal center." },
     { id: "2", title: "Internal Evaluation Hackathon", imageUrl: "", description: "Expert panel evaluating student prototypes during the 2025 internal round." }
-  ]
+  ],
+  showTimeline: true
 };
 
 const defaultCustomPages: CustomPage[] = [
@@ -422,7 +423,14 @@ function readSettings(): FeeConfig {
       certificateDateText: parsed.certificateDateText ?? "July 17, 2026",
       creditsTitle: parsed.creditsTitle ?? "Department of CSE",
       creditsContent: parsed.creditsContent ?? "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-      creditsEnabled: parsed.creditsEnabled ?? true
+      creditsEnabled: parsed.creditsEnabled ?? true,
+
+      // Sample PPT / Presentation Template & Demo Link
+      samplePptEnabled: parsed.samplePptEnabled !== undefined ? parsed.samplePptEnabled : true,
+      samplePptUrl: parsed.samplePptUrl ?? "",
+      samplePptFileName: parsed.samplePptFileName ?? "",
+      samplePptFileBase64: parsed.samplePptFileBase64 ?? "",
+      samplePptDescription: parsed.samplePptDescription ?? "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
     };
   } catch (err) {
     return {
@@ -497,7 +505,14 @@ function readSettings(): FeeConfig {
       certificateDateText: "July 17, 2026",
       creditsTitle: "Department of CSE",
       creditsContent: "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-      creditsEnabled: true
+      creditsEnabled: true,
+
+      // Sample PPT defaults
+      samplePptEnabled: true,
+      samplePptUrl: "",
+      samplePptFileName: "",
+      samplePptFileBase64: "",
+      samplePptDescription: "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
     };
   }
 }
@@ -1476,7 +1491,14 @@ app.get("/api/settings/public", (req, res) => {
     certificateDateText: settings.certificateDateText || "July 17, 2026",
     creditsTitle: settings.creditsTitle ?? "Department of CSE",
     creditsContent: settings.creditsContent ?? "",
-    creditsEnabled: settings.creditsEnabled !== undefined ? !!settings.creditsEnabled : true
+    creditsEnabled: settings.creditsEnabled !== undefined ? !!settings.creditsEnabled : true,
+
+    // Sample PPT / Presentation Demo
+    samplePptEnabled: settings.samplePptEnabled !== undefined ? !!settings.samplePptEnabled : true,
+    samplePptUrl: settings.samplePptUrl || "",
+    samplePptFileName: settings.samplePptFileName || "",
+    samplePptFileBase64: settings.samplePptFileBase64 || "",
+    samplePptDescription: settings.samplePptDescription || ""
   });
 });
 
@@ -1566,7 +1588,14 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     certificateDateText,
     creditsTitle,
     creditsContent,
-    creditsEnabled
+    creditsEnabled,
+
+    // Sample PPT
+    samplePptEnabled,
+    samplePptUrl,
+    samplePptFileName,
+    samplePptFileBase64,
+    samplePptDescription
   } = req.body;
   
   if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
@@ -1645,11 +1674,42 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     certificateDateText: (certificateDateText || "").trim(),
     creditsTitle: (creditsTitle || "Department of CSE").trim(),
     creditsContent: (creditsContent || "").trim(),
-    creditsEnabled: creditsEnabled !== undefined ? !!creditsEnabled : true
+    creditsEnabled: creditsEnabled !== undefined ? !!creditsEnabled : true,
+
+    // Sample PPT / Presentation Demo
+    samplePptEnabled: samplePptEnabled !== undefined ? !!samplePptEnabled : true,
+    samplePptUrl: (samplePptUrl || "").trim(),
+    samplePptFileName: (samplePptFileName || "").trim(),
+    samplePptFileBase64: (samplePptFileBase64 || "").trim(),
+    samplePptDescription: (samplePptDescription || "").trim()
   };
 
   writeSettings(updated);
   res.json({ success: true, settings: updated });
+});
+
+// Download/Redirect to Sample PPT Presentation File
+app.get("/api/settings/sample-ppt/download", (req, res) => {
+  const settings = readSettings();
+  if (settings.samplePptFileBase64) {
+    try {
+      const match = settings.samplePptFileBase64.match(/^data:([^;]+);base64,(.+)$/);
+      const mimeType = match ? match[1] : "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      const base64Data = match ? match[2] : settings.samplePptFileBase64;
+      const buffer = Buffer.from(base64Data, "base64");
+      const filename = settings.samplePptFileName || "SVEC_SIH_Sample_Proposal_Template.pptx";
+
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(filename)}"`);
+      return res.send(buffer);
+    } catch (err) {
+      console.error("Error serving sample PPT buffer:", err);
+      return res.status(500).json({ error: "Failed to download sample PPT file." });
+    }
+  } else if (settings.samplePptUrl) {
+    return res.redirect(settings.samplePptUrl);
+  }
+  return res.status(404).json({ error: "No sample PPT file or URL is currently configured by the admin." });
 });
 
 // POST test external DB connection & install schemas dynamically
@@ -2597,6 +2657,47 @@ app.post("/api/admin/registrations/:id/finalize-selection", validateAdmin, (req,
   res.json({ success: true, message: `Team selection finalized.` });
 });
 
+// POST update registration approval status (SPOC / Admin / Evaluator)
+app.post("/api/admin/registrations/:id/approval-status", validateAdmin, (req, res) => {
+  const { id } = req.params;
+  const { approvalStatus, approvalNotes } = req.body;
+
+  const allowedStatuses = ["pending", "verified", "under_review", "rejected"];
+  if (approvalStatus && !allowedStatuses.includes(approvalStatus)) {
+    return res.status(400).json({ error: "Invalid approval status. Must be one of: " + allowedStatuses.join(", ") });
+  }
+
+  const registrations = readRegistrations();
+  const idx = registrations.findIndex(r => r.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Registration not found." });
+  }
+
+  const adminName = (req as any).adminUser || (req as any).adminRole || "Admin";
+  const updatedStatus = approvalStatus || "pending";
+
+  registrations[idx].approvalStatus = updatedStatus;
+  if (approvalNotes !== undefined) {
+    registrations[idx].approvalNotes = approvalNotes;
+  }
+  if (updatedStatus === "verified") {
+    registrations[idx].verifiedAt = new Date().toISOString();
+    registrations[idx].verifiedBy = adminName;
+  } else if (updatedStatus === "pending") {
+    registrations[idx].verifiedAt = undefined;
+    registrations[idx].verifiedBy = undefined;
+  }
+
+  writeRegistrations(registrations);
+
+  // Sync to external DB in background if configured
+  syncRegistrationToExternalDB(registrations[idx]).catch(err => {
+    console.error("Failed to sync updated registration approval status to external DB:", err);
+  });
+
+  res.json({ success: true, message: `Registration approval status updated to ${updatedStatus}.`, registration: registrations[idx] });
+});
+
 // GET own registration (Student lookup)
 app.get("/api/registrations/my", validateStudentJWT, (req, res) => {
   const email = req.query.email;
@@ -3222,7 +3323,8 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
     paymentStatus,
     paymentId,
     orderId,
-    amountPaid: paymentStatus === "paid" ? amountPaid : undefined
+    amountPaid: paymentStatus === "paid" ? amountPaid : undefined,
+    approvalStatus: "pending"
   };
 
   registrations.push(newRegistration);

@@ -1,6 +1,37 @@
 import React, { useState, useEffect } from "react";
 import { HomepageContent, CustomPage, LiveUpdate, PreviousPhoto } from "../types";
-import { Calendar, Phone, Mail, Award, Users, Shield, ArrowRight, Image as ImageIcon, Heart, Bell, Megaphone, Info, ChevronLeft, ChevronRight, X, Folder } from "lucide-react";
+import {
+  Calendar,
+  Phone,
+  Mail,
+  Award,
+  Users,
+  Shield,
+  ArrowRight,
+  Image as ImageIcon,
+  Heart,
+  Bell,
+  Megaphone,
+  Info,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  Folder,
+  Clock,
+  Rocket,
+  FileText,
+  CheckCircle2,
+  Zap,
+  Trophy,
+  AlertCircle,
+  CalendarCheck,
+  Sparkles,
+  Timer,
+  Check,
+  Flame,
+  Target,
+  ExternalLink
+} from "lucide-react";
 
 interface LandingPageProps {
   homepageData: HomepageContent;
@@ -20,6 +51,118 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
 
   // Selected gallery group/album on homepage
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+
+  // Timeline view filter state
+  const [timelineFilter, setTimelineFilter] = useState<"all" | "key">("all");
+
+  const timelineEvents = [
+    {
+      id: "reg-open",
+      phase: "Phase 01",
+      title: "Registration Opening",
+      subtitle: "Team Portal Live & Roster Formation",
+      date: "August 1, 2026",
+      timeText: "Portal Active",
+      description: "Official team registrations open online. Form a 6-student team with at least 1 mandatory female member and designate team leader.",
+      deliverables: ["Team creation & student profiles", "Mandatory female member selection", "Branch & year verification"],
+      icon: Rocket,
+      status: "completed" as const,
+      statusLabel: "Completed",
+      badgeClass: "bg-emerald-500/15 text-emerald-600 border-emerald-500/30 dark:bg-emerald-500/20 dark:text-emerald-400",
+      accentBg: "from-emerald-500/20 to-emerald-600/5",
+      isKeyDate: true,
+      keyLabel: "Registration Open",
+    },
+    {
+      id: "idea-submit",
+      phase: "Phase 02",
+      title: "Problem Selection & PPT Upload",
+      subtitle: "Mentor Assignment & Idea Deck",
+      date: "August 15, 2026",
+      timeText: "Submission Window",
+      description: "Explore official Smart India Hackathon problem statements, assign a faculty mentor, and upload the standardized PPT presentation.",
+      deliverables: ["PS selection (Software / Hardware)", "Faculty mentor nomination", "SIH PPT & abstract submission"],
+      icon: FileText,
+      status: "active" as const,
+      statusLabel: "In Progress",
+      badgeClass: "bg-indigo-500/15 text-indigo-600 border-indigo-500/30 dark:bg-indigo-500/20 dark:text-indigo-400",
+      accentBg: "from-indigo-500/20 to-indigo-600/5",
+      isKeyDate: false,
+      keyLabel: "PPT Upload",
+    },
+    {
+      id: "reg-deadline",
+      phase: "Phase 03",
+      title: "Registration Deadline",
+      subtitle: "Final Submission Lock & Fee Verification",
+      date: "August 25, 2026",
+      timeText: "11:59 PM IST Sharp",
+      description: "Final deadline for all team submissions, mentor confirmations, and project uploads. Registration portal locks strictly at midnight.",
+      deliverables: ["Submission lock across all teams", "Payment / fee clearance check", "SPOC verification freeze"],
+      icon: Clock,
+      status: "deadline" as const,
+      statusLabel: "Crucial Cutoff",
+      badgeClass: "bg-rose-500/15 text-rose-600 border-rose-500/30 dark:bg-rose-500/20 dark:text-rose-400",
+      accentBg: "from-rose-500/20 to-rose-600/5",
+      isKeyDate: true,
+      keyLabel: "Registration Deadline",
+    },
+    {
+      id: "eval-shortlist",
+      phase: "Phase 04",
+      title: "Internal Scrutiny & Screening",
+      subtitle: "Evaluator Scoring & Shortlisting",
+      date: "August 28 - 30, 2026",
+      timeText: "Evaluation Round",
+      description: "College evaluators and department SPOCs evaluate uploaded PPTs based on innovation, methodology, technical feasibility, and impact.",
+      deliverables: ["Jury evaluation criteria scoring", "SPOC verification & approval", "Shortlisted teams announcement"],
+      icon: CheckCircle2,
+      status: "upcoming" as const,
+      statusLabel: "Upcoming",
+      badgeClass: "bg-amber-500/15 text-amber-600 border-amber-500/30 dark:bg-amber-500/20 dark:text-amber-400",
+      accentBg: "from-amber-500/20 to-amber-600/5",
+      isKeyDate: false,
+      keyLabel: "Review Round",
+    },
+    {
+      id: "hackathon-day",
+      phase: "Phase 05",
+      title: "Internal Hackathon Day",
+      subtitle: "Offline Grand Finale & Live Jury Pitch",
+      date: "September 5, 2026",
+      timeText: "Full-Day Offline Event",
+      description: "Full-day internal hackathon held at SVEC campus. Shortlisted teams build prototypes, demonstrate working code/hardware, and pitch to external jury.",
+      deliverables: ["On-campus hackathon hack session", "Live prototype demonstration", "Elevator pitch & Q&A session"],
+      icon: Zap,
+      status: "event" as const,
+      statusLabel: "Main Event",
+      badgeClass: "bg-purple-500/15 text-purple-600 border-purple-500/30 dark:bg-purple-500/20 dark:text-purple-400",
+      accentBg: "from-purple-500/20 to-purple-600/5",
+      isKeyDate: true,
+      keyLabel: "Hackathon Day",
+    },
+    {
+      id: "sih-nomination",
+      phase: "Phase 06",
+      title: "National SIH Nomination",
+      subtitle: "Official AICTE / MoE Portal Submission",
+      date: "September 12, 2026",
+      timeText: "National Portal Upload",
+      description: "Top winning teams from the SVEC internal hackathon receive college certificates and official nomination to the National SIH 2026 portal.",
+      deliverables: ["Official college nomination letters", "National SIH portal registration", "Mentor & team credentials upload"],
+      icon: Trophy,
+      status: "upcoming" as const,
+      statusLabel: "Final Milestone",
+      badgeClass: "bg-sky-500/15 text-sky-600 border-sky-500/30 dark:bg-sky-500/20 dark:text-sky-400",
+      accentBg: "from-sky-500/20 to-sky-600/5",
+      isKeyDate: false,
+      keyLabel: "National Stage",
+    },
+  ];
+
+  const filteredTimelineEvents = timelineFilter === "key" 
+    ? timelineEvents.filter(e => e.isKeyDate) 
+    : timelineEvents;
 
   const [galleryPage, setGalleryPage] = useState(1);
   const [activePhotoIndex, setActivePhotoIndex] = useState<number | null>(null);
@@ -186,7 +329,7 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
             )}
           </div>
 
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center md:justify-start gap-4">
+          <div className="pt-2 flex flex-col sm:flex-row items-center justify-center md:justify-start gap-3 flex-wrap">
             <button
               onClick={() => onNavigate("register")}
               className="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-600 text-slate-950 px-6 py-3.5 rounded-2xl font-bold text-sm tracking-tight transition-all hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-emerald-500/10"
@@ -195,6 +338,20 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
               <span>Register Your Team</span>
               <ArrowRight className="w-4 h-4" />
             </button>
+            {homepageData.showTimeline !== false && (
+              <button
+                onClick={() => {
+                  const element = document.getElementById("registration-timeline");
+                  if (element) {
+                    element.scrollIntoView({ behavior: "smooth" });
+                  }
+                }}
+                className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white px-5 py-3.5 rounded-2xl font-bold text-sm transition-all border border-white/15 flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <CalendarCheck className="w-4 h-4 text-emerald-400" />
+                <span>Event Timeline</span>
+              </button>
+            )}
             <button
               onClick={() => {
                 const element = document.getElementById("college-student-spocs");
@@ -202,7 +359,7 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
                   element.scrollIntoView({ behavior: "smooth" });
                 }
               }}
-              className="w-full sm:w-auto bg-white/10 hover:bg-white/15 text-white px-6 py-3.5 rounded-2xl font-bold text-sm transition-all border border-white/10 flex items-center justify-center gap-2 cursor-pointer"
+              className="w-full sm:w-auto bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white px-5 py-3.5 rounded-2xl font-semibold text-sm transition-all border border-white/10 flex items-center justify-center gap-2 cursor-pointer"
             >
               <span>Contact SPOCs</span>
             </button>
@@ -237,6 +394,301 @@ export default function LandingPage({ homepageData, onNavigate, customPages, isD
           </div>
         </div>
       </section>
+
+      {/* REGISTRATION & EVENT TIMELINE SECTION (Controllable by SPOC Admin) */}
+      {homepageData.showTimeline !== false && (
+        <section 
+          id="registration-timeline" 
+          className={`rounded-3xl border p-6 md:p-10 shadow-sm space-y-8 scroll-mt-6 ${
+            isDark 
+              ? "bg-slate-900 border-slate-800 text-white" 
+              : "bg-white border-slate-200 text-slate-900"
+          }`}
+        >
+        {/* Timeline Header */}
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 pb-6 border-b border-slate-100 dark:border-slate-800">
+          <div className="space-y-2 text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-indigo-50 text-indigo-600 border border-indigo-100 dark:bg-indigo-950/60 dark:text-indigo-400 dark:border-indigo-900/60">
+              <CalendarCheck className="w-3.5 h-3.5" />
+              <span>Official Schedule • 2026 Roadmap</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-black font-display tracking-tight">
+              Registration & Hackathon Timeline
+            </h2>
+            <p className={`text-xs sm:text-sm max-w-2xl leading-relaxed ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+              Track the key stages from team registration opening and problem statement PPT upload to the internal scrutiny rounds and the Grand Hackathon Day.
+            </p>
+          </div>
+
+          {/* View Filter Switcher */}
+          <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950/80 p-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 self-start md:self-end">
+            <button
+              type="button"
+              onClick={() => setTimelineFilter("all")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                timelineFilter === "all"
+                  ? "bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              }`}
+            >
+              All Stages (6)
+            </button>
+            <button
+              type="button"
+              onClick={() => setTimelineFilter("key")}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                timelineFilter === "key"
+                  ? "bg-indigo-600 text-white shadow-xs"
+                  : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              }`}
+            >
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              <span>Key Dates Only</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Top Highlight Cards for Key Dates */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
+          {/* Milestone 1: Opening */}
+          <div className={`p-5 rounded-2xl border transition-all duration-200 relative overflow-hidden flex flex-col justify-between ${
+            isDark 
+              ? "bg-gradient-to-br from-emerald-950/30 via-slate-900 to-slate-900 border-emerald-800/40" 
+              : "bg-gradient-to-br from-emerald-50/80 via-white to-white border-emerald-200/80 hover:shadow-md"
+          }`}>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/20">
+                  <Rocket className="w-3 h-3" /> Registration Opening
+                </span>
+                <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950 px-2 py-0.5 rounded-full">
+                  Phase 01
+                </span>
+              </div>
+              <h3 className="text-lg font-black font-display tracking-tight text-slate-900 dark:text-white">
+                August 1, 2026
+              </h3>
+              <p className={`text-xs leading-relaxed ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                Portal officially opened for SVEC team registrations & student profile verification across all departments.
+              </p>
+            </div>
+            <div className="pt-4 border-t border-emerald-100 dark:border-emerald-900/30 mt-3 flex items-center justify-between text-xs">
+              <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400">Team Roster Setup</span>
+              <span className="text-[10px] font-mono text-slate-400">6 Members</span>
+            </div>
+          </div>
+
+          {/* Milestone 2: Registration Deadline (High Impact Rose card) */}
+          <div className={`p-5 rounded-2xl border-2 transition-all duration-200 relative overflow-hidden flex flex-col justify-between shadow-md ${
+            isDark 
+              ? "bg-gradient-to-br from-rose-950/40 via-slate-900 to-slate-900 border-rose-600/50 shadow-rose-950/20" 
+              : "bg-gradient-to-br from-rose-50 via-white to-white border-rose-300 shadow-rose-100 hover:shadow-lg"
+          }`}>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-rose-500 text-white shadow-xs">
+                  <Clock className="w-3 h-3" /> Registration Deadline
+                </span>
+                <span className="text-[10px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-wider animate-pulse">
+                  Final Cutoff
+                </span>
+              </div>
+              <h3 className="text-lg font-black font-display tracking-tight text-slate-900 dark:text-white">
+                August 25, 2026 <span className="text-xs font-bold text-rose-600 dark:text-rose-400">• 11:59 PM IST</span>
+              </h3>
+              <p className={`text-xs leading-relaxed ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                Strict cutoff for team submission, mentor approvals, and PPT idea upload. No entries accepted post-deadline.
+              </p>
+            </div>
+            <div className="pt-4 border-t border-rose-200 dark:border-rose-900/40 mt-3 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => onNavigate("register")}
+                className="w-full bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <span>Register Before Deadline</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Milestone 3: Hackathon Day */}
+          <div className={`p-5 rounded-2xl border transition-all duration-200 relative overflow-hidden flex flex-col justify-between ${
+            isDark 
+              ? "bg-gradient-to-br from-purple-950/30 via-slate-900 to-slate-900 border-purple-800/40" 
+              : "bg-gradient-to-br from-purple-50/80 via-white to-white border-purple-200/80 hover:shadow-md"
+          }`}>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-md bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/20">
+                  <Zap className="w-3 h-3" /> Grand Hackathon Day
+                </span>
+                <span className="text-[10px] font-bold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950 px-2 py-0.5 rounded-full">
+                  Phase 05
+                </span>
+              </div>
+              <h3 className="text-lg font-black font-display tracking-tight text-slate-900 dark:text-white">
+                September 5, 2026
+              </h3>
+              <p className={`text-xs leading-relaxed ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                Full-day offline internal hackathon at SVEC campus. Live prototype demos, jury scoring, and SIH national selection.
+              </p>
+            </div>
+            <div className="pt-4 border-t border-purple-100 dark:border-purple-900/30 mt-3 flex items-center justify-between text-xs">
+              <span className="text-[11px] font-bold text-purple-600 dark:text-purple-400">Offline SVEC Campus</span>
+              <span className="text-[10px] font-mono text-slate-400">Full-Day</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Detailed Chronological Stepper Roadmap */}
+        <div className="pt-4 space-y-6">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h3 className="text-base font-extrabold font-display tracking-tight flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-indigo-500" />
+              <span>Full Event & Registration Roadmap</span>
+            </h3>
+            <span className="text-xs font-semibold text-slate-400">
+              Showing {filteredTimelineEvents.length} chronological milestone{filteredTimelineEvents.length > 1 ? "s" : ""}
+            </span>
+          </div>
+
+          <div className="relative pl-6 sm:pl-8 border-l-2 border-indigo-100 dark:border-slate-800 space-y-8 text-left">
+            {filteredTimelineEvents.map((item, index) => {
+              const IconComp = item.icon;
+              const isDeadline = item.status === "deadline";
+              const isCompleted = item.status === "completed";
+              const isActive = item.status === "active";
+              const isMainEvent = item.status === "event";
+
+              return (
+                <div key={item.id} className="relative group">
+                  {/* Timeline Stepper Node Circle */}
+                  <div 
+                    className={`absolute -left-[31px] sm:-left-[39px] top-1.5 w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 flex items-center justify-center transition-transform group-hover:scale-110 shadow-xs ${
+                      isDeadline 
+                        ? "bg-rose-600 border-rose-200 text-white shadow-rose-500/30 animate-pulse" 
+                        : isCompleted 
+                        ? "bg-emerald-600 border-emerald-200 text-white" 
+                        : isActive 
+                        ? "bg-indigo-600 border-indigo-200 text-white ring-4 ring-indigo-500/20" 
+                        : isMainEvent
+                        ? "bg-purple-600 border-purple-200 text-white"
+                        : isDark
+                        ? "bg-slate-800 border-slate-700 text-slate-400"
+                        : "bg-white border-slate-300 text-slate-500"
+                    }`}
+                  >
+                    <IconComp className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  </div>
+
+                  {/* Milestone Content Card */}
+                  <div 
+                    className={`rounded-2xl border p-5 sm:p-6 transition-all duration-200 shadow-xs hover:shadow-md ${
+                      isDeadline
+                        ? isDark 
+                          ? "bg-slate-900/90 border-rose-800/60 ring-1 ring-rose-500/20" 
+                          : "bg-rose-50/30 border-rose-200/90 ring-1 ring-rose-400/20"
+                        : isMainEvent
+                        ? isDark
+                          ? "bg-slate-900/90 border-purple-800/60"
+                          : "bg-purple-50/30 border-purple-200/90"
+                        : isDark 
+                        ? "bg-slate-950/60 border-slate-800 hover:border-slate-700" 
+                        : "bg-white border-slate-200/90 hover:border-slate-300"
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800/80">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md uppercase tracking-wider ${item.badgeClass}`}>
+                          {item.phase}
+                        </span>
+                        <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full ${
+                          isDeadline
+                            ? "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-black uppercase tracking-wider"
+                            : isCompleted
+                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                            : isActive
+                            ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold"
+                            : isMainEvent
+                            ? "bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300 font-bold"
+                            : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                        }`}>
+                          {item.statusLabel}
+                        </span>
+                        {item.isKeyDate && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/50 px-2 py-0.5 rounded-md border border-amber-200/60 dark:border-amber-800/40">
+                            <Sparkles className="w-2.5 h-2.5" /> Key Milestone
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Date Chip */}
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300 font-mono">
+                        <Calendar className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>{item.date}</span>
+                        <span className="text-slate-400 font-normal">• {item.timeText}</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 space-y-2">
+                      <div>
+                        <h4 className="text-base font-black font-display text-slate-900 dark:text-white">
+                          {item.title}
+                        </h4>
+                        <p className="text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                          {item.subtitle}
+                        </p>
+                      </div>
+
+                      <p className={`text-xs sm:text-sm leading-relaxed ${isDark ? "text-slate-300" : "text-slate-600"}`}>
+                        {item.description}
+                      </p>
+
+                      {/* Deliverables Checklist */}
+                      <div className="pt-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 block mb-1.5">
+                          Action Items & Deliverables:
+                        </span>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {item.deliverables.map((deliv, delivIdx) => (
+                            <div 
+                              key={delivIdx}
+                              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border ${
+                                isDark 
+                                  ? "bg-slate-900 border-slate-800 text-slate-300" 
+                                  : "bg-slate-50 border-slate-200/80 text-slate-700"
+                              }`}
+                            >
+                              <Check className="w-3 h-3 text-emerald-500 shrink-0" />
+                              <span className="truncate">{deliv}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Special Call to Action for Deadline Phase or Active Phase */}
+                      {(isDeadline || isActive) && (
+                        <div className="pt-3 flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={() => onNavigate("register")}
+                            className="inline-flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white transition-all cursor-pointer shadow-xs"
+                          >
+                            <span>Go to Registration Portal</span>
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+      )}
 
       {/* Live Updates Scrolling Section */}
       {updates && updates.length > 0 && (
