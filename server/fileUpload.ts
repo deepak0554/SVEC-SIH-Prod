@@ -22,13 +22,14 @@ export const UPLOADS_SAMPLE_PPTS_DIR = path.join(UPLOADS_DIR, "sample_ppts");
 });
 
 // Category to directory mapping
-export type UploadCategory = "ppts" | "images" | "documents" | "sample_ppts";
+export type UploadCategory = "ppts" | "images" | "documents" | "sample_ppts" | "abstracts";
 
 export const CATEGORY_DIR_MAP: Record<UploadCategory, string> = {
   ppts: UPLOADS_PPTS_DIR,
   images: UPLOADS_IMAGES_DIR,
   documents: UPLOADS_DOCS_DIR,
-  sample_ppts: UPLOADS_SAMPLE_PPTS_DIR
+  sample_ppts: UPLOADS_SAMPLE_PPTS_DIR,
+  abstracts: UPLOADS_DOCS_DIR
 };
 
 // ==========================================

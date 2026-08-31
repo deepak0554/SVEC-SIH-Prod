@@ -181,6 +181,33 @@ export class ObjectStorageService {
   }
 
   /**
+   * Convenience wrapper for uploading a file buffer.
+   */
+  public async uploadFile(
+    buffer: Buffer,
+    originalFilename: string,
+    mimeType: string,
+    category: UploadCategory = "abstracts"
+  ): Promise<{ success: boolean; url?: string; key?: string; error?: string }> {
+    try {
+      const ext = path.extname(originalFilename) || "";
+      const baseName = path.basename(originalFilename, ext).replace(/[^a-zA-Z0-9_-]/g, "_");
+      const uniqueFilename = `${baseName}_${Date.now()}${ext}`;
+
+      const res = await this.upload({
+        category,
+        filename: uniqueFilename,
+        buffer,
+        contentType: mimeType
+      });
+
+      return { success: true, url: res.url, key: res.key };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Failed to upload file" };
+    }
+  }
+
+  /**
    * Retrieves object stream and metadata from Object Storage.
    */
   public async getObject(category: UploadCategory, filename: string): Promise<{

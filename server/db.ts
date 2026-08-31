@@ -50,7 +50,7 @@ export interface BroadcastLog {
   message?: string;
   preview?: string;
   sender?: string;
-  status: "sent" | "failed" | "completed" | "queued";
+  status: "pending" | "sent" | "failed" | "completed" | "queued";
   timestamp: string;
   error?: string;
 }
@@ -232,6 +232,198 @@ class DatabaseManager {
 
     const tables = [
       {
+        label: "users",
+        query: `CREATE TABLE IF NOT EXISTS users (
+          id VARCHAR(255) PRIMARY KEY,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash TEXT,
+          role VARCHAR(50) DEFAULT 'student',
+          name VARCHAR(255),
+          mobile VARCHAR(50),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "students",
+        query: `CREATE TABLE IF NOT EXISTS students (
+          id VARCHAR(255) PRIMARY KEY,
+          user_id VARCHAR(255),
+          email VARCHAR(255) UNIQUE NOT NULL,
+          roll_number VARCHAR(100),
+          name VARCHAR(255),
+          gender VARCHAR(50),
+          department VARCHAR(100),
+          mobile VARCHAR(50),
+          academic_year VARCHAR(50),
+          created_at VARCHAR(100),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "problem_statements",
+        query: `CREATE TABLE IF NOT EXISTS problem_statements (
+          id VARCHAR(255) PRIMARY KEY,
+          code VARCHAR(100) NOT NULL,
+          title TEXT NOT NULL,
+          category VARCHAR(50) NOT NULL,
+          organization VARCHAR(255) NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "teams",
+        query: `CREATE TABLE IF NOT EXISTS teams (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(100) UNIQUE NOT NULL,
+          team_name VARCHAR(255) NOT NULL,
+          lead_student_id VARCHAR(255),
+          lead_name VARCHAR(255) NOT NULL,
+          lead_department VARCHAR(100) NOT NULL,
+          lead_mobile VARCHAR(50) NOT NULL,
+          lead_gender VARCHAR(50),
+          lead_academic_year VARCHAR(50),
+          has_female_member BOOLEAN DEFAULT FALSE,
+          mentor_name VARCHAR(255),
+          problem_statement_id VARCHAR(255),
+          submitted_at VARCHAR(100),
+          student_email VARCHAR(255),
+          payment_status VARCHAR(50) DEFAULT 'free',
+          payment_id VARCHAR(255),
+          order_id VARCHAR(255),
+          amount_paid NUMERIC,
+          approval_status VARCHAR(50) DEFAULT 'pending',
+          approval_notes TEXT,
+          verified_at VARCHAR(100),
+          verified_by VARCHAR(255),
+          is_final_selected BOOLEAN DEFAULT FALSE,
+          selection_notes TEXT,
+          assigned_evaluator VARCHAR(255),
+          evaluation_status VARCHAR(50) DEFAULT 'pending',
+          total_score NUMERIC DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "team_members",
+        query: `CREATE TABLE IF NOT EXISTS team_members (
+          id VARCHAR(255) PRIMARY KEY,
+          team_id VARCHAR(255) NOT NULL,
+          student_id VARCHAR(255),
+          member_index INT NOT NULL,
+          name VARCHAR(255) NOT NULL,
+          gender VARCHAR(50),
+          email VARCHAR(255),
+          phone VARCHAR(50),
+          academic_year VARCHAR(50),
+          is_lead BOOLEAN DEFAULT FALSE,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "submissions",
+        query: `CREATE TABLE IF NOT EXISTS submissions (
+          id VARCHAR(255) PRIMARY KEY,
+          team_id VARCHAR(255) UNIQUE NOT NULL,
+          abstract TEXT,
+          implementation_steps TEXT,
+          ppt_file_name VARCHAR(255),
+          ppt_file_url TEXT,
+          ppt_base64 TEXT,
+          proposal_status VARCHAR(50) DEFAULT 'saved',
+          submitted_at VARCHAR(100),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "evaluation_criteria",
+        query: `CREATE TABLE IF NOT EXISTS evaluation_criteria (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          max_score INT DEFAULT 10,
+          description TEXT,
+          sort_order INT DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "evaluations",
+        query: `CREATE TABLE IF NOT EXISTS evaluations (
+          id VARCHAR(255) PRIMARY KEY,
+          team_id VARCHAR(255) NOT NULL,
+          evaluator_username VARCHAR(255) NOT NULL,
+          total_score NUMERIC DEFAULT 0,
+          notes TEXT,
+          status VARCHAR(50) DEFAULT 'completed',
+          evaluated_at VARCHAR(100),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "evaluation_scores",
+        query: `CREATE TABLE IF NOT EXISTS evaluation_scores (
+          id VARCHAR(255) PRIMARY KEY,
+          evaluation_id VARCHAR(255) NOT NULL,
+          criterion_id VARCHAR(255) NOT NULL,
+          score NUMERIC NOT NULL DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "payments",
+        query: `CREATE TABLE IF NOT EXISTS payments (
+          id VARCHAR(255) PRIMARY KEY,
+          team_id VARCHAR(255) NOT NULL,
+          order_id VARCHAR(255) NOT NULL,
+          payment_id VARCHAR(255),
+          amount NUMERIC NOT NULL,
+          currency VARCHAR(10) DEFAULT 'INR',
+          status VARCHAR(50) DEFAULT 'created',
+          payment_method VARCHAR(50),
+          signature TEXT,
+          student_email VARCHAR(255),
+          raw_response TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "notifications",
+        query: `CREATE TABLE IF NOT EXISTS notifications (
+          id VARCHAR(255) PRIMARY KEY,
+          channel VARCHAR(50) NOT NULL,
+          recipient VARCHAR(255) NOT NULL,
+          recipient_group VARCHAR(100),
+          recipient_count INT DEFAULT 1,
+          team_name VARCHAR(255),
+          subject VARCHAR(255),
+          message TEXT,
+          preview TEXT,
+          status VARCHAR(50) NOT NULL,
+          error TEXT,
+          sender VARCHAR(255),
+          timestamp VARCHAR(100),
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "audit_logs",
+        query: `CREATE TABLE IF NOT EXISTS audit_logs (
+          id VARCHAR(255) PRIMARY KEY,
+          user_id VARCHAR(255),
+          username VARCHAR(255),
+          action VARCHAR(100) NOT NULL,
+          entity_type VARCHAR(100) NOT NULL,
+          entity_id VARCHAR(255),
+          details_json TEXT,
+          ip_address VARCHAR(100),
+          timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
         label: "registrations",
         query: `CREATE TABLE IF NOT EXISTS registrations (
           id VARCHAR(255) PRIMARY KEY,
@@ -298,27 +490,17 @@ class DatabaseManager {
         );`
       },
       {
-        label: "students",
-        query: `CREATE TABLE IF NOT EXISTS students (
-          id VARCHAR(255) PRIMARY KEY,
-          email VARCHAR(255) UNIQUE NOT NULL,
-          password_hash TEXT,
-          gender VARCHAR(50),
-          department VARCHAR(100),
-          mobile VARCHAR(50),
-          created_at VARCHAR(100)
-        );`
-      },
-      {
         label: "admins",
         query: `CREATE TABLE IF NOT EXISTS admins (
           id VARCHAR(255) PRIMARY KEY,
           username VARCHAR(100) UNIQUE NOT NULL,
           password_hash TEXT NOT NULL,
           role VARCHAR(50) NOT NULL,
+          department VARCHAR(100) DEFAULT '',
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );`
+        );
+        ALTER TABLE admins ADD COLUMN IF NOT EXISTS department VARCHAR(100) DEFAULT '';`
       },
       {
         label: "team_evaluations",
@@ -348,26 +530,6 @@ class DatabaseManager {
           student_email VARCHAR(255),
           raw_response TEXT,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );`
-      },
-      {
-        label: "problem_statements",
-        query: `CREATE TABLE IF NOT EXISTS problem_statements (
-          id VARCHAR(255) PRIMARY KEY,
-          code VARCHAR(100) NOT NULL,
-          title TEXT NOT NULL,
-          category VARCHAR(50) NOT NULL,
-          organization VARCHAR(255) NOT NULL
-        );`
-      },
-      {
-        label: "evaluation_criteria",
-        query: `CREATE TABLE IF NOT EXISTS evaluation_criteria (
-          id VARCHAR(255) PRIMARY KEY,
-          name VARCHAR(255) NOT NULL,
-          max_score INT DEFAULT 10,
-          description TEXT,
-          sort_order INT DEFAULT 0
         );`
       },
       {
@@ -436,21 +598,245 @@ class DatabaseManager {
       await safeExecute(t.query, `Create table ${t.label}`);
     }
 
-    // Indexes
+    // Normalized Indexes & Foreign Keys
     const indexes = [
+      `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`,
+      `CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);`,
+      `CREATE INDEX IF NOT EXISTS idx_students_email ON students(email);`,
+      `CREATE INDEX IF NOT EXISTS idx_students_user_id ON students(user_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_teams_reg_id ON teams(registration_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_teams_student_email ON teams(student_email);`,
+      `CREATE INDEX IF NOT EXISTS idx_teams_problem_id ON teams(problem_statement_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_teams_approval_status ON teams(approval_status);`,
+      `CREATE INDEX IF NOT EXISTS idx_teams_assigned_evaluator ON teams(assigned_evaluator);`,
+      `CREATE INDEX IF NOT EXISTS idx_team_members_team_id ON team_members(team_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_team_members_email ON team_members(email);`,
+      `CREATE INDEX IF NOT EXISTS idx_team_members_student_id ON team_members(student_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_submissions_team_id ON submissions(team_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_evaluations_team_id ON evaluations(team_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_evaluations_evaluator ON evaluations(evaluator_username);`,
+      `CREATE INDEX IF NOT EXISTS idx_eval_scores_eval_id ON evaluation_scores(evaluation_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_eval_scores_crit_id ON evaluation_scores(criterion_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_payments_team_id ON payments(team_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_notifications_recipient ON notifications(recipient);`,
+      `CREATE INDEX IF NOT EXISTS idx_notifications_channel ON notifications(channel);`,
+      `CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);`,
+      `CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp ON audit_logs(timestamp);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_problem_stmt ON registrations(problem_statement_id);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_student_email ON registrations(student_email);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_approval_status ON registrations(approval_status);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_assigned_evaluator ON registrations(assigned_evaluator);`,
-      `CREATE INDEX IF NOT EXISTS idx_students_email ON students(email);`,
       `CREATE INDEX IF NOT EXISTS idx_eval_reg_id ON team_evaluations(registration_id);`,
       `CREATE INDEX IF NOT EXISTS idx_eval_evaluator ON team_evaluations(evaluator_username);`,
-      `CREATE INDEX IF NOT EXISTS idx_payments_reg_id ON payment_transactions(registration_id);`,
-      `CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payment_transactions(order_id);`
+      `CREATE INDEX IF NOT EXISTS idx_payments_reg_id ON payment_transactions(registration_id);`
     ];
 
     for (const idx of indexes) {
       await safeExecute(idx, "Create index");
+    }
+
+    // Execute automated data migration from legacy tables to normalized tables
+    await this.migrateLegacyDataToNormalizedTables();
+  }
+
+  /**
+   * Migrate existing registrations and evaluations into normalized tables idempotently
+   * without destroying or duplicating any data.
+   */
+  private async migrateLegacyDataToNormalizedTables(): Promise<void> {
+    if (!this.pgPool) return;
+
+    try {
+      // 1. Check if legacy registrations exist
+      const regRes = await this.pgPool.query(`SELECT * FROM registrations`);
+      if (regRes.rows && regRes.rows.length > 0) {
+        for (const row of regRes.rows) {
+          // Upsert into normalized 'teams' table
+          await this.pgPool.query(`
+            INSERT INTO teams (
+              id, registration_id, team_name, lead_name, lead_department, lead_mobile, lead_gender, lead_academic_year,
+              has_female_member, mentor_name, problem_statement_id, submitted_at, student_email, payment_status,
+              payment_id, order_id, amount_paid, approval_status, approval_notes, verified_at, verified_by,
+              is_final_selected, selection_notes, assigned_evaluator, evaluation_status, total_score, updated_at
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8,
+              $9, $10, $11, $12, $13, $14,
+              $15, $16, $17, $18, $19, $20, $21,
+              $22, $23, $24, $25, $26, NOW()
+            ) ON CONFLICT (id) DO UPDATE SET
+              registration_id = EXCLUDED.registration_id,
+              team_name = EXCLUDED.team_name,
+              lead_name = EXCLUDED.lead_name,
+              lead_department = EXCLUDED.lead_department,
+              lead_mobile = EXCLUDED.lead_mobile,
+              lead_gender = EXCLUDED.lead_gender,
+              lead_academic_year = EXCLUDED.lead_academic_year,
+              has_female_member = EXCLUDED.has_female_member,
+              mentor_name = EXCLUDED.mentor_name,
+              problem_statement_id = EXCLUDED.problem_statement_id,
+              submitted_at = EXCLUDED.submitted_at,
+              student_email = EXCLUDED.student_email,
+              payment_status = EXCLUDED.payment_status,
+              payment_id = EXCLUDED.payment_id,
+              order_id = EXCLUDED.order_id,
+              amount_paid = EXCLUDED.amount_paid,
+              approval_status = EXCLUDED.approval_status,
+              approval_notes = EXCLUDED.approval_notes,
+              verified_at = EXCLUDED.verified_at,
+              verified_by = EXCLUDED.verified_by,
+              is_final_selected = EXCLUDED.is_final_selected,
+              selection_notes = EXCLUDED.selection_notes,
+              assigned_evaluator = EXCLUDED.assigned_evaluator,
+              evaluation_status = EXCLUDED.evaluation_status,
+              total_score = EXCLUDED.total_score,
+              updated_at = NOW();
+          `, [
+            row.id, row.registration_id, row.team_name, row.lead_name, row.lead_department, row.lead_mobile,
+            row.lead_gender || "", row.lead_academic_year || "", !!row.has_female_member, row.mentor_name || "",
+            row.problem_statement_id || "", row.submitted_at || new Date().toISOString(), row.student_email || "",
+            row.payment_status || "free", row.payment_id || "", row.order_id || "", row.amount_paid || null,
+            row.approval_status || "pending", row.approval_notes || "", row.verified_at || "", row.verified_by || "",
+            !!row.is_final_selected, row.selection_notes || "", row.assigned_evaluator || "",
+            row.evaluation_status || "pending", row.total_score || 0
+          ]);
+
+          // Upsert team leader as team member index 0
+          await this.pgPool.query(`
+            INSERT INTO team_members (id, team_id, member_index, name, gender, email, phone, academic_year, is_lead, updated_at)
+            VALUES ($1, $2, 0, $3, $4, $5, $6, $7, TRUE, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+              name = EXCLUDED.name,
+              gender = EXCLUDED.gender,
+              email = EXCLUDED.email,
+              phone = EXCLUDED.phone,
+              academic_year = EXCLUDED.academic_year;
+          `, [
+            `tm_${row.id}_lead`, row.id, row.lead_name, row.lead_gender || "", row.student_email || "", row.lead_mobile, row.lead_academic_year || ""
+          ]);
+
+          // Upsert members 1 to 5 into team_members table
+          for (let m = 1; m <= 5; m++) {
+            const mName = row[`member${m}`];
+            if (mName && mName.trim()) {
+              const mGender = row[`member${m}_gender`] || "";
+              const mEmail = row[`member${m}_email`] || "";
+              const mPhone = row[`member${m}_phone`] || "";
+              const mYear = row[`member${m}_academic_year`] || "";
+              await this.pgPool.query(`
+                INSERT INTO team_members (id, team_id, member_index, name, gender, email, phone, academic_year, is_lead, updated_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                  name = EXCLUDED.name,
+                  gender = EXCLUDED.gender,
+                  email = EXCLUDED.email,
+                  phone = EXCLUDED.phone,
+                  academic_year = EXCLUDED.academic_year;
+              `, [
+                `tm_${row.id}_${m}`, row.id, m, mName.trim(), mGender, mEmail, mPhone, mYear
+              ]);
+            }
+          }
+
+          // Upsert submission details into 'submissions' table
+          await this.pgPool.query(`
+            INSERT INTO submissions (id, team_id, abstract, implementation_steps, ppt_file_name, ppt_file_url, ppt_base64, proposal_status, submitted_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT (team_id) DO UPDATE SET
+              abstract = EXCLUDED.abstract,
+              implementation_steps = EXCLUDED.implementation_steps,
+              ppt_file_name = EXCLUDED.ppt_file_name,
+              ppt_file_url = EXCLUDED.ppt_file_url,
+              ppt_base64 = EXCLUDED.ppt_base64,
+              proposal_status = EXCLUDED.proposal_status,
+              submitted_at = EXCLUDED.submitted_at,
+              updated_at = NOW();
+          `, [
+            `sub_${row.id}`, row.id, row.abstract || "", row.implementation_steps || "",
+            row.ppt_file_name || "", row.ppt_file_url || "", row.ppt_base64 || "",
+            row.proposal_status || "saved", row.submitted_at || new Date().toISOString()
+          ]);
+        }
+        console.log(`✅ [DB Migration] Migrated ${regRes.rows.length} registrations to normalized teams, team_members, and submissions tables.`);
+      }
+
+      // 2. Migrate students into users table if not already present
+      const studRes = await this.pgPool.query(`SELECT * FROM students`);
+      if (studRes.rows && studRes.rows.length > 0) {
+        for (const s of studRes.rows) {
+          await this.pgPool.query(`
+            INSERT INTO users (id, email, password_hash, role, name, mobile, created_at)
+            VALUES ($1, $2, $3, 'student', $4, $5, NOW())
+            ON CONFLICT (email) DO UPDATE SET
+              password_hash = COALESCE(EXCLUDED.password_hash, users.password_hash),
+              mobile = COALESCE(EXCLUDED.mobile, users.mobile);
+          `, [s.id, s.email.toLowerCase(), s.password_hash || "", s.email.split("@")[0], s.mobile || ""]);
+        }
+      }
+
+      // 3. Migrate team_evaluations into evaluations & evaluation_scores
+      const evalRes = await this.pgPool.query(`SELECT * FROM team_evaluations`);
+      if (evalRes.rows && evalRes.rows.length > 0) {
+        for (const ev of evalRes.rows) {
+          await this.pgPool.query(`
+            INSERT INTO evaluations (id, team_id, evaluator_username, total_score, notes, status, evaluated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (id) DO UPDATE SET
+              total_score = EXCLUDED.total_score,
+              notes = EXCLUDED.notes,
+              status = EXCLUDED.status,
+              evaluated_at = EXCLUDED.evaluated_at;
+          `, [
+            ev.id, ev.registration_id, ev.evaluator_username, ev.total_score || 0,
+            ev.notes || "", ev.status || "completed", ev.evaluated_at || new Date().toISOString()
+          ]);
+
+          const scores = typeof ev.scores_json === "string" ? JSON.parse(ev.scores_json || "{}") : (ev.scores_json || {});
+          for (const [critId, scoreVal] of Object.entries(scores)) {
+            await this.pgPool.query(`
+              INSERT INTO evaluation_scores (id, evaluation_id, criterion_id, score)
+              VALUES ($1, $2, $3, $4)
+              ON CONFLICT (id) DO UPDATE SET score = EXCLUDED.score;
+            `, [`score_${ev.id}_${critId}`, ev.id, critId, Number(scoreVal) || 0]);
+          }
+        }
+      }
+
+      // 4. Migrate payment_transactions into payments
+      const payRes = await this.pgPool.query(`SELECT * FROM payment_transactions`);
+      if (payRes.rows && payRes.rows.length > 0) {
+        for (const p of payRes.rows) {
+          await this.pgPool.query(`
+            INSERT INTO payments (id, team_id, order_id, payment_id, amount, currency, status, payment_method, signature, student_email, raw_response, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET
+              status = EXCLUDED.status,
+              payment_id = EXCLUDED.payment_id;
+          `, [
+            p.id, p.registration_id, p.order_id, p.payment_id || null, Number(p.amount) || 0,
+            p.currency || "INR", p.status || "created", p.payment_method || null, p.signature || null,
+            p.student_email || null, p.raw_response || null, p.created_at || new Date()
+          ]);
+        }
+      }
+
+      // 5. Migrate broadcast_logs into notifications
+      const logRes = await this.pgPool.query(`SELECT * FROM broadcast_logs`);
+      if (logRes.rows && logRes.rows.length > 0) {
+        for (const l of logRes.rows) {
+          await this.pgPool.query(`
+            INSERT INTO notifications (id, channel, recipient, team_name, subject, preview, status, error, timestamp)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status;
+          `, [
+            l.id, l.channel, l.recipient, l.team_name || null, l.subject || null,
+            l.preview || null, l.status || "sent", l.error || null, l.timestamp || new Date().toISOString()
+          ]);
+        }
+      }
+    } catch (err: any) {
+      console.warn("[DB Migration Notice]:", err.message);
     }
   }
 
@@ -670,6 +1056,120 @@ class DatabaseManager {
         ];
 
         await this.pgPool.query(sql, values);
+
+        // Sync into normalized 'teams' table
+        await this.pgPool.query(`
+          INSERT INTO teams (
+            id, registration_id, team_name, lead_name, lead_department, lead_mobile, lead_gender, lead_academic_year,
+            has_female_member, mentor_name, problem_statement_id, submitted_at, student_email, payment_status,
+            payment_id, order_id, amount_paid, approval_status, approval_notes, verified_at, verified_by,
+            is_final_selected, selection_notes, assigned_evaluator, evaluation_status, total_score, updated_at
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8,
+            $9, $10, $11, $12, $13, $14,
+            $15, $16, $17, $18, $19, $20, $21,
+            $22, $23, $24, $25, $26, NOW()
+          ) ON CONFLICT (id) DO UPDATE SET
+            registration_id = EXCLUDED.registration_id,
+            team_name = EXCLUDED.team_name,
+            lead_name = EXCLUDED.lead_name,
+            lead_department = EXCLUDED.lead_department,
+            lead_mobile = EXCLUDED.lead_mobile,
+            lead_gender = EXCLUDED.lead_gender,
+            lead_academic_year = EXCLUDED.lead_academic_year,
+            has_female_member = EXCLUDED.has_female_member,
+            mentor_name = EXCLUDED.mentor_name,
+            problem_statement_id = EXCLUDED.problem_statement_id,
+            submitted_at = EXCLUDED.submitted_at,
+            student_email = EXCLUDED.student_email,
+            payment_status = EXCLUDED.payment_status,
+            payment_id = EXCLUDED.payment_id,
+            order_id = EXCLUDED.order_id,
+            amount_paid = EXCLUDED.amount_paid,
+            approval_status = EXCLUDED.approval_status,
+            approval_notes = EXCLUDED.approval_notes,
+            verified_at = EXCLUDED.verified_at,
+            verified_by = EXCLUDED.verified_by,
+            is_final_selected = EXCLUDED.is_final_selected,
+            selection_notes = EXCLUDED.selection_notes,
+            assigned_evaluator = EXCLUDED.assigned_evaluator,
+            evaluation_status = EXCLUDED.evaluation_status,
+            total_score = EXCLUDED.total_score,
+            updated_at = NOW();
+        `, [
+          reg.id, reg.registrationId, reg.teamName, reg.leadName, reg.leadDepartment, reg.leadMobile,
+          reg.leadGender || "", reg.leadAcademicYear || "", !!reg.hasFemaleMember, reg.mentorName || "",
+          reg.problemStatementId || "", reg.submittedAt || new Date().toISOString(), reg.studentEmail || "",
+          reg.paymentStatus || "free", reg.paymentId || "", reg.orderId || "", reg.amountPaid !== undefined ? reg.amountPaid : null,
+          reg.approvalStatus || "pending", reg.approvalNotes || "", reg.verifiedAt || "", reg.verifiedBy || "",
+          !!reg.isFinalSelected, reg.selectionNotes || "", reg.assignedEvaluator || "",
+          reg.evaluationStatus || "pending", totalScore
+        ]);
+
+        // Sync lead in team_members
+        await this.pgPool.query(`
+          INSERT INTO team_members (id, team_id, member_index, name, gender, email, phone, academic_year, is_lead, updated_at)
+          VALUES ($1, $2, 0, $3, $4, $5, $6, $7, TRUE, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            name = EXCLUDED.name,
+            gender = EXCLUDED.gender,
+            email = EXCLUDED.email,
+            phone = EXCLUDED.phone,
+            academic_year = EXCLUDED.academic_year;
+        `, [
+          `tm_${reg.id}_lead`, reg.id, reg.leadName, reg.leadGender || "", reg.studentEmail || "", reg.leadMobile, reg.leadAcademicYear || ""
+        ]);
+
+        // Sync members 1-5 in team_members
+        const memberList = [
+          { name: reg.member1, gender: reg.member1Gender, email: reg.member1Email, phone: reg.member1Phone, year: reg.member1AcademicYear },
+          { name: reg.member2, gender: reg.member2Gender, email: reg.member2Email, phone: reg.member2Phone, year: reg.member2AcademicYear },
+          { name: reg.member3, gender: reg.member3Gender, email: reg.member3Email, phone: reg.member3Phone, year: reg.member3AcademicYear },
+          { name: reg.member4, gender: reg.member4Gender, email: reg.member4Email, phone: reg.member4Phone, year: reg.member4AcademicYear },
+          { name: reg.member5, gender: reg.member5Gender, email: reg.member5Email, phone: reg.member5Phone, year: reg.member5AcademicYear }
+        ];
+
+        for (let idx = 0; idx < memberList.length; idx++) {
+          const m = memberList[idx];
+          const mIndex = idx + 1;
+          const memberId = `tm_${reg.id}_${mIndex}`;
+          if (m.name && m.name.trim()) {
+            await this.pgPool.query(`
+              INSERT INTO team_members (id, team_id, member_index, name, gender, email, phone, academic_year, is_lead, updated_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, NOW())
+              ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                gender = EXCLUDED.gender,
+                email = EXCLUDED.email,
+                phone = EXCLUDED.phone,
+                academic_year = EXCLUDED.academic_year;
+            `, [
+              memberId, reg.id, mIndex, m.name.trim(), m.gender || "", m.email || "", m.phone || "", m.year || ""
+            ]);
+          } else {
+            await this.pgPool.query(`DELETE FROM team_members WHERE id = $1`, [memberId]);
+          }
+        }
+
+        // Sync submissions table
+        await this.pgPool.query(`
+          INSERT INTO submissions (id, team_id, abstract, implementation_steps, ppt_file_name, ppt_file_url, ppt_base64, proposal_status, submitted_at, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+          ON CONFLICT (team_id) DO UPDATE SET
+            abstract = EXCLUDED.abstract,
+            implementation_steps = EXCLUDED.implementation_steps,
+            ppt_file_name = EXCLUDED.ppt_file_name,
+            ppt_file_url = EXCLUDED.ppt_file_url,
+            ppt_base64 = EXCLUDED.ppt_base64,
+            proposal_status = EXCLUDED.proposal_status,
+            submitted_at = EXCLUDED.submitted_at,
+            updated_at = NOW();
+        `, [
+          `sub_${reg.id}`, reg.id, reg.abstract || "", reg.implementationSteps || "",
+          reg.pptFileName || "", reg.pptFileUrl || "", reg.pptBase64 || "",
+          reg.proposalStatus || "saved", reg.submittedAt || new Date().toISOString()
+        ]);
+
         return true;
       } catch (err) {
         console.error("[PostgreSQL Save Error] saveRegistration:", err);
@@ -695,6 +1195,7 @@ class DatabaseManager {
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM registrations WHERE id = $1 OR registration_id = $1`, [id]);
+        await this.pgPool.query(`DELETE FROM teams WHERE id = $1 OR registration_id = $1`, [id]);
         return true;
       } catch (err) {
         console.error("[PostgreSQL Delete Error] deleteRegistration:", err);
@@ -805,12 +1306,13 @@ class DatabaseManager {
   public async getAdmins(): Promise<AdminUser[]> {
     if (this.isPostgresActive && this.pgPool) {
       try {
-        const res = await this.pgPool.query(`SELECT username, password_hash, role FROM admins ORDER BY username ASC`);
+        const res = await this.pgPool.query(`SELECT username, password_hash, role, department FROM admins ORDER BY username ASC`);
         if (res.rows.length > 0) {
           return res.rows.map(r => ({
             username: r.username,
             passwordHash: r.password_hash,
-            role: r.role as any
+            role: r.role as any,
+            department: r.department || ""
           }));
         }
       } catch (err) {
@@ -824,13 +1326,14 @@ class DatabaseManager {
     const clean = username.trim().toLowerCase();
     if (this.isPostgresActive && this.pgPool) {
       try {
-        const res = await this.pgPool.query(`SELECT username, password_hash, role FROM admins WHERE LOWER(username) = $1 LIMIT 1`, [clean]);
+        const res = await this.pgPool.query(`SELECT username, password_hash, role, department FROM admins WHERE LOWER(username) = $1 LIMIT 1`, [clean]);
         if (res.rows.length > 0) {
           const r = res.rows[0];
           return {
             username: r.username,
             passwordHash: r.password_hash,
-            role: r.role as any
+            role: r.role as any,
+            department: r.department || ""
           };
         }
         return null;
@@ -844,17 +1347,19 @@ class DatabaseManager {
 
   public async saveAdmin(admin: AdminUser): Promise<boolean> {
     const id = admin.username.toLowerCase();
+    const dept = admin.department || "";
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
-          INSERT INTO admins (id, username, password_hash, role, updated_at)
-          VALUES ($1, $2, $3, $4, NOW())
+          INSERT INTO admins (id, username, password_hash, role, department, updated_at)
+          VALUES ($1, $2, $3, $4, $5, NOW())
           ON CONFLICT (id) DO UPDATE SET
             username = EXCLUDED.username,
             password_hash = EXCLUDED.password_hash,
             role = EXCLUDED.role,
+            department = EXCLUDED.department,
             updated_at = NOW();
-        `, [id, admin.username, admin.passwordHash, admin.role]);
+        `, [id, admin.username, admin.passwordHash, admin.role, dept]);
         return true;
       } catch (err) {
         console.error("[PostgreSQL Save Error] saveAdmin:", err);
@@ -862,8 +1367,8 @@ class DatabaseManager {
     }
     const local = this.readLocalFile<AdminUser[]>("admins.json", defaultDefaultAdmins);
     const idx = local.findIndex(a => a.username.toLowerCase() === id);
-    if (idx >= 0) local[idx] = admin;
-    else local.push(admin);
+    if (idx >= 0) local[idx] = { ...admin, department: dept };
+    else local.push({ ...admin, department: dept });
     this.writeLocalFile("admins.json", local);
     return true;
   }

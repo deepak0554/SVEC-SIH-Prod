@@ -5,3 +5,5 @@ export * from "./evaluation.repository";
 export * from "./admin.repository";
 export * from "./payment.repository";
 export * from "./content.repository";
+export * from "./audit.repository";
+export * from "./notification.repository";

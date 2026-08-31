@@ -33,6 +33,7 @@ import { Registration, ProblemStatement } from "../types";
 import SvecLogo from "./SvecLogo";
 import ParticipationCertificateModal from "./ParticipationCertificateModal";
 import ConsentLetterModal from "./ConsentLetterModal";
+import { getErrorMessage } from "../utils/error";
 
 interface ReceiptProps {
   registration: Registration;
@@ -618,7 +619,7 @@ export default function Receipt({
           onUpdateRegistration(data.registration);
         }
       } else {
-        setErrorMsg(data.error || "Failed to upload file. Please check file type and size.");
+        setErrorMsg(getErrorMessage(data, "Failed to upload file. Please check file type and size."));
       }
     } catch (err) {
       setErrorMsg("Network error. Failed to upload presentation file.");
@@ -676,7 +677,7 @@ export default function Receipt({
           onUpdateRegistration(data.registration);
         }
       } else {
-        setErrorMsg(data.error || "Failed to update proposal.");
+        setErrorMsg(getErrorMessage(data, "Failed to update proposal."));
       }
     } catch (err) {
       setErrorMsg("Network error. Failed to save project proposal.");
@@ -1136,15 +1137,27 @@ export default function Receipt({
                 Print / Save Slip
               </button>
               
-              <button
-                type="button"
-                onClick={() => setShowConsentLetter(true)}
-                className="flex-1 py-3 px-4 rounded-xl font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer shadow-xs"
-                title="Generate & Download official SIH Consent / Nomination Letter"
-              >
-                <FileText className="w-4 h-4 text-indigo-600" />
-                Nomination Letter
-              </button>
+              {registration.isFinalSelected ? (
+                <button
+                  type="button"
+                  onClick={() => setShowConsentLetter(true)}
+                  className="flex-1 py-3 px-4 rounded-xl font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center justify-center gap-2 active:scale-98 transition-all cursor-pointer shadow-xs"
+                  title="Download official SIH Consent / Nomination Letter (Selected for Next Round)"
+                >
+                  <FileText className="w-4 h-4 text-emerald-600" />
+                  Nomination Letter
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="flex-1 py-3 px-4 rounded-xl font-medium bg-slate-100 border border-slate-200 text-slate-400 flex items-center justify-center gap-2 cursor-not-allowed shadow-2xs opacity-80"
+                  title="Consent / Nomination Letter is available for download only after your team is selected for the next round by the Evaluators / SPOC."
+                >
+                  <Lock className="w-4 h-4 text-amber-500" />
+                  Nomination Letter (Locked)
+                </button>
+              )}
 
               {lockRegisterAnotherTeam ? (
                 <button
@@ -1578,7 +1591,7 @@ export default function Receipt({
                         if (res.ok && data.success) {
                           setProfileSuccess("Profile details updated successfully.");
                         } else {
-                          setProfileError(data.error || "Failed to update profile.");
+                          setProfileError(getErrorMessage(data, "Failed to update profile."));
                         }
                       } catch (err) {
                         setProfileError("Network error. Please try again.");
@@ -1702,7 +1715,7 @@ export default function Receipt({
                           setProfileNewPass("");
                           setProfileConfirmPass("");
                         } else {
-                          setProfileError(data.error || "Failed to update password.");
+                          setProfileError(getErrorMessage(data, "Failed to update password."));
                         }
                       } catch (err) {
                         setProfileError("Network error. Please try again.");
@@ -1864,7 +1877,7 @@ export default function Receipt({
                         onUpdateRegistration(data.registration);
                       }
                     } else {
-                      setTeamError(data.error || "Failed to update team details.");
+                      setTeamError(getErrorMessage(data, "Failed to update team details."));
                     }
                   } catch (err) {
                     setTeamError("Network error. Failed to save team roster.");
@@ -2290,12 +2303,14 @@ export default function Receipt({
         />
       )}
 
-      {showConsentLetter && (
+      {showConsentLetter && registration.isFinalSelected && (
         <ConsentLetterModal
           isOpen={true}
           onClose={() => setShowConsentLetter(false)}
           registration={registration}
-          isReadOnly={false}
+          isReadOnly={true}
+          isSuperAdmin={false}
+          canCustomize={false}
         />
       )}
 

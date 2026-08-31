@@ -59,12 +59,16 @@ export interface Registration {
   evaluatorScores?: Record<string, number>;
   evaluationNotes?: string;
   evaluationStatus?: "pending" | "completed";
+  isEvaluationLocked?: boolean;
+  evaluationLockedBy?: string;
+  evaluationLockedAt?: string;
   isFinalSelected?: boolean;
   selectionNotes?: string;
-  approvalStatus?: "pending" | "verified" | "under_review" | "rejected";
+  approvalStatus?: "pending" | "verified" | "approved" | "under_review" | "rejected";
   approvalNotes?: string;
   verifiedAt?: string;
   verifiedBy?: string;
+  totalScore?: number;
 }
 
 export interface EvaluationCriterion {
@@ -102,6 +106,11 @@ export interface FeeConfig {
   portalCaption?: string;
   teamMembersCount?: number;
   genderDiversityRequired?: boolean;
+  registrationDeadline?: string;
+  submissionDeadline?: string;
+  minTeamSize?: number;
+  maxTeamSize?: number;
+  maxTeamsPerProblemStatement?: number;
 
   // SMS Gateway config
   smsEnabled?: boolean;
@@ -168,6 +177,21 @@ export interface FeeConfig {
   samplePptFileBase64?: string;
   samplePptFileUrl?: string;
   samplePptDescription?: string;
+
+  // Consent / Nomination Letter Configuration (Customizable strictly by Super Admin)
+  consentLetterEnabled?: boolean;
+  consentLetterAicteNo?: string;
+  consentLetterPrincipalName?: string;
+  consentLetterDesignation1?: string;
+  consentLetterDesignation2?: string;
+  consentLetterSignatureUrl?: string;
+  consentLetterStampUrl?: string;
+  consentLetterShowSignature?: boolean;
+  consentLetterShowStamp?: boolean;
+  consentLetterIncludeLetterhead?: boolean;
+  consentLetterCustomSubject?: string;
+  consentLetterBodyTemplate?: string;
+  consentLetterRequireSelection?: boolean;
 }
 
 export interface Signatory {
@@ -278,6 +302,31 @@ export interface LiveUpdate {
   text: string;
   createdAt: string;
   isImportant?: boolean;
+}
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+  hasPrevPage: boolean;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: PaginationMeta;
+}
+
+export interface PaginationQueryOptions {
+  page?: number;
+  limit?: number;
+  search?: string;
+  department?: string;
+  status?: string;
+  category?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
 

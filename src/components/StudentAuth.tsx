@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
 import { Mail, Lock, LogIn, UserPlus, AlertCircle, CheckCircle2, GraduationCap, Phone, User, BookOpen } from "lucide-react";
+import { api, ApiError } from "../services/api";
 
 interface StudentAuthProps {
   onAuthSuccess: (student: { id: string; email: string; gender?: string; department?: string; mobile?: string; token?: string }) => void;
@@ -18,13 +19,24 @@ export default function StudentAuth({ onAuthSuccess, isDark = false }: StudentAu
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSuccess("");
 
-    if (!email.trim() || !password) {
-      setError("Please fill in all fields.");
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
+      setError("Please fill in all required fields.");
       return;
     }
 
@@ -56,32 +68,27 @@ export default function StudentAuth({ onAuthSuccess, isDark = false }: StudentAu
 
     const endpoint = isLogin ? "/api/auth/login" : "/api/auth/register";
     const payload = isLogin
-      ? { email, password }
-      : { email, password, gender, department, mobile: mobile.trim() };
+      ? { email: trimmedEmail, password }
+      : { email: trimmedEmail, password, gender, department, mobile: mobile.trim() };
 
     try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      const data = await api.post(endpoint, payload);
+      const studentData = { ...data.student, token: data.token };
 
-      const data = await res.json();
-      if (res.ok) {
-        const studentData = { ...data.student, token: data.token };
-        if (!isLogin) {
-          setSuccess("Account created successfully! Logging you in...");
-          setTimeout(() => {
-            onAuthSuccess(studentData);
-          }, 1500);
-        } else {
+      if (!isLogin) {
+        setSuccess("Account created successfully! Logging you in...");
+        timerRef.current = setTimeout(() => {
           onAuthSuccess(studentData);
-        }
+        }, 1200);
       } else {
-        setError(data.error || "Authentication failed. Please try again.");
+        onAuthSuccess(studentData);
       }
-    } catch (err) {
-      setError("A network error occurred. Please try again.");
+    } catch (err: any) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError("Authentication failed. Please try again.");
+      }
     } finally {
       setIsLoading(false);
     }

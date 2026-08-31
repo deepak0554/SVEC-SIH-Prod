@@ -82,8 +82,13 @@ import {
   homepageContentSchema,
   updatesArraySchema,
   paginationQuerySchema,
-  singleIdParamSchema
+  singleIdParamSchema,
+  toggleEvaluationLockSchema
 } from "./server/validation";
+import { validateTeamRegistration, validateProposalSubmission } from "./server/businessRules";
+import { createAuthoritativePaymentOrder, verifyAuthoritativePayment } from "./server/paymentSecurity";
+import { standardizeResponseMiddleware, errorHandler, notFoundHandler } from "./server/middleware";
+import { evaluationService, notificationService } from "./server/services";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -91,6 +96,9 @@ const IS_VERCEL = !!process.env.VERCEL;
 
 // Enforce standard 5MB JSON payload limit (multipart/form-data handles binary streams)
 app.use(express.json({ limit: "5mb" }));
+
+// Standardize all error responses to format: { success: false, error: { code, message, details }, message }
+app.use(standardizeResponseMiddleware);
 
 // Legacy fallback: Keep a helper pointing to saveBase64Securely
 function saveBase64File(
@@ -106,6 +114,37 @@ function saveBase64File(
     size: res.size,
     relativePath: `/uploads/${category}/${res.filename}`
   };
+}
+
+/**
+ * Robust Department matching helper for Department-Specific SPOC data scoping.
+ * Compares department names, codes, abbreviations (e.g. CSE, IT, ECE) case-insensitively.
+ */
+export function isDepartmentMatch(teamDept?: string, adminDept?: string): boolean {
+  if (!adminDept || adminDept.trim() === "" || adminDept.trim().toLowerCase() === "all") {
+    return true; // Super admin or unassigned matches all
+  }
+  if (!teamDept || teamDept.trim() === "") {
+    return false;
+  }
+  const cleanTeam = teamDept.trim().toLowerCase();
+  const cleanAdmin = adminDept.trim().toLowerCase();
+  
+  if (cleanTeam === cleanAdmin) return true;
+
+  // Extract parentheses abbreviations, e.g. "Computer Science & Engineering (CSE)" -> "cse"
+  const teamParen = cleanTeam.match(/\(([^)]+)\)/);
+  const adminParen = cleanAdmin.match(/\(([^)]+)\)/);
+  
+  const teamAbbr = teamParen ? teamParen[1].trim().toLowerCase() : cleanTeam;
+  const adminAbbr = adminParen ? adminParen[1].trim().toLowerCase() : cleanAdmin;
+  
+  if (teamAbbr === adminAbbr || teamAbbr === cleanAdmin || adminAbbr === cleanTeam) return true;
+
+  // Substring matching
+  if (cleanTeam.includes(cleanAdmin) || cleanAdmin.includes(cleanTeam)) return true;
+
+  return false;
 }
 
 if (IS_VERCEL) {
@@ -395,36 +434,74 @@ function writeMenuItems(items: MenuItem[]) {
   });
 }
 
+export const MASKED_SECRET = "••••••••";
+
+export function maskSecretValue(val?: string): string {
+  return val && val.trim().length > 0 ? MASKED_SECRET : "";
+}
+
+export function sanitizeSettingsForAdmin(settings: FeeConfig): FeeConfig {
+  return {
+    ...settings,
+    razorpayKeySecret: maskSecretValue(settings.razorpayKeySecret),
+    smtpPass: maskSecretValue(settings.smtpPass),
+    twilioAuthToken: maskSecretValue(settings.twilioAuthToken),
+    msg91AuthKey: maskSecretValue(settings.msg91AuthKey),
+    whatsappAccessToken: maskSecretValue(settings.whatsappAccessToken),
+    dbPassword: maskSecretValue(settings.dbPassword),
+  };
+}
+
+export function resolveSecretUpdate(incoming: string | undefined, currentSecret: string | undefined, envSecret?: string): string {
+  if (incoming === undefined || incoming === null) {
+    return currentSecret || envSecret || "";
+  }
+  const clean = incoming.trim();
+  if (clean === "") {
+    return "";
+  }
+  // If it's a masked placeholder string (bullets or asterisks), preserve current secret or environment secret
+  if (/^[•*]+$/.test(clean)) {
+    return currentSecret || envSecret || "";
+  }
+  return clean;
+}
+
 function readSettings(): FeeConfig {
   const parsed = db.readLocalFile<any>("settings.json", {});
   return {
     feeEnabled: parsed.feeEnabled ?? false,
     feeAmount: parsed.feeAmount ?? 499,
-    razorpayKeyId: parsed.razorpayKeyId ?? "",
-    razorpayKeySecret: parsed.razorpayKeySecret ?? "",
+    razorpayKeyId: process.env.RAZORPAY_KEY_ID || parsed.razorpayKeyId || "",
+    razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || parsed.razorpayKeySecret || "",
     jwtEnabled: parsed.jwtEnabled ?? false,
     emailEnabled: parsed.emailEnabled ?? false,
-    smtpHost: parsed.smtpHost ?? "",
-    smtpPort: parsed.smtpPort ?? 587,
-    smtpUser: parsed.smtpUser ?? "",
-    smtpPass: parsed.smtpPass ?? "",
-    smtpFrom: parsed.smtpFrom ?? "",
+    smtpHost: process.env.SMTP_HOST || parsed.smtpHost || "",
+    smtpPort: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : (parsed.smtpPort ?? 587),
+    smtpUser: process.env.SMTP_USER || parsed.smtpUser || "",
+    smtpPass: process.env.SMTP_PASS || process.env.SMTP_PASSWORD || parsed.smtpPass || "",
+    smtpFrom: process.env.SMTP_FROM || parsed.smtpFrom || "",
     portalTheme: parsed.portalTheme ?? "light",
     logoUrl: parsed.logoUrl ?? "",
     portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
     portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College",
     teamMembersCount: parsed.teamMembersCount ?? 5,
     genderDiversityRequired: parsed.genderDiversityRequired ?? true,
+    registrationDeadline: parsed.registrationDeadline ?? "",
+    submissionDeadline: parsed.submissionDeadline ?? "",
+    minTeamSize: parsed.minTeamSize !== undefined ? Number(parsed.minTeamSize) : undefined,
+    maxTeamSize: parsed.maxTeamSize !== undefined ? Number(parsed.maxTeamSize) : undefined,
+    maxTeamsPerProblemStatement: parsed.maxTeamsPerProblemStatement !== undefined ? Number(parsed.maxTeamsPerProblemStatement) : undefined,
 
     // SMS config
     smsEnabled: parsed.smsEnabled ?? false,
     smsProvider: parsed.smsProvider ?? "twilio",
-    twilioSid: parsed.twilioSid ?? "",
-    twilioAuthToken: parsed.twilioAuthToken ?? "",
-    twilioFrom: parsed.twilioFrom ?? "",
-    msg91AuthKey: parsed.msg91AuthKey ?? "",
-    msg91SenderId: parsed.msg91SenderId ?? "",
-    msg91Route: parsed.msg91Route ?? "4",
+    twilioSid: process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID || parsed.twilioSid || "",
+    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || parsed.twilioAuthToken || "",
+    twilioFrom: process.env.TWILIO_FROM || parsed.twilioFrom || "",
+    msg91AuthKey: process.env.MSG91_AUTH_KEY || parsed.msg91AuthKey || "",
+    msg91SenderId: process.env.MSG91_SENDER_ID || parsed.msg91SenderId || "",
+    msg91Route: process.env.MSG91_ROUTE || parsed.msg91Route || "4",
     smsCustomUrl: parsed.smsCustomUrl ?? "",
     smsCustomMethod: parsed.smsCustomMethod ?? "POST",
     smsCustomHeaders: parsed.smsCustomHeaders ?? "",
@@ -433,9 +510,9 @@ function readSettings(): FeeConfig {
     // WhatsApp config
     whatsappEnabled: parsed.whatsappEnabled ?? false,
     whatsappProvider: parsed.whatsappProvider ?? "meta",
-    whatsappAccessToken: parsed.whatsappAccessToken ?? "",
-    whatsappPhoneId: parsed.whatsappPhoneId ?? "",
-    whatsappWabaId: parsed.whatsappWabaId ?? "",
+    whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN || parsed.whatsappAccessToken || "",
+    whatsappPhoneId: process.env.WHATSAPP_PHONE_ID || parsed.whatsappPhoneId || "",
+    whatsappWabaId: process.env.WHATSAPP_WABA_ID || parsed.whatsappWabaId || "",
     whatsappCustomUrl: parsed.whatsappCustomUrl ?? "",
     whatsappCustomMethod: parsed.whatsappCustomMethod ?? "POST",
     whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
@@ -444,11 +521,11 @@ function readSettings(): FeeConfig {
     // External DB config
     dbEnabled: parsed.dbEnabled ?? false,
     dbType: parsed.dbType ?? "none",
-    dbHost: parsed.dbHost ?? "",
-    dbPort: parsed.dbPort !== undefined ? Number(parsed.dbPort) : undefined,
-    dbName: parsed.dbName ?? "",
-    dbUsername: parsed.dbUsername ?? "",
-    dbPassword: parsed.dbPassword ?? "",
+    dbHost: process.env.DB_HOST || process.env.PG_HOST || parsed.dbHost || "",
+    dbPort: process.env.DB_PORT ? Number(process.env.DB_PORT) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : (parsed.dbPort !== undefined ? Number(parsed.dbPort) : undefined)),
+    dbName: process.env.DB_NAME || process.env.PG_DATABASE || parsed.dbName || "",
+    dbUsername: process.env.DB_USERNAME || process.env.PG_USER || parsed.dbUsername || "",
+    dbPassword: process.env.DB_PASSWORD || process.env.PG_PASSWORD || parsed.dbPassword || "",
     dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
     dbStatus: parsed.dbStatus ?? "Not Connected",
 
@@ -2113,14 +2190,29 @@ app.get("/api/settings/public", (req, res) => {
     samplePptUrl: settings.samplePptUrl || "",
     samplePptFileName: settings.samplePptFileName || "",
     samplePptFileBase64: settings.samplePptFileBase64 || "",
-    samplePptDescription: settings.samplePptDescription || ""
+    samplePptDescription: settings.samplePptDescription || "",
+
+    // Consent Letter Template (Configured by Super Admin)
+    consentLetterEnabled: settings.consentLetterEnabled !== undefined ? !!settings.consentLetterEnabled : true,
+    consentLetterAicteNo: settings.consentLetterAicteNo || "1-3634005111",
+    consentLetterPrincipalName: settings.consentLetterPrincipalName || "Dr. Ch. Rambabu",
+    consentLetterDesignation1: settings.consentLetterDesignation1 || "Principal, Sri Vasavi Engineering College (Autonomous)",
+    consentLetterDesignation2: settings.consentLetterDesignation2 || "Pedatadepalli, Tadepalligudem.",
+    consentLetterSignatureUrl: settings.consentLetterSignatureUrl || "",
+    consentLetterStampUrl: settings.consentLetterStampUrl || "",
+    consentLetterShowSignature: settings.consentLetterShowSignature !== undefined ? !!settings.consentLetterShowSignature : true,
+    consentLetterShowStamp: settings.consentLetterShowStamp !== undefined ? !!settings.consentLetterShowStamp : true,
+    consentLetterIncludeLetterhead: settings.consentLetterIncludeLetterhead !== undefined ? !!settings.consentLetterIncludeLetterhead : true,
+    consentLetterCustomSubject: settings.consentLetterCustomSubject || "Sub: Smart India Hackathon 2026 – Nomination",
+    consentLetterBodyTemplate: settings.consentLetterBodyTemplate || "",
+    consentLetterRequireSelection: settings.consentLetterRequireSelection !== undefined ? !!settings.consentLetterRequireSelection : true
   });
 });
 
-// Admin Settings (private, requires passcode)
+// Admin Settings (private, requires passcode, masks secret keys)
 app.get("/api/settings", authorize(["ADMIN"]), (req, res) => {
   const settings = readSettings();
-  res.json(settings);
+  res.json(sanitizeSettingsForAdmin(settings));
 });
 
 // Admin Update Settings
@@ -2204,20 +2296,46 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     samplePptUrl,
     samplePptFileName,
     samplePptFileBase64,
-    samplePptDescription
+    samplePptDescription,
+
+    // Consent Letter Template (Configured by Super Admin)
+    consentLetterEnabled,
+    consentLetterAicteNo,
+    consentLetterPrincipalName,
+    consentLetterDesignation1,
+    consentLetterDesignation2,
+    consentLetterSignatureUrl,
+    consentLetterStampUrl,
+    consentLetterShowSignature,
+    consentLetterShowStamp,
+    consentLetterIncludeLetterhead,
+    consentLetterCustomSubject,
+    consentLetterBodyTemplate,
+    consentLetterRequireSelection
   } = req.body;
 
+  const currentSettings = readSettings();
+
+  // Resolve secret updates without overwriting when masked or blanking out unintentionally
+  const resolvedRazorpaySecret = resolveSecretUpdate(razorpayKeySecret, currentSettings.razorpayKeySecret, process.env.RAZORPAY_KEY_SECRET);
+  const resolvedSmtpPass = resolveSecretUpdate(smtpPass, currentSettings.smtpPass, process.env.SMTP_PASS || process.env.SMTP_PASSWORD);
+  const resolvedTwilioToken = resolveSecretUpdate(twilioAuthToken, currentSettings.twilioAuthToken, process.env.TWILIO_AUTH_TOKEN);
+  const resolvedMsg91Key = resolveSecretUpdate(msg91AuthKey, currentSettings.msg91AuthKey, process.env.MSG91_AUTH_KEY);
+  const resolvedWhatsappToken = resolveSecretUpdate(whatsappAccessToken, currentSettings.whatsappAccessToken, process.env.WHATSAPP_ACCESS_TOKEN);
+  const resolvedDbPassword = resolveSecretUpdate(dbPassword, currentSettings.dbPassword, process.env.DB_PASSWORD || process.env.PG_PASSWORD);
+
   const updated: FeeConfig = {
+    ...currentSettings,
     feeEnabled: !!feeEnabled,
     feeAmount: Number(feeAmount) || 0,
     razorpayKeyId: (razorpayKeyId || "").trim(),
-    razorpayKeySecret: (razorpayKeySecret || "").trim(),
+    razorpayKeySecret: resolvedRazorpaySecret,
     jwtEnabled: !!jwtEnabled,
     emailEnabled: !!emailEnabled,
     smtpHost: (smtpHost || "").trim(),
     smtpPort: Number(smtpPort) || 587,
     smtpUser: (smtpUser || "").trim(),
-    smtpPass: (smtpPass || "").trim(),
+    smtpPass: resolvedSmtpPass,
     smtpFrom: (smtpFrom || "").trim(),
     portalTheme: (portalTheme || "light").trim() as any,
     logoUrl: (logoUrl || "").trim(),
@@ -2230,9 +2348,9 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     smsEnabled: !!smsEnabled,
     smsProvider: (smsProvider || "twilio").trim() as any,
     twilioSid: (twilioSid || "").trim(),
-    twilioAuthToken: (twilioAuthToken || "").trim(),
+    twilioAuthToken: resolvedTwilioToken,
     twilioFrom: (twilioFrom || "").trim(),
-    msg91AuthKey: (msg91AuthKey || "").trim(),
+    msg91AuthKey: resolvedMsg91Key,
     msg91SenderId: (msg91SenderId || "").trim(),
     msg91Route: (msg91Route || "4").trim(),
     smsCustomUrl: (smsCustomUrl || "").trim(),
@@ -2243,7 +2361,7 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     // WhatsApp properties
     whatsappEnabled: !!whatsappEnabled,
     whatsappProvider: (whatsappProvider || "meta").trim() as any,
-    whatsappAccessToken: (whatsappAccessToken || "").trim(),
+    whatsappAccessToken: resolvedWhatsappToken,
     whatsappPhoneId: (whatsappPhoneId || "").trim(),
     whatsappWabaId: (whatsappWabaId || "").trim(),
     whatsappCustomUrl: (whatsappCustomUrl || "").trim(),
@@ -2258,7 +2376,7 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     dbPort: dbPort !== undefined && dbPort !== "" ? Number(dbPort) : undefined,
     dbName: (dbName || "").trim(),
     dbUsername: (dbUsername || "").trim(),
-    dbPassword: (dbPassword || "").trim(),
+    dbPassword: resolvedDbPassword,
     dbCollectionOrTable: (dbCollectionOrTable || "registrations").trim(),
     dbStatus: (dbStatus || "Not Connected").trim(),
 
@@ -2286,11 +2404,74 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     samplePptUrl: (samplePptUrl || "").trim(),
     samplePptFileName: (samplePptFileName || "").trim(),
     samplePptFileBase64: (samplePptFileBase64 || "").trim(),
-    samplePptDescription: (samplePptDescription || "").trim()
+    samplePptDescription: (samplePptDescription || "").trim(),
+
+    // Consent Letter Template (Configured strictly by Super Admin)
+    consentLetterEnabled: consentLetterEnabled !== undefined ? !!consentLetterEnabled : currentSettings.consentLetterEnabled,
+    consentLetterAicteNo: consentLetterAicteNo !== undefined ? (consentLetterAicteNo || "").trim() : currentSettings.consentLetterAicteNo,
+    consentLetterPrincipalName: consentLetterPrincipalName !== undefined ? (consentLetterPrincipalName || "").trim() : currentSettings.consentLetterPrincipalName,
+    consentLetterDesignation1: consentLetterDesignation1 !== undefined ? (consentLetterDesignation1 || "").trim() : currentSettings.consentLetterDesignation1,
+    consentLetterDesignation2: consentLetterDesignation2 !== undefined ? (consentLetterDesignation2 || "").trim() : currentSettings.consentLetterDesignation2,
+    consentLetterSignatureUrl: consentLetterSignatureUrl !== undefined ? (consentLetterSignatureUrl || "").trim() : currentSettings.consentLetterSignatureUrl,
+    consentLetterStampUrl: consentLetterStampUrl !== undefined ? (consentLetterStampUrl || "").trim() : currentSettings.consentLetterStampUrl,
+    consentLetterShowSignature: consentLetterShowSignature !== undefined ? !!consentLetterShowSignature : currentSettings.consentLetterShowSignature,
+    consentLetterShowStamp: consentLetterShowStamp !== undefined ? !!consentLetterShowStamp : currentSettings.consentLetterShowStamp,
+    consentLetterIncludeLetterhead: consentLetterIncludeLetterhead !== undefined ? !!consentLetterIncludeLetterhead : currentSettings.consentLetterIncludeLetterhead,
+    consentLetterCustomSubject: consentLetterCustomSubject !== undefined ? (consentLetterCustomSubject || "").trim() : currentSettings.consentLetterCustomSubject,
+    consentLetterBodyTemplate: consentLetterBodyTemplate !== undefined ? (consentLetterBodyTemplate || "").trim() : currentSettings.consentLetterBodyTemplate,
+    consentLetterRequireSelection: consentLetterRequireSelection !== undefined ? !!consentLetterRequireSelection : currentSettings.consentLetterRequireSelection
   };
 
   writeSettings(updated);
-  res.json({ success: true, settings: updated });
+  // Never expose raw secrets in API responses
+  res.json({ success: true, settings: sanitizeSettingsForAdmin(updated) });
+});
+
+// Dedicated Consent Letter Template Save Endpoint (Strictly Super Admin / SPOC)
+app.post("/api/admin/consent-letter-template", authorize(["ADMIN"]), (req, res) => {
+  const adminRole = (req as any).adminRole;
+  if (adminRole !== "SPOC" && adminRole !== "ADMIN") {
+    return res.status(403).json({
+      error: "Forbidden: Consent Letter customization and global template modification is strictly reserved for Super Admin (SPOC)."
+    });
+  }
+
+  const {
+    consentLetterEnabled,
+    consentLetterAicteNo,
+    consentLetterPrincipalName,
+    consentLetterDesignation1,
+    consentLetterDesignation2,
+    consentLetterSignatureUrl,
+    consentLetterStampUrl,
+    consentLetterShowSignature,
+    consentLetterShowStamp,
+    consentLetterIncludeLetterhead,
+    consentLetterCustomSubject,
+    consentLetterBodyTemplate,
+    consentLetterRequireSelection
+  } = req.body;
+
+  const current = readSettings();
+  const updated: FeeConfig = {
+    ...current,
+    consentLetterEnabled: consentLetterEnabled !== undefined ? !!consentLetterEnabled : current.consentLetterEnabled,
+    consentLetterAicteNo: consentLetterAicteNo !== undefined ? (consentLetterAicteNo || "").trim() : current.consentLetterAicteNo,
+    consentLetterPrincipalName: consentLetterPrincipalName !== undefined ? (consentLetterPrincipalName || "").trim() : current.consentLetterPrincipalName,
+    consentLetterDesignation1: consentLetterDesignation1 !== undefined ? (consentLetterDesignation1 || "").trim() : current.consentLetterDesignation1,
+    consentLetterDesignation2: consentLetterDesignation2 !== undefined ? (consentLetterDesignation2 || "").trim() : current.consentLetterDesignation2,
+    consentLetterSignatureUrl: consentLetterSignatureUrl !== undefined ? (consentLetterSignatureUrl || "").trim() : current.consentLetterSignatureUrl,
+    consentLetterStampUrl: consentLetterStampUrl !== undefined ? (consentLetterStampUrl || "").trim() : current.consentLetterStampUrl,
+    consentLetterShowSignature: consentLetterShowSignature !== undefined ? !!consentLetterShowSignature : current.consentLetterShowSignature,
+    consentLetterShowStamp: consentLetterShowStamp !== undefined ? !!consentLetterShowStamp : current.consentLetterShowStamp,
+    consentLetterIncludeLetterhead: consentLetterIncludeLetterhead !== undefined ? !!consentLetterIncludeLetterhead : current.consentLetterIncludeLetterhead,
+    consentLetterCustomSubject: consentLetterCustomSubject !== undefined ? (consentLetterCustomSubject || "").trim() : current.consentLetterCustomSubject,
+    consentLetterBodyTemplate: consentLetterBodyTemplate !== undefined ? (consentLetterBodyTemplate || "").trim() : current.consentLetterBodyTemplate,
+    consentLetterRequireSelection: consentLetterRequireSelection !== undefined ? !!consentLetterRequireSelection : current.consentLetterRequireSelection
+  };
+
+  writeSettings(updated);
+  res.json({ success: true, message: "Consent Letter official template updated successfully.", template: updated });
 });
 
 // Download/Redirect to Sample PPT Presentation File
@@ -2334,6 +2515,8 @@ app.get("/api/settings/sample-ppt/download", (req, res) => {
 // POST test external DB connection & install schemas dynamically
 app.post("/api/settings/test-db", authorize(["ADMIN"]), validateBody(testDbSchema), async (req, res) => {
   const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword, dbCollectionOrTable } = req.body;
+  const currentSettings = readSettings();
+  const resolvedDbPassword = resolveSecretUpdate(dbPassword, currentSettings.dbPassword, process.env.DB_PASSWORD || process.env.PG_PASSWORD);
 
   try {
     const initResult = await db.init({
@@ -2343,7 +2526,7 @@ app.post("/api/settings/test-db", authorize(["ADMIN"]), validateBody(testDbSchem
       dbPort,
       dbName,
       dbUsername,
-      dbPassword,
+      dbPassword: resolvedDbPassword,
       dbCollectionOrTable
     });
 
@@ -2678,51 +2861,30 @@ app.post("/api/admin/broadcast-email", authorize(["ADMIN", "STUDENT_SPOC"]), val
   });
 });
 
-// Create Razorpay Order
+// Create Razorpay Order - Server-Authoritative Fee Calculation & Ledger Registration
 app.post("/api/payments/create-order", async (req, res) => {
   try {
     const settings = readSettings();
-    if (!settings.feeEnabled) {
-      return res.status(400).json({ error: "Registration fee is currently disabled by administrator." });
-    }
+    const { studentEmail, registrationId, teamName } = req.body || {};
 
-    if (!settings.razorpayKeyId || !settings.razorpayKeySecret) {
-      return res.status(400).json({ error: "Razorpay payment credentials are not configured by the administrator." });
-    }
-
-    if (settings.razorpayKeyId === "rzp_test_mock") {
-      return res.json({
-        success: true,
-        orderId: `order_mock_${Date.now()}`,
-        amount: Math.round(settings.feeAmount * 100),
-        currency: "INR",
-        keyId: "rzp_test_mock"
-      });
-    }
-
-    // Initialize Razorpay lazily
-    const razorpayInstance = new Razorpay({
-      key_id: settings.razorpayKeyId,
-      key_secret: settings.razorpayKeySecret
+    const orderResult = await createAuthoritativePaymentOrder({
+      studentEmail,
+      registrationId,
+      teamName,
+      settings
     });
 
-    const options = {
-      amount: Math.round(settings.feeAmount * 100), // convert to paise
-      currency: "INR",
-      receipt: `receipt_sih_${Date.now()}`,
-    };
-
-    const order = await razorpayInstance.orders.create(options);
     res.json({
       success: true,
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      keyId: settings.razorpayKeyId
+      orderId: orderResult.orderId,
+      amount: orderResult.amount,
+      currency: orderResult.currency,
+      keyId: orderResult.keyId,
+      receipt: orderResult.receipt
     });
   } catch (err: any) {
-    console.error("Razorpay order creation error:", err);
-    res.status(500).json({ error: err.message || "Failed to create payment order" });
+    console.error("[Payment Security] Order creation error:", err);
+    res.status(400).json({ error: err.message || "Failed to create payment order" });
   }
 });
 
@@ -2734,7 +2896,8 @@ app.post("/api/admin/login", validateBody(adminLoginSchema), (req, res) => {
   try {
     const admins = getAdmins();
     const adminIndex = admins.findIndex(
-      a => a.username.trim().toLowerCase() === username.trim().toLowerCase() && a.role === role
+      a => a.username.trim().toLowerCase() === username.trim().toLowerCase() && 
+           (a.role === role || normalizeRole(a.role) === normalizeRole(role))
     );
 
     if (adminIndex === -1) {
@@ -2757,7 +2920,7 @@ app.post("/api/admin/login", validateBody(adminLoginSchema), (req, res) => {
     }
 
     const token = signAdminToken(
-      { username: admin.username, role: admin.role as "SPOC" | "Student SPOC" | "Evaluator" },
+      { username: admin.username, role: admin.role as any, department: admin.department || "" },
       "24h"
     );
 
@@ -2765,7 +2928,8 @@ app.post("/api/admin/login", validateBody(adminLoginSchema), (req, res) => {
       success: true,
       token,
       role: admin.role,
-      username: admin.username
+      username: admin.username,
+      department: admin.department || ""
     });
   } catch (err) {
     console.error("Admin login error:", err);
@@ -2785,59 +2949,79 @@ app.post("/api/admin/verify", (req, res) => {
   // 1. Verify as signed JWT admin token
   const decoded = verifyAdminToken(cleanPasscode);
   if (decoded) {
-    return res.json({ success: true, role: decoded.role, username: decoded.username });
+    return res.json({ success: true, role: decoded.role, username: decoded.username, department: decoded.department || "" });
   }
 
   // 2. Master pass code verification
   const masterPasscode = getAdminPasscode();
   if (masterPasscode && cleanPasscode === masterPasscode) {
-    return res.json({ success: true, role: "SPOC", username: "system_admin" });
+    return res.json({ success: true, role: "SPOC", username: "system_admin", department: "" });
   }
 
   res.status(401).json({ error: "Invalid or expired admin session token." });
 });
 
-// GET list of admins (Super Admin SPOC only)
-app.get("/api/admin/manage-admins", authorize(["ADMIN"]), (req, res) => {
+// GET list of admins (Super Admin SPOC and Department SPOC)
+app.get("/api/admin/manage-admins", authorize(["ADMIN", "DEPT_SPOC"]), (req, res) => {
   try {
     const admins = getAdmins();
-    const safeAdmins = admins.map(a => ({ username: a.username, role: a.role }));
+    const userRole = (req as any).userRole;
+    const safeAdmins = admins.map(a => ({ username: a.username, role: a.role, department: a.department || "" }));
+
+    if (userRole === "DEPT_SPOC") {
+      // Dept SPOC can see Evaluators to manage them for their event operations
+      const evaluatorsOnly = safeAdmins.filter(a => normalizeRole(a.role) === "EVALUATOR" || a.username.toLowerCase() === ((req as any).adminUser || "").toLowerCase());
+      return res.json(evaluatorsOnly);
+    }
+
     res.json(safeAdmins);
   } catch (err) {
     res.status(500).json({ error: "Failed to read admins list" });
   }
 });
 
-// POST a new admin (Super Admin SPOC only)
-app.post("/api/admin/manage-admins", authorize(["ADMIN"]), validateBody(manageAdminCreateSchema), (req, res) => {
-  const { username, password, role } = req.body;
-
+// POST a new admin (Super Admin SPOC & Department SPOC for creating evaluators)
+app.post("/api/admin/manage-admins", authorize(["ADMIN", "DEPT_SPOC"]), validateBody(manageAdminCreateSchema), (req, res) => {
+  const { username, password, role, department } = req.body;
+  const userRole = (req as any).userRole;
   const cleanUsername = username.trim();
+
+  // If DEPT_SPOC is creating an admin account, they can only create Evaluator accounts
+  if (userRole === "DEPT_SPOC") {
+    const normRole = normalizeRole(role);
+    if (normRole !== "EVALUATOR") {
+      return res.status(403).json({ error: "Department SPOC is only authorized to create Evaluator accounts." });
+    }
+  }
 
   try {
     const admins = getAdmins();
     const exists = admins.some(a => a.username.toLowerCase() === cleanUsername.toLowerCase());
     if (exists) {
-      return res.status(400).json({ error: "Admin with this username already exists." });
+      return res.status(400).json({ error: "Admin or Evaluator with this username already exists." });
     }
+
+    const assignedDept = (normalizeRole(role) === "DEPT_SPOC") ? (department || "").trim() : "";
 
     const newAdmin: AdminUser = {
       username: cleanUsername,
       passwordHash: hashPassword(password),
-      role: (role === "SPOC" || role === "Student SPOC" || role === "Evaluator") ? role : "Student SPOC"
+      role: role as any,
+      department: assignedDept
     };
 
     admins.push(newAdmin);
     saveAdmins(admins);
-    res.json({ success: true, message: `Admin ${cleanUsername} created successfully as ${role}.` });
+    res.json({ success: true, message: `Account for ${cleanUsername} created successfully as ${role}${assignedDept ? ` (${assignedDept})` : ""}.` });
   } catch (err) {
     res.status(500).json({ error: "Failed to save new admin" });
   }
 });
 
-// DELETE an admin (Super Admin SPOC only)
-app.delete("/api/admin/manage-admins/:username", authorize(["ADMIN"]), (req, res) => {
+// DELETE an admin (Super Admin SPOC and Department SPOC for evaluators)
+app.delete("/api/admin/manage-admins/:username", authorize(["ADMIN", "DEPT_SPOC"]), (req, res) => {
   const targetUsername = req.params.username.trim().toLowerCase();
+  const userRole = (req as any).userRole;
   
   if (targetUsername === "deepak0554") {
     return res.status(400).json({ error: "Cannot delete the primary SPOC admin." });
@@ -2850,13 +3034,18 @@ app.delete("/api/admin/manage-admins/:username", authorize(["ADMIN"]), (req, res
 
   try {
     const admins = getAdmins();
-    const filtered = admins.filter(a => a.username.toLowerCase() !== targetUsername);
-    if (filtered.length === admins.length) {
+    const targetAdmin = admins.find(a => a.username.toLowerCase() === targetUsername);
+    if (!targetAdmin) {
       return res.status(404).json({ error: "Admin user not found." });
     }
 
+    if (userRole === "DEPT_SPOC" && normalizeRole(targetAdmin.role) !== "EVALUATOR") {
+      return res.status(403).json({ error: "Department SPOC can only remove Evaluator accounts." });
+    }
+
+    const filtered = admins.filter(a => a.username.toLowerCase() !== targetUsername);
     saveAdmins(filtered);
-    res.json({ success: true, message: "Admin account removed successfully." });
+    res.json({ success: true, message: "Account removed successfully." });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete admin" });
   }
@@ -3012,13 +3201,22 @@ app.delete("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), 
   res.json({ success: true, message: "Deleted successfully" });
 });
 
-// GET registrations (Admin, Student SPOC, Evaluator, Faculty)
-app.get("/api/registrations", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), (req, res) => {
-  res.json(readRegistrations());
+// GET registrations (Admin, Dept SPOC, Student SPOC, Evaluator, Faculty)
+app.get("/api/registrations", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), (req, res) => {
+  const allRegistrations = readRegistrations();
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+
+  if (userRole === "DEPT_SPOC" && adminDept) {
+    const filtered = allRegistrations.filter(r => isDepartmentMatch(r.leadDepartment, adminDept));
+    return res.json(filtered);
+  }
+
+  res.json(allRegistrations);
 });
 
 // GET evaluation criteria (Admin/Evaluators/Faculty)
-app.get("/api/admin/evaluation-criteria", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), (req, res) => {
+app.get("/api/admin/evaluation-criteria", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), (req, res) => {
   res.json(readCriteria());
 });
 
@@ -3032,8 +3230,8 @@ app.post("/api/admin/evaluation-criteria", authorize(["ADMIN"]), validateBody(up
   res.json({ success: true, message: "Evaluation criteria updated successfully." });
 });
 
-// POST assign evaluator to a team registration
-app.post("/api/admin/registrations/:id/assign-evaluator", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(assignEvaluatorSchema), (req, res) => {
+// POST assign evaluator to a team registration (Admin, Dept SPOC, Student SPOC)
+app.post("/api/admin/registrations/:id/assign-evaluator", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(assignEvaluatorSchema), (req, res) => {
   const { id } = req.params;
   const { evaluatorUsername } = req.body; // can be empty string to unassign
 
@@ -3043,68 +3241,99 @@ app.post("/api/admin/registrations/:id/assign-evaluator", authorize(["ADMIN", "S
     return res.status(404).json({ error: "Registration not found." });
   }
 
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(registrations[idx].leadDepartment, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You can only assign evaluators to teams in your department (${adminDept}).` });
+  }
+
   registrations[idx].assignedEvaluator = evaluatorUsername || undefined;
   writeRegistrations(registrations);
 
   res.json({ success: true, message: "Evaluator assigned successfully." });
 });
 
-// GET all evaluations or for specific registration (Admin / Evaluator / SPOC / Faculty)
-app.get("/api/admin/evaluations", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), async (req, res) => {
+// GET all evaluations or for specific registration (Admin / Dept SPOC / Evaluator / SPOC / Faculty)
+app.get("/api/admin/evaluations", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), async (req, res) => {
   try {
     const { registrationId } = req.query;
     const evaluations = await db.getEvaluations(registrationId as string | undefined);
+    const userRole = (req as any).userRole;
+    const adminDept = (req as any).adminDepartment;
+
+    if (userRole === "DEPT_SPOC" && adminDept) {
+      const registrations = readRegistrations();
+      const deptRegIds = new Set(
+        registrations.filter(r => isDepartmentMatch(r.leadDepartment, adminDept)).map(r => r.id)
+      );
+      const filtered = evaluations.filter(e => deptRegIds.has(e.registrationId));
+      return res.json(filtered);
+    }
+
     res.json(evaluations);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch evaluations from database: " + err.message });
   }
 });
 
-// POST evaluate/score team (Evaluator role)
-app.post("/api/admin/registrations/:id/evaluate", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), validateParams(singleIdParamSchema), validateBody(evaluateTeamSchema), async (req, res) => {
+// POST evaluate/score team (Evaluator role, Dept SPOC, Super Admin)
+app.post("/api/admin/registrations/:id/evaluate", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), validateParams(singleIdParamSchema), validateBody(evaluateTeamSchema), async (req, res) => {
   const role = (req as any).adminRole;
   const username = (req as any).adminUser;
-  const normRole = normalizeRole(role) || "EVALUATOR";
-
+  const dept = (req as any).adminDepartment;
   const { id } = req.params;
   const { scores, notes, status } = req.body;
 
-  const registrations = readRegistrations();
-  const idx = registrations.findIndex(r => r.id === id);
-  if (idx === -1) {
-    return res.status(404).json({ error: "Registration not found." });
-  }
-
-  // Ensure evaluator is the assigned one if role is Evaluator
-  if (normRole === "EVALUATOR" && registrations[idx].assignedEvaluator && registrations[idx].assignedEvaluator !== username) {
-    return res.status(403).json({ error: "Access Denied: You are not assigned to evaluate this team." });
-  }
-
-  const totalScore = scores ? Object.values(scores).reduce((a: any, b: any) => Number(a) + (Number(b) || 0), 0) : 0;
-
-  registrations[idx].evaluatorScores = scores || {};
-  registrations[idx].evaluationNotes = notes || "";
-  registrations[idx].evaluationStatus = status || "completed";
-
-  writeRegistrations(registrations);
-
-  // Save into structured database table
-  await db.saveEvaluation({
-    id: `eval_${id}_${Date.now()}`,
+  const result = await evaluationService.submitEvaluation({
     registrationId: id,
-    evaluatorUsername: username || "SPOC",
-    scores: scores || {},
-    totalScore: Number(totalScore),
-    notes: notes || "",
-    status: status || "completed",
-    evaluatedAt: new Date().toISOString()
+    evaluatorUsername: username || "Jury",
+    evaluatorRole: role,
+    evaluatorDepartment: dept,
+    scores,
+    notes,
+    status
   });
 
-  res.json({ success: true, message: "Team evaluation submitted and stored in database successfully." });
+  if (!result.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "VALIDATION_ERROR", message: result.error || "Failed to submit evaluation" },
+      message: result.error || "Failed to submit evaluation"
+    });
+  }
+
+  res.json({
+    success: true,
+    evaluation: result.evaluation,
+    message: "Team evaluation submitted and stored in database successfully."
+  });
 });
 
-// POST finalize student selection (SPOC only)
-app.post("/api/admin/registrations/:id/finalize-selection", authorize(["ADMIN"]), validateParams(singleIdParamSchema), validateBody(finalizeSelectionSchema), (req, res) => {
+// POST toggle evaluation lock for a team (Super Admin & Dept SPOC)
+app.post("/api/admin/registrations/:id/evaluation-lock", authorize(["ADMIN", "DEPT_SPOC"]), validateParams(singleIdParamSchema), validateBody(toggleEvaluationLockSchema), async (req, res) => {
+  const { id } = req.params;
+  const { locked } = req.body;
+  const username = (req as any).adminUser || "ADMIN";
+
+  const result = await evaluationService.toggleEvaluationLock(id, !!locked, username);
+  if (!result.success) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "VALIDATION_ERROR", message: result.error || "Failed to toggle evaluation lock" },
+      message: result.error || "Failed to toggle evaluation lock"
+    });
+  }
+
+  res.json({
+    success: true,
+    isEvaluationLocked: result.isEvaluationLocked,
+    message: result.isEvaluationLocked ? "Team evaluation locked successfully." : "Team evaluation unlocked successfully."
+  });
+});
+
+
+// POST finalize student selection (SPOC & Dept SPOC for department teams)
+app.post("/api/admin/registrations/:id/finalize-selection", authorize(["ADMIN", "DEPT_SPOC"]), validateParams(singleIdParamSchema), validateBody(finalizeSelectionSchema), (req, res) => {
   const { id } = req.params;
   const { isSelected, selectionNotes } = req.body;
 
@@ -3114,6 +3343,12 @@ app.post("/api/admin/registrations/:id/finalize-selection", authorize(["ADMIN"])
     return res.status(404).json({ error: "Registration not found." });
   }
 
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(registrations[idx].leadDepartment, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You can only select teams in your department (${adminDept}).` });
+  }
+
   registrations[idx].isFinalSelected = !!isSelected;
   registrations[idx].selectionNotes = selectionNotes || "";
 
@@ -3121,8 +3356,8 @@ app.post("/api/admin/registrations/:id/finalize-selection", authorize(["ADMIN"])
   res.json({ success: true, message: `Team selection finalized.` });
 });
 
-// POST update registration approval status (SPOC / Admin / Student SPOC)
-app.post("/api/admin/registrations/:id/approval-status", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(updateApprovalStatusSchema), (req, res) => {
+// POST update registration approval status (SPOC / Admin / Dept SPOC / Student SPOC)
+app.post("/api/admin/registrations/:id/approval-status", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(updateApprovalStatusSchema), (req, res) => {
   const { id } = req.params;
   const { approvalStatus, approvalNotes } = req.body;
 
@@ -3135,6 +3370,12 @@ app.post("/api/admin/registrations/:id/approval-status", authorize(["ADMIN", "ST
   const idx = registrations.findIndex(r => r.id === id);
   if (idx === -1) {
     return res.status(404).json({ error: "Registration not found." });
+  }
+
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(registrations[idx].leadDepartment, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You can only update approval status for teams in your department (${adminDept}).` });
   }
 
   const adminName = (req as any).adminUser || (req as any).adminRole || "Admin";
@@ -3213,10 +3454,14 @@ app.put("/api/registrations/my/proposal", validateStudentJWT, validateBody(updat
 
   const current = registrations[idx];
 
-  if (proposalStatus === "submitted") {
-    if (!abstract || !abstract.trim() || !implementationSteps || !implementationSteps.trim() || !pptFileName) {
-      return res.status(400).json({ error: "All fields (Abstract, Implementation Steps, and PPT Upload) are required to submit." });
-    }
+  // Authoritative Business Rules validation for proposal submissions & deadlines
+  const proposalValidation = validateProposalSubmission(req.body, current, settings);
+  if (!proposalValidation.isValid) {
+    return res.status(400).json({
+      error: proposalValidation.errors[0],
+      errors: proposalValidation.errors,
+      warnings: proposalValidation.warnings
+    });
   }
 
   let pptFileUrl = current.pptFileUrl || "";
@@ -3401,6 +3646,7 @@ app.put("/api/registrations/my/team", validateStudentJWT, validateBody(updateTea
 
   const emailClean = email.trim().toLowerCase();
   const registrations = readRegistrations();
+  const statements = readStatements();
   const idx = registrations.findIndex(r => r.studentEmail?.trim().toLowerCase() === emailClean);
 
   if (idx === -1) {
@@ -3409,19 +3655,35 @@ app.put("/api/registrations/my/team", validateStudentJWT, validateBody(updateTea
 
   const current = registrations[idx];
 
-  const count = settings.teamMembersCount ?? 5;
+  // Authoritative validation of team update & roster rules
+  const mergedData = {
+    ...current,
+    ...req.body,
+    teamName: current.teamName, // Keep team name unchanged
+    problemStatementId: current.problemStatementId // Keep problem statement unchanged
+  };
 
-  // Under SIH guidelines, check if at least one female member is present in the team
-  let hasFemale = (leadGender || current.leadGender || "").toLowerCase() === "female";
-  if (count >= 1 && (member1Gender || current.member1Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 2 && (member2Gender || current.member2Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 3 && (member3Gender || current.member3Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 4 && (member4Gender || current.member4Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 5 && (member5Gender || current.member5Gender || "").toLowerCase() === "female") hasFemale = true;
+  const validationResult = validateTeamRegistration(
+    mergedData,
+    settings,
+    registrations,
+    statements,
+    {
+      isUpdate: true,
+      currentRegistrationId: current.registrationId,
+      authenticatedStudentEmail: (req as any).studentUser?.email
+    }
+  );
 
-  if (settings.genderDiversityRequired && count > 0 && !hasFemale) {
-    return res.status(400).json({ error: `SIH guidelines require at least one female student in each ${count + 1}-member team. Please ensure at least one member has gender set to Female.` });
+  if (!validationResult.isValid) {
+    return res.status(400).json({
+      error: validationResult.errors[0],
+      errors: validationResult.errors,
+      warnings: validationResult.warnings
+    });
   }
+
+  const count = settings.teamMembersCount ?? 5;
 
   registrations[idx] = {
     ...current,
@@ -3510,10 +3772,18 @@ app.post("/api/admin/manage-admins/:username/reset-password", authorize(["ADMIN"
   }
 });
 
-// GET all students (Admin)
-app.get("/api/admin/students", authorize(["ADMIN", "STUDENT_SPOC"]), (req, res) => {
+// GET all students (Admin / Dept SPOC / Student SPOC)
+app.get("/api/admin/students", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), (req, res) => {
   const students = readStudents();
-  res.json(students.map(s => ({
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+
+  let filtered = students;
+  if (userRole === "DEPT_SPOC" && adminDept) {
+    filtered = students.filter(s => isDepartmentMatch(s.department, adminDept));
+  }
+
+  res.json(filtered.map(s => ({
     id: s.id,
     email: s.email,
     createdAt: s.createdAt,
@@ -3523,8 +3793,8 @@ app.get("/api/admin/students", authorize(["ADMIN", "STUDENT_SPOC"]), (req, res) 
   })));
 });
 
-// POST reset student password (Admin)
-app.post("/api/admin/students/:id/reset-password", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(resetPasswordAdminSchema), (req, res) => {
+// POST reset student password (Admin / Dept SPOC / Student SPOC)
+app.post("/api/admin/students/:id/reset-password", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(resetPasswordAdminSchema), (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
 
@@ -3535,22 +3805,35 @@ app.post("/api/admin/students/:id/reset-password", authorize(["ADMIN", "STUDENT_
     return res.status(404).json({ error: "Student not found." });
   }
 
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(students[idx].department, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You can only manage students in your department (${adminDept}).` });
+  }
+
   students[idx].passwordHash = hashPassword(newPassword);
   writeStudents(students);
 
   res.json({ success: true, message: "Student password reset successfully." });
 });
 
-// DELETE student user (Admin)
-app.delete("/api/admin/students/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
+// DELETE student user (Admin / Dept SPOC / Student SPOC)
+app.delete("/api/admin/students/:id", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
   const students = readStudents();
-  const filtered = students.filter(s => s.id !== id);
+  const idx = students.findIndex(s => s.id === id);
 
-  if (filtered.length === students.length) {
+  if (idx === -1) {
     return res.status(404).json({ error: "Student not found." });
   }
 
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(students[idx].department, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You can only delete students in your department (${adminDept}).` });
+  }
+
+  const filtered = students.filter(s => s.id !== id);
   writeStudents(filtered);
   res.json({ success: true, message: "Student account deleted successfully." });
 });
@@ -3570,7 +3853,7 @@ app.get("/api/registrations/check-team", (req, res) => {
 });
 
 // POST submit a registration
-app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistrationSchema), (req, res) => {
+app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistrationSchema), async (req, res) => {
   const {
     teamName,
     leadName,
@@ -3603,7 +3886,6 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
     member5Email,
     member5Phone,
     member5AcademicYear,
-    hasFemaleMember,
     mentorName,
     problemStatementId,
     studentEmail,
@@ -3613,100 +3895,57 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
   } = req.body;
 
   const settings = readSettings();
-  const count = settings.teamMembersCount ?? 5;
-
-  // Validation
-  if (
-    !teamName ||
-    !leadName ||
-    !leadDepartment ||
-    !leadMobile ||
-    hasFemaleMember === undefined ||
-    !mentorName ||
-    !problemStatementId
-  ) {
-    return res.status(400).json({ error: "Please fill in all required fields." });
-  }
-
-  // Validate only the configured number of members are provided
-  if (count >= 1 && !member1) return res.status(400).json({ error: "Member 1 Name is required." });
-  if (count >= 2 && !member2) return res.status(400).json({ error: "Member 2 Name is required." });
-  if (count >= 3 && !member3) return res.status(400).json({ error: "Member 3 Name is required." });
-  if (count >= 4 && !member4) return res.status(400).json({ error: "Member 4 Name is required." });
-  if (count >= 5 && !member5) return res.status(400).json({ error: "Member 5 Name is required." });
-
-  if (settings.jwtEnabled) {
-    const tokenEmail = (req as any).studentUser?.email;
-    if (tokenEmail && tokenEmail.toLowerCase() !== studentEmail.trim().toLowerCase()) {
-      return res.status(403).json({ error: "Forbidden: Submitting a registration under another student's account is not allowed." });
-    }
-  }
-
-  // Validate that there is at least one female student in the team based on gender fields
-  let hasFemale = (leadGender || "").toLowerCase() === "female";
-  if (count >= 1 && (member1Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 2 && (member2Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 3 && (member3Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 4 && (member4Gender || "").toLowerCase() === "female") hasFemale = true;
-  if (count >= 5 && (member5Gender || "").toLowerCase() === "female") hasFemale = true;
-
-  if (settings.genderDiversityRequired && count > 0 && !hasFemale) {
-    return res.status(400).json({ error: `SIH guidelines require at least one female student in each ${count + 1}-member team. Please check your team roster gender fields.` });
-  }
-
   const registrations = readRegistrations();
-
-  // Unique Team Name check
-  if (registrations.some(r => r.teamName.trim().toLowerCase() === teamName.trim().toLowerCase())) {
-    return res.status(400).json({ error: `The team name "${teamName}" is already taken.` });
-  }
-
-  // Validate mobile number format (e.g. 10 digits)
-  const mobileRegex = /^[0-9]{10}$/;
-  if (!mobileRegex.test(leadMobile.trim())) {
-    return res.status(400).json({ error: "Please enter a valid 10-digit mobile number." });
-  }
-
-  // Verify problem statement exists
   const statements = readStatements();
-  const statementExists = statements.some(s => s.id === problemStatementId);
-  if (!statementExists) {
-    return res.status(400).json({ error: "Selected problem statement does not exist." });
+
+  // 1. Authoritative Backend Business Rules Validation
+  const tokenStudentEmail = (req as any).studentUser?.email;
+  const validationResult = validateTeamRegistration(
+    req.body,
+    settings,
+    registrations,
+    statements,
+    {
+      isUpdate: false,
+      authenticatedStudentEmail: tokenStudentEmail
+    }
+  );
+
+  if (!validationResult.isValid) {
+    return res.status(400).json({
+      error: validationResult.errors[0],
+      errors: validationResult.errors,
+      warnings: validationResult.warnings
+    });
   }
 
-  // Handle registration fee if enabled
+  // 2. Authoritative Payment Verification & Security
   let paymentStatus: "free" | "paid" = "free";
-  let amountPaid = 0;
+  let verifiedAmountPaid = 0;
 
   if (settings.feeEnabled) {
-    if (!paymentId || !orderId || !signature) {
-      return res.status(400).json({ error: "Payment verification details are required for registration." });
+    if (!paymentId || !orderId) {
+      return res.status(400).json({ error: "Payment verification details (Order ID and Payment ID) are required." });
     }
 
-    if (settings.razorpayKeyId === "rzp_test_mock" || orderId.startsWith("order_mock_")) {
-      paymentStatus = "paid";
-      amountPaid = settings.feeAmount;
-    } else {
-      try {
-        // Verify signature
-        const generated_signature = crypto
-          .createHmac("sha256", settings.razorpayKeySecret)
-          .update(orderId + "|" + paymentId)
-          .digest("hex");
+    const payResult = await verifyAuthoritativePayment({
+      orderId,
+      paymentId,
+      signature,
+      teamName: teamName.trim(),
+      studentEmail: studentEmail?.trim(),
+      settings
+    });
 
-        if (generated_signature !== signature) {
-          return res.status(400).json({ error: "Payment signature verification failed." });
-        }
-
-        paymentStatus = "paid";
-        amountPaid = settings.feeAmount;
-      } catch (err: any) {
-        return res.status(400).json({ error: "Payment verification failed with an error: " + err.message });
-      }
+    if (!payResult.verified) {
+      return res.status(400).json({ error: payResult.error || "Payment verification failed." });
     }
+
+    paymentStatus = "paid";
+    verifiedAmountPaid = payResult.amountPaid;
   }
 
-  // Generate Registration ID (e.g. SIH-REG-1001)
+  // 3. Generate Registration ID (e.g. SIH-REG-1001)
   let nextSeq = 1001;
   if (registrations.length > 0) {
     // extract highest number from IDs like "SIH-REG-X"
@@ -3727,6 +3966,14 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
       pptFileUrl = savedPpt.url;
     }
   }
+
+  const count = settings.teamMembersCount ?? 5;
+  const hasFemaleMember = (leadGender || "").toLowerCase() === "female" ||
+    (count >= 1 && (member1Gender || "").toLowerCase() === "female") ||
+    (count >= 2 && (member2Gender || "").toLowerCase() === "female") ||
+    (count >= 3 && (member3Gender || "").toLowerCase() === "female") ||
+    (count >= 4 && (member4Gender || "").toLowerCase() === "female") ||
+    (count >= 5 && (member5Gender || "").toLowerCase() === "female");
 
   const newRegistration: Registration = {
     id: Date.now().toString(),
@@ -3770,7 +4017,7 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
     paymentStatus,
     paymentId,
     orderId,
-    amountPaid: paymentStatus === "paid" ? amountPaid : undefined,
+    amountPaid: paymentStatus === "paid" ? verifiedAmountPaid : undefined,
     approvalStatus: "pending",
     abstract: req.body.abstract?.trim() || undefined,
     implementationSteps: req.body.implementationSteps?.trim() || undefined,
@@ -3883,7 +4130,7 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
 });
 
 // POST verify-payment for a pending registration
-app.post("/api/registrations/verify-payment", validateStudentJWT, validateBody(verifyPaymentSchema), (req, res) => {
+app.post("/api/registrations/verify-payment", validateStudentJWT, validateBody(verifyPaymentSchema), async (req, res) => {
   const { registrationId, paymentId, orderId, signature } = req.body;
 
   try {
@@ -3897,29 +4144,26 @@ app.post("/api/registrations/verify-payment", validateStudentJWT, validateBody(v
 
     const registration = registrations[idx];
 
-    // Verify signature
-    if (settings.razorpayKeyId === "rzp_test_mock" || orderId.startsWith("order_mock_")) {
-      registration.paymentStatus = "paid";
-      registration.paymentId = paymentId;
-      registration.orderId = orderId;
-      registration.amountPaid = settings.feeAmount;
-      registration.submittedAt = new Date().toISOString(); // Update submission timestamp on payment confirmation
-    } else {
-      const generated_signature = crypto
-        .createHmac("sha256", settings.razorpayKeySecret)
-        .update(orderId + "|" + paymentId)
-        .digest("hex");
+    // Authoritative payment verification
+    const payResult = await verifyAuthoritativePayment({
+      orderId,
+      paymentId,
+      signature,
+      registrationId,
+      teamName: registration.teamName,
+      studentEmail: registration.studentEmail,
+      settings
+    });
 
-      if (generated_signature !== signature) {
-        return res.status(400).json({ error: "Payment signature verification failed." });
-      }
-
-      registration.paymentStatus = "paid";
-      registration.paymentId = paymentId;
-      registration.orderId = orderId;
-      registration.amountPaid = settings.feeAmount;
-      registration.submittedAt = new Date().toISOString(); // Update submission timestamp on payment confirmation
+    if (!payResult.verified) {
+      return res.status(400).json({ error: payResult.error || "Payment signature verification failed." });
     }
+
+    registration.paymentStatus = "paid";
+    registration.paymentId = paymentId;
+    registration.orderId = orderId;
+    registration.amountPaid = payResult.amountPaid;
+    registration.submittedAt = new Date().toISOString(); // Update submission timestamp on payment confirmation
 
     registrations[idx] = registration;
     writeRegistrations(registrations);
@@ -4019,13 +4263,19 @@ app.post("/api/registrations/verify-payment", validateStudentJWT, validateBody(v
   }
 });
 
-// PUT update a registration (Admin / Student SPOC)
-app.put("/api/registrations/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(updateRegistrationAdminSchema), (req, res) => {
+// PUT update a registration (Admin / Dept SPOC / Student SPOC)
+app.put("/api/registrations/:id", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(updateRegistrationAdminSchema), (req, res) => {
   const { id } = req.params;
   const registrations = readRegistrations();
   const idx = registrations.findIndex(r => r.id === id);
   if (idx === -1) {
     return res.status(404).json({ error: "Registration not found" });
+  }
+
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(registrations[idx].leadDepartment, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You are only permitted to edit teams in your department (${adminDept}).` });
   }
 
   const current = registrations[idx];
@@ -4076,15 +4326,22 @@ app.put("/api/registrations/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validate
   res.json({ success: true, registration: updated });
 });
 
-// DELETE a registration (Super Admin SPOC only)
-app.delete("/api/registrations/:id", authorize(["ADMIN"]), validateParams(singleIdParamSchema), (req, res) => {
+// DELETE a registration (Super Admin SPOC & Dept SPOC for department teams)
+app.delete("/api/registrations/:id", authorize(["ADMIN", "DEPT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
   const registrations = readRegistrations();
-  const filtered = registrations.filter(r => r.id !== id);
-  
-  if (filtered.length === registrations.length) {
+  const idx = registrations.findIndex(r => r.id === id);
+  if (idx === -1) {
     return res.status(404).json({ error: "Registration not found" });
   }
+
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(registrations[idx].leadDepartment, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You are only permitted to delete teams in your department (${adminDept}).` });
+  }
+
+  const filtered = registrations.filter(r => r.id !== id);
 
   writeRegistrations(filtered);
   res.json({ success: true, message: "Registration deleted successfully" });
@@ -4181,6 +4438,12 @@ app.post("/api/menu", authorize(["ADMIN"]), validateBody(menuItemsArraySchema), 
   writeMenuItems(items);
   res.json({ success: true, message: "Navigation menu configuration updated successfully!", menu: items });
 });
+
+// Centralized API 404 handler for undefined /api/* endpoints
+app.all("/api/*", notFoundHandler);
+
+// Centralized Express Error Handling Middleware for all application errors
+app.use(errorHandler);
 
 
 // ------------------- VITE OR STATIC FRONTEND -------------------

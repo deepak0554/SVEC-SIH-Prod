@@ -1,6 +1,5 @@
 import { Request, Response } from "express";
 import { paymentService, PaymentService } from "../services/payment.service";
-import { contentService } from "../services/content.service";
 
 export class PaymentController {
   constructor(private service: PaymentService = paymentService) {}
@@ -12,7 +11,11 @@ export class PaymentController {
       res.json(txs);
     } catch (err: any) {
       console.error("[PaymentController.getTransactions Error]:", err);
-      res.status(500).json({ error: "Failed to fetch transactions" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to fetch transactions" },
+        message: "Failed to fetch transactions"
+      });
     }
   };
 
@@ -22,7 +25,11 @@ export class PaymentController {
       res.status(201).json(tx);
     } catch (err: any) {
       console.error("[PaymentController.recordTransaction Error]:", err);
-      res.status(500).json({ error: "Failed to record transaction" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to record transaction" },
+        message: "Failed to record transaction"
+      });
     }
   };
 }

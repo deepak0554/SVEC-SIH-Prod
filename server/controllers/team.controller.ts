@@ -10,7 +10,11 @@ export class TeamController {
       res.json(teams);
     } catch (err: any) {
       console.error("[TeamController.getAllTeams Error]:", err);
-      res.status(500).json({ error: "Failed to fetch registrations" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to fetch registrations" },
+        message: "Failed to fetch registrations"
+      });
     }
   };
 
@@ -19,13 +23,21 @@ export class TeamController {
       const { id } = req.params;
       const team = await this.service.getTeamById(id);
       if (!team) {
-        res.status(404).json({ error: "Team registration not found" });
+        res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Team registration not found" },
+          message: "Team registration not found"
+        });
         return;
       }
       res.json(team);
     } catch (err: any) {
       console.error("[TeamController.getTeamById Error]:", err);
-      res.status(500).json({ error: "Failed to fetch registration" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to fetch registration" },
+        message: "Failed to fetch registration"
+      });
     }
   };
 
@@ -33,13 +45,21 @@ export class TeamController {
     try {
       const result = await this.service.registerTeam(req.body);
       if (!result.success) {
-        res.status(400).json({ error: result.error });
+        res.status(400).json({
+          success: false,
+          error: { code: "VALIDATION_ERROR", message: result.error || "Failed to create registration" },
+          message: result.error || "Failed to create registration"
+        });
         return;
       }
       res.status(201).json(result.registration);
     } catch (err: any) {
       console.error("[TeamController.registerTeam Error]:", err);
-      res.status(500).json({ error: "Failed to create registration" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to create registration" },
+        message: "Failed to create registration"
+      });
     }
   };
 
@@ -48,13 +68,21 @@ export class TeamController {
       const { id } = req.params;
       const result = await this.service.updateTeam(id, req.body);
       if (!result.success) {
-        res.status(400).json({ error: result.error });
+        res.status(400).json({
+          success: false,
+          error: { code: "VALIDATION_ERROR", message: result.error || "Failed to update registration" },
+          message: result.error || "Failed to update registration"
+        });
         return;
       }
       res.json(result.registration);
     } catch (err: any) {
       console.error("[TeamController.updateTeam Error]:", err);
-      res.status(500).json({ error: "Failed to update registration" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to update registration" },
+        message: "Failed to update registration"
+      });
     }
   };
 
@@ -63,13 +91,21 @@ export class TeamController {
       const { id } = req.params;
       const success = await this.service.deleteTeam(id);
       if (!success) {
-        res.status(404).json({ error: "Team not found" });
+        res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Team not found" },
+          message: "Team not found"
+        });
         return;
       }
       res.json({ message: "Registration deleted successfully" });
     } catch (err: any) {
       console.error("[TeamController.deleteTeam Error]:", err);
-      res.status(500).json({ error: "Failed to delete registration" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to delete registration" },
+        message: "Failed to delete registration"
+      });
     }
   };
 
@@ -78,7 +114,11 @@ export class TeamController {
       const { id } = req.params;
       const file = req.file;
       if (!file) {
-        res.status(400).json({ error: "No file uploaded" });
+        res.status(400).json({
+          success: false,
+          error: { code: "VALIDATION_ERROR", message: "No file uploaded" },
+          message: "No file uploaded"
+        });
         return;
       }
 
@@ -90,30 +130,22 @@ export class TeamController {
       );
 
       if (!result.success) {
-        res.status(400).json({ error: result.error });
+        res.status(400).json({
+          success: false,
+          error: { code: "VALIDATION_ERROR", message: result.error || "Failed to upload abstract" },
+          message: result.error || "Failed to upload abstract"
+        });
         return;
       }
 
       res.json({ success: true, fileUrl: result.fileUrl });
     } catch (err: any) {
       console.error("[TeamController.uploadAbstract Error]:", err);
-      res.status(500).json({ error: "Failed to upload abstract" });
-    }
-  };
-
-  public toggleSelection = async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
-      const { isSelected, selectionNotes } = req.body;
-      const success = await this.service.toggleSelection(id, !!isSelected, selectionNotes);
-      if (!success) {
-        res.status(404).json({ error: "Team not found" });
-        return;
-      }
-      res.json({ success: true });
-    } catch (err: any) {
-      console.error("[TeamController.toggleSelection Error]:", err);
-      res.status(500).json({ error: "Failed to update selection status" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to upload abstract" },
+        message: "Failed to upload abstract"
+      });
     }
   };
 }

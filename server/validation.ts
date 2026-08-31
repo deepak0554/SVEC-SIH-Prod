@@ -124,7 +124,7 @@ export const adminLoginSchema = z.object({
     .string()
     .min(1, "Password cannot be empty"),
   role: z
-    .enum(["SPOC", "Student SPOC", "Evaluator", "Faculty", "ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"])
+    .enum(["SPOC", "DEPT_SPOC", "Dept SPOC", "Department SPOC", "DEPARTMENT_SPOC", "Student SPOC", "Evaluator", "Faculty", "ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"])
     .optional()
 });
 
@@ -163,7 +163,8 @@ export const manageAdminCreateSchema = z.object({
     .string()
     .min(6, "Password must be at least 6 characters")
     .max(100, "Password is too long"),
-  role: z.enum(["SPOC", "Student SPOC", "Evaluator", "Faculty", "ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"])
+  role: z.enum(["SPOC", "DEPT_SPOC", "Dept SPOC", "Department SPOC", "DEPARTMENT_SPOC", "Student SPOC", "Evaluator", "Faculty", "ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]),
+  department: z.string().trim().max(100).optional().nullable()
 });
 
 // ==========================================
@@ -378,6 +379,11 @@ export const evaluateTeamSchema = z.object({
   status: z.enum(["pending", "evaluated", "approved", "rejected", "completed"]).optional()
 });
 
+export const toggleEvaluationLockSchema = z.object({
+  locked: z.boolean(),
+  reason: z.string().trim().max(1000).optional().or(z.literal(""))
+});
+
 export const finalizeSelectionSchema = z.object({
   isSelected: z.boolean(),
   selectionNotes: z.string().trim().max(2000).optional().or(z.literal(""))
@@ -497,6 +503,11 @@ export const settingsSchema = z.object({
   portalCaption: z.string().trim().max(200).optional().or(z.literal("")),
   teamMembersCount: z.union([z.number(), z.string()]).optional(),
   genderDiversityRequired: z.boolean().optional(),
+  registrationDeadline: z.string().trim().max(100).optional().or(z.literal("")),
+  submissionDeadline: z.string().trim().max(100).optional().or(z.literal("")),
+  minTeamSize: z.union([z.number(), z.string()]).optional(),
+  maxTeamSize: z.union([z.number(), z.string()]).optional(),
+  maxTeamsPerProblemStatement: z.union([z.number(), z.string()]).optional(),
 
   // SMS
   smsEnabled: z.boolean().optional(),
@@ -558,7 +569,22 @@ export const settingsSchema = z.object({
   samplePptUrl: z.string().max(500).optional().or(z.literal("")),
   samplePptFileName: z.string().max(200).optional().or(z.literal("")),
   samplePptFileBase64: z.string().max(35 * 1024 * 1024).optional().or(z.literal("")),
-  samplePptDescription: z.string().max(2000).optional().or(z.literal(""))
+  samplePptDescription: z.string().max(2000).optional().or(z.literal("")),
+
+  // Consent Letter Template (Super Admin Only)
+  consentLetterEnabled: z.boolean().optional(),
+  consentLetterAicteNo: z.string().trim().max(100).optional().or(z.literal("")),
+  consentLetterPrincipalName: z.string().trim().max(200).optional().or(z.literal("")),
+  consentLetterDesignation1: z.string().trim().max(300).optional().or(z.literal("")),
+  consentLetterDesignation2: z.string().trim().max(300).optional().or(z.literal("")),
+  consentLetterSignatureUrl: z.string().max(1000000).optional().or(z.literal("")),
+  consentLetterStampUrl: z.string().max(1000000).optional().or(z.literal("")),
+  consentLetterShowSignature: z.boolean().optional(),
+  consentLetterShowStamp: z.boolean().optional(),
+  consentLetterIncludeLetterhead: z.boolean().optional(),
+  consentLetterCustomSubject: z.string().trim().max(300).optional().or(z.literal("")),
+  consentLetterBodyTemplate: z.string().trim().max(3000).optional().or(z.literal("")),
+  consentLetterRequireSelection: z.boolean().optional()
 }).passthrough();
 
 export const testDbSchema = z.object({
@@ -694,13 +720,17 @@ export const updatesArraySchema = z.array(liveUpdateItemSchema);
 
 export const paginationQuerySchema = z.object({
   page: z.coerce.number().int().min(1, "Page must be >= 1").default(1),
-  limit: z.coerce.number().int().min(1).max(500, "Limit must be between 1 and 500").default(50),
-  search: z.string().trim().max(100).optional(),
-  status: z.string().trim().max(50).optional(),
-  department: z.string().trim().max(50).optional(),
-  academicYear: z.string().trim().max(30).optional(),
-  startDate: z.string().trim().max(50).optional(),
-  endDate: z.string().trim().max(50).optional()
+  limit: z.coerce.number().int().min(1, "Limit must be >= 1").max(100, "Limit cannot exceed 100").default(20),
+  search: z.string().trim().max(100).optional().or(z.literal("")),
+  status: z.string().trim().max(50).optional().or(z.literal("")),
+  department: z.string().trim().max(50).optional().or(z.literal("")),
+  category: z.string().trim().max(50).optional().or(z.literal("")),
+  academicYear: z.string().trim().max(30).optional().or(z.literal("")),
+  startDate: z.string().trim().max(50).optional().or(z.literal("")),
+  endDate: z.string().trim().max(50).optional().or(z.literal("")),
+  sortBy: z.string().trim().max(50).optional().or(z.literal("")),
+  sortOrder: z.enum(["asc", "desc", "ASC", "DESC"]).optional(),
+  paginated: z.coerce.boolean().optional()
 });
 
 export const singleIdParamSchema = z.object({
@@ -713,7 +743,7 @@ export const singleIdParamSchema = z.object({
 
 /**
  * Validates req.body against a Zod schema.
- * Rejects invalid requests with HTTP 400 Bad Request and structured error descriptions.
+ * Passes ZodError directly to centralized error handling middleware.
  */
 export function validateBody<T>(schema: ZodSchema<T>) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -722,23 +752,14 @@ export function validateBody<T>(schema: ZodSchema<T>) {
       req.body = parsed;
       next();
     } catch (err) {
-      if (err instanceof ZodError) {
-        const issues = err.issues.map(i => ({
-          field: i.path.join("."),
-          message: i.message
-        }));
-        return res.status(400).json({
-          error: `Validation Error: ${issues[0]?.message || "Invalid request payload"}`,
-          details: issues
-        });
-      }
-      return res.status(400).json({ error: "Invalid request payload format." });
+      next(err);
     }
   };
 }
 
 /**
  * Validates req.query against a Zod schema.
+ * Passes ZodError directly to centralized error handling middleware.
  */
 export function validateQuery<T>(schema: ZodSchema<T>) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -747,23 +768,14 @@ export function validateQuery<T>(schema: ZodSchema<T>) {
       req.query = parsed as any;
       next();
     } catch (err) {
-      if (err instanceof ZodError) {
-        const issues = err.issues.map(i => ({
-          field: i.path.join("."),
-          message: i.message
-        }));
-        return res.status(400).json({
-          error: `Query Validation Error: ${issues[0]?.message || "Invalid query parameters"}`,
-          details: issues
-        });
-      }
-      return res.status(400).json({ error: "Invalid query parameters format." });
+      next(err);
     }
   };
 }
 
 /**
  * Validates req.params against a Zod schema.
+ * Passes ZodError directly to centralized error handling middleware.
  */
 export function validateParams<T>(schema: ZodSchema<T>) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -772,17 +784,7 @@ export function validateParams<T>(schema: ZodSchema<T>) {
       req.params = parsed as any;
       next();
     } catch (err) {
-      if (err instanceof ZodError) {
-        const issues = err.issues.map(i => ({
-          field: i.path.join("."),
-          message: i.message
-        }));
-        return res.status(400).json({
-          error: `Parameter Validation Error: ${issues[0]?.message || "Invalid URL parameter"}`,
-          details: issues
-        });
-      }
-      return res.status(400).json({ error: "Invalid URL parameter format." });
+      next(err);
     }
   };
 }

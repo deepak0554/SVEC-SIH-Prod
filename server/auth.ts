@@ -89,7 +89,7 @@ export function validateAuthStartup(): void {
 
 // ------------------- TYPES -------------------
 
-export type UserRole = "ADMIN" | "SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "STUDENT";
+export type UserRole = "ADMIN" | "SPOC" | "DEPT_SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "STUDENT";
 
 export interface StudentTokenPayload {
   id: string;
@@ -100,14 +100,16 @@ export interface StudentTokenPayload {
 
 export interface AdminTokenPayload {
   username: string;
-  role: "ADMIN" | "SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "Student SPOC" | "Evaluator";
+  role: "ADMIN" | "SPOC" | "DEPT_SPOC" | "Dept SPOC" | "Department SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "Student SPOC" | "Evaluator";
+  department?: string;
   isAdmin: true;
 }
 
 export interface AdminUser {
   username: string;
   passwordHash: string;
-  role: "ADMIN" | "SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "Student SPOC" | "Evaluator";
+  role: "ADMIN" | "SPOC" | "DEPT_SPOC" | "Dept SPOC" | "Department SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "Student SPOC" | "Evaluator";
+  department?: string;
 }
 
 // ------------------- ROLE NORMALIZATION HELPER -------------------
@@ -115,6 +117,7 @@ export interface AdminUser {
 /**
  * Normalizes varied role string formats into standard uppercase roles:
  * - "SPOC" -> "ADMIN" (and "SPOC")
+ * - "DEPT_SPOC" / "Dept SPOC" / "Department SPOC" -> "DEPT_SPOC"
  * - "Student SPOC" / "STUDENT_SPOC" -> "STUDENT_SPOC"
  * - "Evaluator" / "EVALUATOR" -> "EVALUATOR"
  * - "Faculty" / "FACULTY" -> "FACULTY"
@@ -126,6 +129,7 @@ export function normalizeRole(role?: string): UserRole | null {
   const upper = trimmed.toUpperCase().replace(/\s+/g, "_");
 
   if (upper === "ADMIN" || upper === "SPOC") return "ADMIN";
+  if (upper === "DEPT_SPOC" || upper === "DEPARTMENT_SPOC" || upper === "DEPTSPOC" || upper === "DEPT_SPECIFIC_SPOC") return "DEPT_SPOC";
   if (upper === "EVALUATOR") return "EVALUATOR";
   if (upper === "FACULTY") return "FACULTY";
   if (upper === "STUDENT_SPOC" || upper === "STUDENTSPOC") return "STUDENT_SPOC";
@@ -172,6 +176,8 @@ export function verifyPassword(password: string, storedHash: string): boolean {
 
   return false;
 }
+
+export const comparePassword = verifyPassword;
 
 // ------------------- TOKEN GENERATION & VERIFICATION -------------------
 
@@ -245,10 +251,10 @@ export function verifyStudentToken(token: string): StudentTokenPayload | null {
 }
 
 /**
- * Issues a signed admin JWT token with role claims and expiration (default: 24h)
+ * Issues a signed admin JWT token with role claims, optional department, and expiration (default: 24h)
  */
 export function signAdminToken(
-  admin: { username: string; role: "ADMIN" | "SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "Student SPOC" | "Evaluator" },
+  admin: { username: string; role: "ADMIN" | "SPOC" | "DEPT_SPOC" | "Dept SPOC" | "Department SPOC" | "EVALUATOR" | "FACULTY" | "STUDENT_SPOC" | "Student SPOC" | "Evaluator"; department?: string },
   expiresIn: string | number = "24h"
 ): string {
   const secret = getJwtSecret();
@@ -262,6 +268,7 @@ export function signAdminToken(
     {
       username: admin.username,
       role: admin.role,
+      department: admin.department || "",
       isAdmin: true
     },
     secret,
@@ -283,6 +290,7 @@ export function verifyAdminToken(token: string): AdminTokenPayload | null {
       return {
         username: decoded.username,
         role: decoded.role,
+        department: decoded.department || "",
         isAdmin: true
       };
     }
@@ -295,6 +303,7 @@ export function verifyAdminToken(token: string): AdminTokenPayload | null {
         return {
           username: decoded.username,
           role: decoded.role,
+          department: decoded.department || "",
           isAdmin: true
         };
       }
@@ -317,12 +326,20 @@ export function validateStudentJWT(req: Request, res: Response, next: NextFuncti
   if (authHeader && authHeader.startsWith("Bearer ")) {
     const token = authHeader.split(" ")[1];
     if (!token) {
-      return res.status(401).json({ error: "Missing or invalid authorization token format." });
+      return res.status(401).json({
+        success: false,
+        error: { code: "UNAUTHORIZED", message: "Missing or invalid authorization token format." },
+        message: "Missing or invalid authorization token format."
+      });
     }
 
     const studentPayload = verifyStudentToken(token);
     if (!studentPayload) {
-      return res.status(401).json({ error: "Your session is invalid or has expired. Please log in again." });
+      return res.status(401).json({
+        success: false,
+        error: { code: "UNAUTHORIZED", message: "Your session is invalid or has expired. Please log in again." },
+        message: "Your session is invalid or has expired. Please log in again."
+      });
     }
 
     (req as any).studentUser = studentPayload;
@@ -330,7 +347,11 @@ export function validateStudentJWT(req: Request, res: Response, next: NextFuncti
   }
 
   // Token is required for protected student routes
-  return res.status(401).json({ error: "Authorization required. Please log in to continue." });
+  return res.status(401).json({
+    success: false,
+    error: { code: "UNAUTHORIZED", message: "Authorization required. Please log in to continue." },
+    message: "Authorization required. Please log in to continue."
+  });
 }
 
 /**
@@ -342,7 +363,11 @@ export function validateAdmin(req: Request, res: Response, next: NextFunction) {
   const rawPasscode = (req.headers["x-admin-passcode"] || req.headers["authorization"]) as string | undefined;
 
   if (!rawPasscode) {
-    return res.status(401).json({ error: "Access Denied: Missing administrative credentials." });
+    return res.status(401).json({
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "Access Denied: Missing administrative credentials." },
+      message: "Access Denied: Missing administrative credentials."
+    });
   }
 
   const passcode = rawPasscode.startsWith("Bearer ") ? rawPasscode.slice(7).trim() : rawPasscode.trim();
@@ -352,6 +377,7 @@ export function validateAdmin(req: Request, res: Response, next: NextFunction) {
   if (adminPayload) {
     (req as any).adminRole = adminPayload.role;
     (req as any).adminUser = adminPayload.username;
+    (req as any).adminDepartment = adminPayload.department || "";
     (req as any).isAdmin = true;
     return next();
   }
@@ -361,11 +387,16 @@ export function validateAdmin(req: Request, res: Response, next: NextFunction) {
   if (masterPasscode && passcode === masterPasscode) {
     (req as any).adminRole = "SPOC";
     (req as any).adminUser = "system_admin";
+    (req as any).adminDepartment = "";
     (req as any).isAdmin = true;
     return next();
   }
 
-  return res.status(401).json({ error: "Unauthorized: Invalid or expired admin session token." });
+  return res.status(401).json({
+    success: false,
+    error: { code: "UNAUTHORIZED", message: "Unauthorized: Invalid or expired admin session token." },
+    message: "Unauthorized: Invalid or expired admin session token."
+  });
 }
 
 /**
@@ -377,7 +408,9 @@ export function requireRole(allowedRoles: Array<string>) {
     const rawRole = (req as any).adminRole || (req as any).userRole;
     if (!rawRole) {
       return res.status(403).json({
-        error: `Access Denied: Missing role authorization. Required role: (${allowedRoles.join(" or ")}).`
+        success: false,
+        error: { code: "FORBIDDEN", message: `Access Denied: Missing role authorization. Required role: (${allowedRoles.join(" or ")}).` },
+        message: `Access Denied: Missing role authorization. Required role: (${allowedRoles.join(" or ")}).`
       });
     }
 
@@ -395,7 +428,9 @@ export function requireRole(allowedRoles: Array<string>) {
 
     if (!hasPermission) {
       return res.status(403).json({
-        error: `Access Denied: Required role (${allowedRoles.join(" or ")}) not matched. Your role: ${rawRole}.`
+        success: false,
+        error: { code: "FORBIDDEN", message: `Access Denied: Required role (${allowedRoles.join(" or ")}) not matched. Your role: ${rawRole}.` },
+        message: `Access Denied: Required role (${allowedRoles.join(" or ")}) not matched. Your role: ${rawRole}.`
       });
     }
     next();
@@ -429,7 +464,9 @@ export function authorize(allowedRoles: UserRole[] = ["ADMIN"]) {
 
     if (!token) {
       return res.status(401).json({
-        error: "Authentication required: Missing access token or administrative credentials."
+        success: false,
+        error: { code: "UNAUTHORIZED", message: "Authentication required: Missing access token or administrative credentials." },
+        message: "Authentication required: Missing access token or administrative credentials."
       });
     }
 
@@ -439,15 +476,21 @@ export function authorize(allowedRoles: UserRole[] = ["ADMIN"]) {
       const userRole = normalizeRole(adminPayload.role) || "ADMIN";
       (req as any).adminRole = adminPayload.role;
       (req as any).adminUser = adminPayload.username;
+      (req as any).adminDepartment = adminPayload.department || "";
       (req as any).isAdmin = true;
       (req as any).userRole = userRole;
 
-      // Check role authorization
+      // Check role authorization: Super Admin ("ADMIN") has universal access
       const normalizedAllowed = allowedRoles.map(r => normalizeRole(r) || r);
-      if (!normalizedAllowed.includes(userRole)) {
-        return res.status(403).json({
-          error: `Access Denied: Role '${adminPayload.role}' is not authorized for this action. Required: [${allowedRoles.join(", ")}].`
-        });
+      if (userRole !== "ADMIN" && !normalizedAllowed.includes(userRole)) {
+        // Also allow DEPT_SPOC if STUDENT_SPOC is allowed
+        if (!(userRole === "DEPT_SPOC" && normalizedAllowed.includes("STUDENT_SPOC"))) {
+          return res.status(403).json({
+            success: false,
+            error: { code: "FORBIDDEN", message: `Access Denied: Role '${adminPayload.role}' is not authorized for this action. Required: [${allowedRoles.join(", ")}].` },
+            message: `Access Denied: Role '${adminPayload.role}' is not authorized for this action. Required: [${allowedRoles.join(", ")}].`
+          });
+        }
       }
 
       return next();
@@ -462,7 +505,9 @@ export function authorize(allowedRoles: UserRole[] = ["ADMIN"]) {
       const normalizedAllowed = allowedRoles.map(r => normalizeRole(r) || r);
       if (!normalizedAllowed.includes("STUDENT")) {
         return res.status(403).json({
-          error: `Access Denied: Student accounts are not authorized to perform administrative operations. Required: [${allowedRoles.join(", ")}].`
+          success: false,
+          error: { code: "FORBIDDEN", message: `Access Denied: Student accounts are not authorized to perform administrative operations. Required: [${allowedRoles.join(", ")}].` },
+          message: `Access Denied: Student accounts are not authorized to perform administrative operations. Required: [${allowedRoles.join(", ")}].`
         });
       }
 
@@ -480,7 +525,9 @@ export function authorize(allowedRoles: UserRole[] = ["ADMIN"]) {
     }
 
     return res.status(401).json({
-      error: "Unauthorized: Invalid or expired session token."
+      success: false,
+      error: { code: "UNAUTHORIZED", message: "Unauthorized: Invalid or expired session token." },
+      message: "Unauthorized: Invalid or expired session token."
     });
   };
 }

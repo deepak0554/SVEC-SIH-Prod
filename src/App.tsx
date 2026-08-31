@@ -8,6 +8,7 @@ import Receipt from "./components/Receipt";
 import AdminPanel from "./components/AdminPanel";
 import SvecLogo from "./components/SvecLogo";
 import LandingPage from "./components/LandingPage";
+import { api } from "./services/api";
 
 export default function App() {
   const [view, setView] = useState<string>(() => {
@@ -37,7 +38,7 @@ export default function App() {
     creditsEnabled?: boolean;
   } | null>(null);
 
-  const [student, setStudent] = useState<{ id: string; email: string } | null>(() => {
+  const [student, setStudent] = useState<{ id: string; email: string; token?: string } | null>(() => {
     if (sessionStorage.getItem("svec_sih_admin_token")) {
       return null;
     }
@@ -52,37 +53,37 @@ export default function App() {
   // Fetch initial content, navigation links and lists
   const fetchAllInitialData = async () => {
     try {
-      const [psRes, homeRes, pagesRes, menuRes, settingsRes, updatesRes] = await Promise.all([
-        fetch("/api/problem-statements"),
-        fetch("/api/homepage"),
-        fetch("/api/custom-pages"),
-        fetch("/api/menu"),
-        fetch("/api/settings/public"),
-        fetch("/api/updates")
+      const [psRes, homeRes, pagesRes, menuRes, settingsRes, updatesRes] = await Promise.allSettled([
+        api.get<ProblemStatement[]>("/api/problem-statements"),
+        api.get<HomepageContent>("/api/homepage"),
+        api.get<CustomPage[]>("/api/custom-pages"),
+        api.get<MenuItem[]>("/api/menu"),
+        api.get<any>("/api/settings/public"),
+        api.get<LiveUpdate[]>("/api/updates")
       ]);
 
-      if (psRes.ok) {
-        setProblemStatements(await psRes.json());
+      if (psRes.status === "fulfilled" && psRes.value) {
+        setProblemStatements(psRes.value);
       }
 
-      if (homeRes.ok) {
-        setHomepageData(await homeRes.json());
+      if (homeRes.status === "fulfilled" && homeRes.value) {
+        setHomepageData(homeRes.value);
       }
 
-      if (pagesRes.ok) {
-        setCustomPages(await pagesRes.json());
+      if (pagesRes.status === "fulfilled" && pagesRes.value) {
+        setCustomPages(pagesRes.value);
       }
 
-      if (menuRes.ok) {
-        setMenuItems(await menuRes.json());
+      if (menuRes.status === "fulfilled" && menuRes.value) {
+        setMenuItems(menuRes.value);
       }
 
-      if (settingsRes.ok) {
-        setPublicSettings(await settingsRes.json());
+      if (settingsRes.status === "fulfilled" && settingsRes.value) {
+        setPublicSettings(settingsRes.value);
       }
 
-      if (updatesRes.ok) {
-        setUpdates(await updatesRes.json());
+      if (updatesRes.status === "fulfilled" && updatesRes.value) {
+        setUpdates(updatesRes.value);
       }
     } catch (err) {
       console.error("Failed to load initial workspace data", err);
@@ -93,32 +94,21 @@ export default function App() {
 
   const fetchMyRegistration = async (email: string) => {
     try {
-      const headers: Record<string, string> = {};
-      const savedStudent = localStorage.getItem("svec_sih_student");
-      let token = student?.token;
-      if (!token && savedStudent) {
-        try {
-          token = JSON.parse(savedStudent).token;
-        } catch (_) {}
-      }
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      const res = await fetch(`/api/registrations/my?email=${encodeURIComponent(email)}`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.found && data.registration) {
-          setHasExistingRegistration(data.registration);
-          setLatestRegistration(data.registration);
-          if (!sessionStorage.getItem("svec_sih_admin_token")) {
-            setView("receipt");
-          }
-        } else {
-          setHasExistingRegistration(null);
+      const data = await api.get<{ found: boolean; registration?: Registration }>(
+        "/api/registrations/my",
+        { params: { email } }
+      );
+      if (data && data.found && data.registration) {
+        setHasExistingRegistration(data.registration);
+        setLatestRegistration(data.registration);
+        if (!sessionStorage.getItem("svec_sih_admin_token")) {
+          setView("receipt");
         }
+      } else {
+        setHasExistingRegistration(null);
       }
     } catch (err) {
-      console.error("Failed to fetch my registration on mount/auth", err);
+      console.error("Failed to fetch registration on mount/auth", err);
     }
   };
 
@@ -127,13 +117,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (student) {
+    if (student?.email) {
       fetchMyRegistration(student.email);
     } else {
       setHasExistingRegistration(null);
       setLatestRegistration(null);
     }
-  }, [student]);
+  }, [student?.email]);
 
   const handleRegistrationSuccess = (reg: Registration) => {
     setLatestRegistration(reg);
@@ -168,7 +158,7 @@ export default function App() {
     }
 
     if (menuItems && menuItems.length > 0) {
-      return menuItems.sort((a, b) => a.order - b.order);
+      return [...menuItems].sort((a, b) => a.order - b.order);
     }
     return [
       { id: "1", label: "Home", type: "system", target: "home", order: 1 },
@@ -252,6 +242,8 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  const isDark = publicSettings?.portalTheme === "dark" && view !== "admin";
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
@@ -268,8 +260,6 @@ export default function App() {
 
   // Find if current view is a custom page slug
   const currentCustomPage = customPages.find(p => p.slug === view && p.published);
-
-  const isDark = publicSettings?.portalTheme === "dark" && view !== "admin";
 
   return (
     <div className={`min-h-screen flex flex-col transition-colors duration-300 ${isDark ? "bg-slate-950 text-white" : "bg-slate-50 text-slate-850"}`}>

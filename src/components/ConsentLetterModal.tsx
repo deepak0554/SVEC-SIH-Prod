@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Printer, X, FileText, Info, Download, FileCode, CheckCircle2, Sliders, Upload, RotateCcw, Image as ImageIcon } from "lucide-react";
+import { Printer, X, FileText, Info, Download, FileCode, CheckCircle2, Sliders, Upload, RotateCcw, Image as ImageIcon, Lock, Save, Sparkles, AlertCircle } from "lucide-react";
 import { Registration } from "../types";
 import SvecLogo from "./SvecLogo";
 
@@ -310,16 +310,15 @@ function makeOklchSafe() {
   };
 }
 
-interface ConsentLetterModalProps {
+export interface ConsentLetterModalProps {
   isOpen: boolean;
   onClose: () => void;
-  registration: Registration;
+  registration: Registration | null;
   isReadOnly?: boolean;
-  config?: {
-    logoUrl?: string;
-    portalTitle?: string;
-    portalCaption?: string;
-  };
+  isSuperAdmin?: boolean;
+  canCustomize?: boolean;
+  config?: any;
+  onSaveGlobalTemplate?: (templateSettings: any) => Promise<void>;
 }
 
 interface RosterMember {
@@ -337,38 +336,88 @@ export default function ConsentLetterModal({
   onClose,
   registration,
   isReadOnly = false,
+  isSuperAdmin = false,
+  canCustomize = false,
   config,
+  onSaveGlobalTemplate,
 }: ConsentLetterModalProps) {
+  // Only super admins or explicitly authorized roles can customize template
+  const allowCustomization = !isReadOnly && (isSuperAdmin || canCustomize);
+
   const [logoUrl, setLogoUrl] = useState(config?.logoUrl || "");
-  const [includeFullLetterhead, setIncludeFullLetterhead] = useState(true);
+  const [includeFullLetterhead, setIncludeFullLetterhead] = useState(
+    config?.consentLetterIncludeLetterhead !== undefined ? config.consentLetterIncludeLetterhead : true
+  );
   const logoFileInputRef = useRef<HTMLInputElement>(null);
 
   const effectiveLogoUrl = logoUrl || DEFAULT_SVEC_LOGO_SVG;
 
-  useEffect(() => {
-    if (config?.logoUrl) {
-      setLogoUrl(config.logoUrl);
-    }
-  }, [config?.logoUrl]);
+  const [aicteNo, setAicteNo] = useState(config?.consentLetterAicteNo || "1-3634005111");
+  const [principalName, setPrincipalName] = useState(config?.consentLetterPrincipalName || "Dr. Ch. Rambabu");
+  const [principalDesignationLine1, setPrincipalDesignationLine1] = useState(
+    config?.consentLetterDesignation1 || "Principal, Sri Vasavi Engineering College (Autonomous)"
+  );
+  const [principalDesignationLine2, setPrincipalDesignationLine2] = useState(
+    config?.consentLetterDesignation2 || "Pedatadepalli, Tadepalligudem."
+  );
+  const [teamName, setTeamName] = useState(registration?.teamName || "");
+  
+  // Signature Image state & handlers
+  const [signatureUrl, setSignatureUrl] = useState<string>(config?.consentLetterSignatureUrl || DEFAULT_SIGNATURE_SVG);
+  const [showSignature, setShowSignature] = useState<boolean>(
+    config?.consentLetterShowSignature !== undefined ? config.consentLetterShowSignature : true
+  );
+  const signatureFileInputRef = useRef<HTMLInputElement>(null);
+
+  // College Stamp / Seal Image state & handlers
+  const [stampUrl, setStampUrl] = useState<string>(config?.consentLetterStampUrl || DEFAULT_COLLEGE_STAMP_SVG);
+  const [showStamp, setShowStamp] = useState<boolean>(
+    config?.consentLetterShowStamp !== undefined ? config.consentLetterShowStamp : true
+  );
+  const stampFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Saving template feedback states
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [saveTemplateSuccess, setSaveTemplateSuccess] = useState(false);
 
   useEffect(() => {
-    if (!logoUrl) {
-      const fetchLogo = async () => {
-        try {
-          const res = await fetch("/api/settings/public");
-          if (res.ok) {
-            const data = await res.json();
-            if (data.logoUrl) {
-              setLogoUrl(data.logoUrl);
-            }
-          }
-        } catch (err) {
-          console.error("Error fetching settings for logo:", err);
-        }
-      };
-      fetchLogo();
+    if (config) {
+      if (config.logoUrl) setLogoUrl(config.logoUrl);
+      if (config.consentLetterAicteNo) setAicteNo(config.consentLetterAicteNo);
+      if (config.consentLetterPrincipalName) setPrincipalName(config.consentLetterPrincipalName);
+      if (config.consentLetterDesignation1) setPrincipalDesignationLine1(config.consentLetterDesignation1);
+      if (config.consentLetterDesignation2) setPrincipalDesignationLine2(config.consentLetterDesignation2);
+      if (config.consentLetterSignatureUrl) setSignatureUrl(config.consentLetterSignatureUrl);
+      if (config.consentLetterStampUrl) setStampUrl(config.consentLetterStampUrl);
+      if (config.consentLetterShowSignature !== undefined) setShowSignature(config.consentLetterShowSignature);
+      if (config.consentLetterShowStamp !== undefined) setShowStamp(config.consentLetterShowStamp);
+      if (config.consentLetterIncludeLetterhead !== undefined) setIncludeFullLetterhead(config.consentLetterIncludeLetterhead);
     }
-  }, [logoUrl]);
+  }, [config]);
+
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const res = await fetch("/api/settings/public");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.logoUrl && !logoUrl) setLogoUrl(data.logoUrl);
+          if (data.consentLetterAicteNo && !config?.consentLetterAicteNo) setAicteNo(data.consentLetterAicteNo);
+          if (data.consentLetterPrincipalName && !config?.consentLetterPrincipalName) setPrincipalName(data.consentLetterPrincipalName);
+          if (data.consentLetterDesignation1 && !config?.consentLetterDesignation1) setPrincipalDesignationLine1(data.consentLetterDesignation1);
+          if (data.consentLetterDesignation2 && !config?.consentLetterDesignation2) setPrincipalDesignationLine2(data.consentLetterDesignation2);
+          if (data.consentLetterSignatureUrl && !config?.consentLetterSignatureUrl) setSignatureUrl(data.consentLetterSignatureUrl);
+          if (data.consentLetterStampUrl && !config?.consentLetterStampUrl) setStampUrl(data.consentLetterStampUrl);
+          if (data.consentLetterShowSignature !== undefined && config?.consentLetterShowSignature === undefined) setShowSignature(data.consentLetterShowSignature);
+          if (data.consentLetterShowStamp !== undefined && config?.consentLetterShowStamp === undefined) setShowStamp(data.consentLetterShowStamp);
+          if (data.consentLetterIncludeLetterhead !== undefined && config?.consentLetterIncludeLetterhead === undefined) setIncludeFullLetterhead(data.consentLetterIncludeLetterhead);
+        }
+      } catch (err) {
+        console.error("Error fetching settings for consent letter:", err);
+      }
+    };
+    fetchSettings();
+  }, []);
 
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -394,17 +443,6 @@ export default function ConsentLetterModal({
   const handleResetLogo = () => {
     setLogoUrl(DEFAULT_SVEC_LOGO_SVG);
   };
-
-  const [aicteNo, setAicteNo] = useState("1-3634005111");
-  const [principalName, setPrincipalName] = useState("Dr. Ch. Rambabu");
-  const [principalDesignationLine1, setPrincipalDesignationLine1] = useState("Principal, Sri Vasavi Engineering College (Autonomous)");
-  const [principalDesignationLine2, setPrincipalDesignationLine2] = useState("Pedatadepalli, Tadepalligudem.");
-  const [teamName, setTeamName] = useState(registration?.teamName || "");
-  
-  // Signature Image state & handlers
-  const [signatureUrl, setSignatureUrl] = useState<string>(DEFAULT_SIGNATURE_SVG);
-  const [showSignature, setShowSignature] = useState<boolean>(true);
-  const signatureFileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -433,11 +471,6 @@ export default function ConsentLetterModal({
     setShowSignature(true);
   };
 
-  // College Stamp / Seal Image state & handlers
-  const [stampUrl, setStampUrl] = useState<string>(DEFAULT_COLLEGE_STAMP_SVG);
-  const [showStamp, setShowStamp] = useState<boolean>(true);
-  const stampFileInputRef = useRef<HTMLInputElement>(null);
-
   const handleStampUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -463,6 +496,52 @@ export default function ConsentLetterModal({
   const handleResetStamp = () => {
     setStampUrl(DEFAULT_COLLEGE_STAMP_SVG);
     setShowStamp(true);
+  };
+
+  // Super Admin: Save current customizer configuration as Global Default Template
+  const handleSaveGlobalTemplate = async () => {
+    setSavingTemplate(true);
+    setSaveTemplateSuccess(false);
+    try {
+      const token = sessionStorage.getItem("svec_sih_admin_token");
+      const templatePayload = {
+        consentLetterEnabled: true,
+        consentLetterAicteNo: aicteNo,
+        consentLetterPrincipalName: principalName,
+        consentLetterDesignation1: principalDesignationLine1,
+        consentLetterDesignation2: principalDesignationLine2,
+        consentLetterSignatureUrl: signatureUrl,
+        consentLetterStampUrl: stampUrl,
+        consentLetterShowSignature: showSignature,
+        consentLetterShowStamp: showStamp,
+        consentLetterIncludeLetterhead: includeFullLetterhead,
+        consentLetterRequireSelection: true
+      };
+
+      if (onSaveGlobalTemplate) {
+        await onSaveGlobalTemplate(templatePayload);
+      } else {
+        const res = await fetch("/api/admin/consent-letter-template", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify(templatePayload)
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || "Failed to save global template");
+        }
+      }
+
+      setSaveTemplateSuccess(true);
+      setTimeout(() => setSaveTemplateSuccess(false), 4000);
+    } catch (err: any) {
+      alert(err.message || "Failed to save global template");
+    } finally {
+      setSavingTemplate(false);
+    }
   };
   
   const [letterDate, setLetterDate] = useState(() => {
@@ -858,15 +937,85 @@ export default function ConsentLetterModal({
             </button>
           </div>
 
-          {/* Modal Body (Two-column layout on Desktop) */}
-          <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+          {/* Modal Body */}
+          {isReadOnly && registration && !registration.isFinalSelected ? (
+            <div className="p-8 sm:p-12 text-center max-w-xl mx-auto space-y-6 my-auto">
+              <div className="w-16 h-16 bg-amber-100 border border-amber-200 rounded-2xl flex items-center justify-center text-amber-600 mx-auto shadow-sm">
+                <Lock className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <h4 className="text-xl font-bold font-display text-slate-900">
+                  Consent Letter Download Locked
+                </h4>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  The official institutional Consent & Nomination Letter signed by the Principal is enabled exclusively for teams that have been selected for the next round of <b>Smart India Hackathon 2026</b>.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-2 text-xs text-slate-700">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-500">Team Name:</span>
+                  <span className="font-bold text-slate-900">{registration.teamName}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-500">Current Status:</span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold text-[11px]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                    Pending Next Round Selection
+                  </span>
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl shadow-xs transition-colors cursor-pointer"
+                >
+                  Understood, Return to Portal
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
             
-            {/* Left Column: Letter Customizer / Configuration Panel */}
-            {!isReadOnly && (
+            {/* Left Column: Letter Customizer / Configuration Panel (Super Admin / Admin Only) */}
+            {allowCustomization && (
               <div className="w-full lg:w-[320px] xl:w-[350px] p-5 bg-slate-50/70 space-y-4 shrink-0 overflow-y-auto">
-                <div className="flex items-center gap-2 text-slate-800 pb-2 border-b border-slate-200">
-                  <Sliders className="w-4 h-4 text-indigo-600" />
-                  <h4 className="text-xs font-extrabold font-display uppercase tracking-wider">Document Customizer</h4>
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <div className="flex items-center gap-2 text-slate-800">
+                    <Sliders className="w-4 h-4 text-indigo-600" />
+                    <h4 className="text-xs font-extrabold font-display uppercase tracking-wider">Document Customizer</h4>
+                  </div>
+                  <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
+                    Admin Mode
+                  </span>
+                </div>
+
+                {/* Save Global Default Template Action for Super Admin */}
+                <div className="bg-indigo-900 text-white p-3.5 rounded-2xl space-y-2 shadow-xs">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-200">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <span>Global Consent Letter Template</span>
+                  </div>
+                  <p className="text-[11px] text-indigo-100/80 leading-relaxed">
+                    Save the current AICTE number, Principal signature, seal, and designation as the official default for all students.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleSaveGlobalTemplate}
+                    disabled={savingTemplate}
+                    className="w-full mt-1 flex items-center justify-center gap-2 bg-indigo-500 hover:bg-indigo-400 active:bg-indigo-600 disabled:opacity-50 text-white text-xs font-bold py-2 px-3 rounded-xl transition-all shadow-xs cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    {savingTemplate ? "Saving Template..." : "Save as Global Default"}
+                  </button>
+                  {saveTemplateSuccess && (
+                    <p className="text-[10.5px] text-emerald-300 font-bold flex items-center gap-1">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      Global template saved successfully!
+                    </p>
+                  )}
                 </div>
 
                 {/* Letterhead Mode Switch */}
@@ -1522,6 +1671,7 @@ export default function ConsentLetterModal({
               </div>
             </div>
           </div>
+          )}
 
           {/* Modal Footer with Export & Action Buttons */}
           <div className="p-5 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0 no-print">
@@ -1539,37 +1689,41 @@ export default function ConsentLetterModal({
                 Close
               </button>
               
-              {/* Word Document (.doc) Export Button */}
-              <button
-                type="button"
-                onClick={handleDownloadWordDoc}
-                className="px-4 py-2.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
-                title="Download editable Microsoft Word (.doc) format"
-              >
-                <FileCode className="w-4 h-4" />
-                Download Word (.doc)
-              </button>
+              {(!isReadOnly || (registration && registration.isFinalSelected)) && (
+                <>
+                  {/* Word Document (.doc) Export Button */}
+                  <button
+                    type="button"
+                    onClick={handleDownloadWordDoc}
+                    className="px-4 py-2.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                    title="Download editable Microsoft Word (.doc) format"
+                  >
+                    <FileCode className="w-4 h-4" />
+                    Download Word (.doc)
+                  </button>
 
-              {/* PDF Download Button */}
-              <button
-                type="button"
-                onClick={handleDownloadPDF}
-                className="px-4 py-2.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
-                title="Download official PDF copy of the nomination letter"
-              >
-                <Download className="w-4 h-4" />
-                Download PDF
-              </button>
+                  {/* PDF Download Button */}
+                  <button
+                    type="button"
+                    onClick={handleDownloadPDF}
+                    className="px-4 py-2.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                    title="Download official PDF copy of the nomination letter"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download PDF
+                  </button>
 
-              {/* Native Print Dialog Button */}
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                Print Letter
-              </button>
+                  {/* Native Print Dialog Button */}
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-4 py-2.5 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs cursor-pointer transition-all flex items-center gap-1.5"
+                  >
+                    <Printer className="w-4 h-4" />
+                    Print Letter
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </motion.div>

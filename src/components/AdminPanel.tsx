@@ -62,6 +62,7 @@ import LiveUpdatesCustomizer from "./LiveUpdatesCustomizer";
 import SvecLogo from "./SvecLogo";
 import ConsentLetterModal from "./ConsentLetterModal";
 import ParticipationCertificateModal from "./ParticipationCertificateModal";
+import { getErrorMessage } from "../utils/error";
 
 // Helper to temporarily intercept CSS rules containing "oklch" (which crashes html2canvas in Tailwind v4)
 function makeOklchSafe() {
@@ -227,10 +228,13 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [adminRole, setAdminRole] = useState<"SPOC" | "Student SPOC" | "Evaluator" | null>(() => {
+  const [adminRole, setAdminRole] = useState<"SPOC" | "Dept SPOC" | "Student SPOC" | "Evaluator" | null>(() => {
     return (sessionStorage.getItem("svec_sih_admin_role") as any) || null;
   });
-  const [selectedRole, setSelectedRole] = useState<"SPOC" | "Student SPOC" | "Evaluator">("SPOC");
+  const [adminDepartment, setAdminDepartment] = useState<string>(() => {
+    return sessionStorage.getItem("svec_sih_admin_dept") || "";
+  });
+  const [selectedRole, setSelectedRole] = useState<"SPOC" | "Dept SPOC" | "Student SPOC" | "Evaluator">("SPOC");
   const [passcode, setPasscode] = useState(() => {
     return sessionStorage.getItem("svec_sih_admin_token") || "";
   });
@@ -295,11 +299,13 @@ export default function AdminPanel({
   const [selectedCertReg, setSelectedCertReg] = useState<Registration | null>(null);
 
   // Admins management state
-  const [adminsList, setAdminsList] = useState<{ username: string; role: "SPOC" | "Student SPOC" | "Evaluator" }[]>([]);
+  const [adminsList, setAdminsList] = useState<{ username: string; role: string; department?: string }[]>([]);
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [newAdminUser, setNewAdminUser] = useState("");
   const [newAdminPass, setNewAdminPass] = useState("");
-  const [newAdminRole, setNewAdminRole] = useState<"SPOC" | "Student SPOC" | "Evaluator">("Student SPOC");
+  const [newAdminRole, setNewAdminRole] = useState<"SPOC" | "Dept SPOC" | "Student SPOC" | "Evaluator">("Dept SPOC");
+  const [newAdminDept, setNewAdminDept] = useState<string>("Computer Science & Engineering (CSE)");
+  const [customAdminDept, setCustomAdminDept] = useState<string>("");
   const [adminAddError, setAdminAddError] = useState("");
   const [adminAddSuccess, setAdminAddSuccess] = useState("");
 
@@ -503,7 +509,7 @@ export default function AdminPanel({
   useEffect(() => {
     if (isLoggedIn) {
       fetchCriteria();
-      if (adminRole === "SPOC" || adminRole === "Student SPOC") {
+      if (adminRole === "SPOC" || adminRole === "Dept SPOC" || adminRole === "Student SPOC") {
         fetchAdminsList();
       }
     }
@@ -519,6 +525,19 @@ export default function AdminPanel({
       return;
     }
 
+    const resolvedDept = newAdminRole === "Dept SPOC"
+      ? (newAdminDept === "Other" ? customAdminDept.trim() : newAdminDept.trim())
+      : newAdminRole === "Evaluator" && adminRole === "DEPT_SPOC"
+        ? (adminDepartment || "")
+        : newAdminRole === "Evaluator" && newAdminDept
+          ? (newAdminDept === "Other" ? customAdminDept.trim() : newAdminDept.trim())
+          : "";
+
+    if (newAdminRole === "Dept SPOC" && !resolvedDept) {
+      setAdminAddError("Please specify or select a department for the Department SPOC.");
+      return;
+    }
+
     try {
       const res = await fetch("/api/admin/manage-admins", {
         method: "POST",
@@ -529,7 +548,8 @@ export default function AdminPanel({
         body: JSON.stringify({
           username: newAdminUser,
           password: newAdminPass,
-          role: newAdminRole
+          role: newAdminRole,
+          department: resolvedDept
         })
       });
       const data = await res.json();
@@ -537,6 +557,7 @@ export default function AdminPanel({
         setAdminAddSuccess(data.message || "Admin account created successfully.");
         setNewAdminUser("");
         setNewAdminPass("");
+        setCustomAdminDept("");
         fetchAdminsList();
       } else {
         setAdminAddError(data.error || "Failed to create admin.");
@@ -1480,10 +1501,12 @@ export default function AdminPanel({
       if (res.ok && data.success) {
         setPasscode(data.token);
         setAdminRole(data.role);
+        setAdminDepartment(data.department || "");
         setIsLoggedIn(true);
         sessionStorage.setItem("svec_sih_admin_token", data.token);
         sessionStorage.setItem("svec_sih_admin_role", data.role);
         sessionStorage.setItem("svec_sih_admin_username", data.username);
+        sessionStorage.setItem("svec_sih_admin_dept", data.department || "");
       } else {
         setLoginError(data.error || "Incorrect credentials or role selection.");
       }
@@ -1990,6 +2013,7 @@ export default function AdminPanel({
                 className="w-full px-3 py-2.5 border border-slate-200 bg-slate-50 rounded-xl outline-none focus:bg-white focus:border-indigo-500 cursor-pointer text-xs"
               >
                 <option value="SPOC">SPOC (Super Admin)</option>
+                <option value="Dept SPOC">Department SPOC (Department Head)</option>
                 <option value="Student SPOC">Student SPOC</option>
                 <option value="Evaluator">Evaluator</option>
               </select>
@@ -2081,8 +2105,21 @@ export default function AdminPanel({
                 <span className="text-xs text-slate-500">
                   Maintain problem statements, monitor submissions, and analyze team parameters.
                 </span>
-                <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
-                  Role: {adminRole || "SPOC"}
+                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${
+                  adminRole === "SPOC"
+                    ? "text-indigo-700 bg-indigo-50 border-indigo-200"
+                    : adminRole === "Dept SPOC"
+                      ? "text-amber-800 bg-amber-50 border-amber-300"
+                      : adminRole === "Evaluator"
+                        ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                        : "text-blue-700 bg-blue-50 border-blue-200"
+                }`}>
+                  <span>Role: {adminRole || "SPOC"}</span>
+                  {adminRole === "Dept SPOC" && adminDepartment && (
+                    <span className="bg-amber-200/80 text-amber-900 px-1.5 py-0.2 rounded text-[9px] font-extrabold">
+                      {adminDepartment}
+                    </span>
+                  )}
                 </span>
                 <span className="text-[10px] text-slate-400 font-medium">
                   (User: {sessionStorage.getItem("svec_sih_admin_username") || "admin"})
@@ -2099,9 +2136,11 @@ export default function AdminPanel({
               sessionStorage.removeItem("svec_sih_admin_token");
               sessionStorage.removeItem("svec_sih_admin_role");
               sessionStorage.removeItem("svec_sih_admin_username");
+              sessionStorage.removeItem("svec_sih_admin_dept");
               sessionStorage.removeItem("svec_sih_admin_active_tab");
               setPasscode("");
               setAdminRole(null);
+              setAdminDepartment("");
               setIsLoggedIn(false);
             }}
             className="px-3 py-2 border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 hover:border-red-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
@@ -2146,7 +2185,7 @@ export default function AdminPanel({
                     id: "evaluation-selection",
                     label: "Evaluation & Selection",
                     icon: CheckCircle,
-                    show: adminRole === "SPOC" || adminRole === "Student SPOC",
+                    show: adminRole === "SPOC" || adminRole === "Dept SPOC" || adminRole === "Student SPOC",
                   },
                   {
                     id: "broadcast",
@@ -2193,7 +2232,7 @@ export default function AdminPanel({
                     id: "settings",
                     label: "System Settings",
                     icon: Settings,
-                    show: adminRole !== "Student SPOC" && adminRole !== "Evaluator",
+                    show: adminRole === "SPOC",
                   },
                   {
                     id: "students",
@@ -2203,9 +2242,9 @@ export default function AdminPanel({
                   },
                   {
                     id: "admins",
-                    label: "Manage Admin Users",
+                    label: adminRole === "Dept SPOC" ? "Manage Evaluators" : "Manage Admin Users",
                     icon: Shield,
-                    show: adminRole === "SPOC",
+                    show: adminRole === "SPOC" || adminRole === "Dept SPOC",
                   },
                   {
                     id: "security",
@@ -5229,12 +5268,16 @@ export default function AdminPanel({
       )}
 
       {/* ADMINS MANAGEMENT TAB */}
-      {activeTab === "admins" && adminRole === "SPOC" && (
+      {activeTab === "admins" && (adminRole === "SPOC" || adminRole === "Dept SPOC") && (
         <div className="space-y-6">
           <div className="bg-white rounded-3xl border border-slate-150 p-6 md:p-8 text-left shadow-sm">
-            <h2 className="text-xl font-bold font-display text-slate-800">Manage Administrative Users</h2>
+            <h2 className="text-xl font-bold font-display text-slate-800">
+              {adminRole === "Dept SPOC" ? `Manage Department Evaluators (${adminDepartment || "Department Scope"})` : "Manage Administrative Users"}
+            </h2>
             <p className="text-slate-500 text-xs mt-1">
-              As Super Admin (SPOC), you can provision new SPOC or Student SPOC logins and manage existing administrative privileges.
+              {adminRole === "Dept SPOC"
+                ? `As Department SPOC for ${adminDepartment || "your department"}, you can provision and manage Evaluators who score proposals for your department's student teams.`
+                : "As Super Admin (SPOC), you can provision new SPOCs, Department-specific SPOCs, Student SPOCs, and Evaluators, and manage existing administrative privileges."}
             </p>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-6">
@@ -5242,7 +5285,7 @@ export default function AdminPanel({
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 self-start space-y-4">
                 <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5 border-b border-slate-200 pb-2">
                   <UserPlus className="w-4 h-4 text-indigo-600" />
-                  Create Admin Account
+                  {adminRole === "Dept SPOC" ? "Create Evaluator Account" : "Create Admin / Evaluator Account"}
                 </h3>
 
                 {adminAddError && (
@@ -5264,7 +5307,7 @@ export default function AdminPanel({
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Username</label>
                     <input
                       type="text"
-                      placeholder="e.g. janespoc"
+                      placeholder={adminRole === "Dept SPOC" ? "e.g. cse_evaluator1" : "e.g. cse_spoc"}
                       value={newAdminUser}
                       onChange={(e) => setNewAdminUser(e.target.value)}
                       className="w-full px-3 py-2 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500 font-mono"
@@ -5284,19 +5327,67 @@ export default function AdminPanel({
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Select Privilege Role</label>
-                    <select
-                      value={newAdminRole}
-                      onChange={(e) => setNewAdminRole(e.target.value as any)}
-                      className="w-full px-3 py-2 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
-                      required
-                    >
-                      <option value="Student SPOC">Student SPOC (Restricted / Read-only except Student Reset/Delete)</option>
-                      <option value="SPOC">SPOC (Super Admin)</option>
-                      <option value="Evaluator">Evaluator (Scores teams based on Criteria)</option>
-                    </select>
-                  </div>
+                  {adminRole === "SPOC" ? (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Select Privilege Role</label>
+                      <select
+                        value={newAdminRole}
+                        onChange={(e) => setNewAdminRole(e.target.value as any)}
+                        className="w-full px-3 py-2 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer"
+                        required
+                      >
+                        <option value="Dept SPOC">Department SPOC (Department Head / Event Operations for Specific Dept)</option>
+                        <option value="SPOC">SPOC (Super Admin - Full System Access)</option>
+                        <option value="Student SPOC">Student SPOC (Student Management Only)</option>
+                        <option value="Evaluator">Evaluator (Scores teams based on Criteria)</option>
+                      </select>
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Assigned Role</label>
+                      <div className="w-full px-3 py-2 border border-slate-200 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold">
+                        Evaluator (Department Scoped: {adminDepartment})
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Department selection for Dept SPOC or Evaluator (when created by Super Admin) */}
+                  {adminRole === "SPOC" && (newAdminRole === "Dept SPOC" || newAdminRole === "Evaluator") && (
+                    <div className="space-y-1 animate-fade-in">
+                      <label className="block text-[10px] font-bold text-indigo-700 uppercase tracking-wider flex items-center justify-between">
+                        <span>Target Department</span>
+                        <span className="text-[9px] text-slate-400 font-normal lowercase">required</span>
+                      </label>
+                      <select
+                        value={newAdminDept}
+                        onChange={(e) => setNewAdminDept(e.target.value)}
+                        className="w-full px-3 py-2 border border-indigo-200 bg-indigo-50/40 rounded-xl text-xs outline-none focus:border-indigo-500 cursor-pointer font-medium"
+                      >
+                        <option value="Computer Science & Engineering (CSE)">Computer Science & Engineering (CSE)</option>
+                        <option value="Information Technology (IT)">Information Technology (IT)</option>
+                        <option value="Electronics & Communication (ECE)">Electronics & Communication (ECE)</option>
+                        <option value="Electrical & Electronics (EEE)">Electrical & Electronics (EEE)</option>
+                        <option value="Mechanical Engineering (MECH)">Mechanical Engineering (MECH)</option>
+                        <option value="Civil Engineering (CIVIL)">Civil Engineering (CIVIL)</option>
+                        <option value="Artificial Intelligence & ML (AIML)">Artificial Intelligence & ML (AIML)</option>
+                        <option value="Artificial Intelligence & Data Science (AIDS)">Artificial Intelligence & Data Science (AIDS)</option>
+                        <option value="Master of Business Administration (MBA)">Master of Business Administration (MBA)</option>
+                        <option value="Master of Computer Applications (MCA)">Master of Computer Applications (MCA)</option>
+                        <option value="Other">Other (Type custom department name)</option>
+                      </select>
+
+                      {newAdminDept === "Other" && (
+                        <input
+                          type="text"
+                          placeholder="Enter department name"
+                          value={customAdminDept}
+                          onChange={(e) => setCustomAdminDept(e.target.value)}
+                          className="w-full mt-1.5 px-3 py-2 border border-slate-200 bg-white rounded-xl text-xs outline-none focus:border-indigo-500"
+                          required
+                        />
+                      )}
+                    </div>
+                  )}
 
                   <button
                     type="submit"
@@ -5311,23 +5402,24 @@ export default function AdminPanel({
               <div className="lg:col-span-2 space-y-4">
                 <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                   <ShieldAlert className="w-4 h-4 text-indigo-600" />
-                  Active Administrators List
+                  {adminRole === "Dept SPOC" ? "Active Department Evaluators" : "Active Administrators & Evaluators"}
                 </h3>
 
                 {adminsLoading ? (
                   <div className="py-12 text-center bg-slate-50 border border-slate-100 rounded-2xl">
                     <span className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin inline-block"></span>
-                    <p className="text-xs text-slate-400 mt-2">Loading administrators...</p>
+                    <p className="text-xs text-slate-400 mt-2">Loading accounts...</p>
                   </div>
                 ) : (
-                  <div className="border border-slate-100 rounded-2xl overflow-hidden bg-white">
+                  <div className="border border-slate-100 rounded-2xl overflow-hidden bg-white shadow-2xs">
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
                           <tr className="bg-slate-50/70 border-b border-slate-100 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
-                            <th className="px-6 py-4">Admin Username</th>
-                            <th className="px-6 py-4">Privilege Role</th>
-                            <th className="px-6 py-4 text-right">Actions</th>
+                            <th className="px-5 py-3.5">Username</th>
+                            <th className="px-5 py-3.5">Privilege Role</th>
+                            <th className="px-5 py-3.5">Department Scope</th>
+                            <th className="px-5 py-3.5 text-right">Actions</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-xs">
@@ -5336,7 +5428,7 @@ export default function AdminPanel({
                             const isPrimary = admin.username.trim().toLowerCase() === "deepak0554";
                             return (
                               <tr key={admin.username} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="px-6 py-4 font-bold text-slate-800 font-mono">
+                                <td className="px-5 py-3.5 font-bold text-slate-800 font-mono">
                                   {admin.username}
                                   {isMe && (
                                     <span className="ml-2 text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
@@ -5344,16 +5436,29 @@ export default function AdminPanel({
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-6 py-4">
+                                <td className="px-5 py-3.5">
                                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                                     admin.role === "SPOC"
                                       ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                                      : "bg-amber-50 text-amber-700 border-amber-200"
+                                      : admin.role === "Dept SPOC" || admin.role === "Department SPOC"
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : admin.role === "Evaluator"
+                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                          : "bg-blue-50 text-blue-700 border-blue-200"
                                   }`}>
                                     {admin.role}
                                   </span>
                                 </td>
-                                <td className="px-6 py-4 text-right">
+                                <td className="px-5 py-3.5 text-slate-600">
+                                  {admin.department ? (
+                                    <span className="text-[11px] font-medium bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200">
+                                      {admin.department}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400 text-[10px]">All / Global</span>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3.5 text-right">
                                   {selectedAdminForReset === admin.username ? (
                                     <div className="flex items-center justify-end gap-1.5 animate-fade-in">
                                       <input
@@ -5425,7 +5530,7 @@ export default function AdminPanel({
                                         <button
                                           onClick={() => handleDeleteAdmin(admin.username)}
                                           className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50/50 transition-colors cursor-pointer"
-                                          title="Revoke admin permissions"
+                                          title="Revoke permissions"
                                           id={`btn-admin-delete-${admin.username}`}
                                         >
                                           <Trash2 className="w-3.5 h-3.5" />
@@ -5850,7 +5955,7 @@ export default function AdminPanel({
       )}
 
       {/* EVALUATION & SELECTION CENTRE TAB */}
-      {activeTab === "evaluation-selection" && (adminRole === "SPOC" || adminRole === "Student SPOC") && (
+      {activeTab === "evaluation-selection" && (adminRole === "SPOC" || adminRole === "Dept SPOC" || adminRole === "Student SPOC") && (
         <div className="max-w-6xl mx-auto space-y-6 animate-fade-in text-left">
           {/* Header Banner */}
           <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -6057,7 +6162,7 @@ export default function AdminPanel({
                                       Consent Letter
                                     </button>
                                   )}
-                                  {adminRole === "SPOC" && (
+                                  {(adminRole === "SPOC" || adminRole === "Dept SPOC") && (
                                     <>
                                       {isPromoted ? (
                                         <button
@@ -8390,6 +8495,9 @@ export default function AdminPanel({
         isOpen={!!selectedRegForLetter}
         onClose={() => setSelectedRegForLetter(null)}
         registration={selectedRegForLetter}
+        isReadOnly={adminRole !== "SPOC"}
+        isSuperAdmin={adminRole === "SPOC"}
+        canCustomize={adminRole === "SPOC"}
         config={settingsForm}
       />
 

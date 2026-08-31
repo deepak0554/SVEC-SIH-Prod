@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { ProblemStatement, Registration } from "../types";
 import SvecLogo from "./SvecLogo";
+import { getErrorMessage } from "../utils/error";
 
 interface RegistrationFormProps {
   student: { id: string; email: string; gender?: string; department?: string; mobile?: string };
@@ -577,7 +578,7 @@ export default function RegistrationForm({
         }
         onSuccess(data.registration);
       } else {
-        setErrors({ submit: data.error || "Submission failed. Please try again." });
+        setErrors({ submit: getErrorMessage(data, "Submission failed. Please try again.") });
       }
     } catch (err) {
       setErrors({ submit: "A network error occurred. Please try again later." });

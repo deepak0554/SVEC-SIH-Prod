@@ -10,13 +10,21 @@ export class AdminController {
     try {
       const { username, password } = req.body;
       if (!username || !password) {
-        res.status(400).json({ error: "Username and password are required" });
+        res.status(400).json({
+          success: false,
+          error: { code: "VALIDATION_ERROR", message: "Username and password are required" },
+          message: "Username and password are required"
+        });
         return;
       }
 
       const result = await this.service.authenticateAdmin(username, password);
       if (!result.success || !result.admin) {
-        res.status(401).json({ error: result.error || "Invalid credentials" });
+        res.status(401).json({
+          success: false,
+          error: { code: "UNAUTHORIZED", message: result.error || "Invalid credentials" },
+          message: result.error || "Invalid credentials"
+        });
         return;
       }
 
@@ -35,7 +43,11 @@ export class AdminController {
       });
     } catch (err: any) {
       console.error("[AdminController.login Error]:", err);
-      res.status(500).json({ error: "Login failed" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Login failed" },
+        message: "Login failed"
+      });
     }
   };
 
@@ -45,7 +57,11 @@ export class AdminController {
       res.json(admins.map(a => ({ username: a.username, role: a.role })));
     } catch (err: any) {
       console.error("[AdminController.getAdmins Error]:", err);
-      res.status(500).json({ error: "Failed to fetch admin accounts" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to fetch admin accounts" },
+        message: "Failed to fetch admin accounts"
+      });
     }
   };
 
@@ -53,13 +69,21 @@ export class AdminController {
     try {
       const result = await this.service.createOrUpdateAdmin(req.body);
       if (!result.success || !result.admin) {
-        res.status(400).json({ error: result.error });
+        res.status(400).json({
+          success: false,
+          error: { code: "VALIDATION_ERROR", message: result.error || "Failed to save admin account" },
+          message: result.error || "Failed to save admin account"
+        });
         return;
       }
       res.json({ username: result.admin.username, role: result.admin.role });
     } catch (err: any) {
       console.error("[AdminController.createOrUpdateAdmin Error]:", err);
-      res.status(500).json({ error: "Failed to save admin account" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to save admin account" },
+        message: "Failed to save admin account"
+      });
     }
   };
 
@@ -68,13 +92,21 @@ export class AdminController {
       const { username } = req.params;
       const success = await this.service.deleteAdmin(username);
       if (!success) {
-        res.status(404).json({ error: "Admin not found" });
+        res.status(404).json({
+          success: false,
+          error: { code: "NOT_FOUND", message: "Admin not found" },
+          message: "Admin not found"
+        });
         return;
       }
       res.json({ message: "Admin removed successfully" });
     } catch (err: any) {
       console.error("[AdminController.deleteAdmin Error]:", err);
-      res.status(500).json({ error: "Failed to delete admin" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to delete admin" },
+        message: "Failed to delete admin"
+      });
     }
   };
 
@@ -84,7 +116,11 @@ export class AdminController {
       res.json(stats);
     } catch (err: any) {
       console.error("[AdminController.getDashboardStats Error]:", err);
-      res.status(500).json({ error: "Failed to load dashboard metrics" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to load dashboard metrics" },
+        message: "Failed to load dashboard metrics"
+      });
     }
   };
 
@@ -94,7 +130,11 @@ export class AdminController {
       res.json(logs);
     } catch (err: any) {
       console.error("[AdminController.getBroadcastLogs Error]:", err);
-      res.status(500).json({ error: "Failed to fetch broadcast logs" });
+      res.status(500).json({
+        success: false,
+        error: { code: "INTERNAL_ERROR", message: "Failed to fetch broadcast logs" },
+        message: "Failed to fetch broadcast logs"
+      });
     }
   };
 }
