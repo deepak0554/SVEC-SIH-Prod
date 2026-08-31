@@ -370,16 +370,24 @@ export default function ConsentLetterModal({
     }
   }, [logoUrl]);
 
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (uploadEvent) => {
-        if (uploadEvent.target?.result) {
-          setLogoUrl(uploadEvent.target.result as string);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("category", "images");
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setLogoUrl(data.url);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error("Error uploading logo:", err);
+      }
     }
   };
 
@@ -398,17 +406,25 @@ export default function ConsentLetterModal({
   const [showSignature, setShowSignature] = useState<boolean>(true);
   const signatureFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (uploadEvent) => {
-        if (uploadEvent.target?.result) {
-          setSignatureUrl(uploadEvent.target.result as string);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("category", "images");
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setSignatureUrl(data.url);
           setShowSignature(true);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error("Error uploading signature:", err);
+      }
     }
   };
 
@@ -422,17 +438,25 @@ export default function ConsentLetterModal({
   const [showStamp, setShowStamp] = useState<boolean>(true);
   const stampFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleStampUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleStampUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (uploadEvent) => {
-        if (uploadEvent.target?.result) {
-          setStampUrl(uploadEvent.target.result as string);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("category", "images");
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setStampUrl(data.url);
           setShowStamp(true);
         }
-      };
-      reader.readAsDataURL(file);
+      } catch (err) {
+        console.error("Error uploading stamp:", err);
+      }
     }
   };
 

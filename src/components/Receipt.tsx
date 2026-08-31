@@ -70,7 +70,9 @@ export default function Receipt({
   const [abstract, setAbstract] = useState(registration.abstract || "");
   const [implementationSteps, setImplementationSteps] = useState(registration.implementationSteps || "");
   const [pptFileName, setPptFileName] = useState(registration.pptFileName || "");
+  const [pptFileUrl, setPptFileUrl] = useState(registration.pptFileUrl || "");
   const [pptBase64, setPptBase64] = useState(registration.pptBase64 || "");
+  const [uploadingPpt, setUploadingPpt] = useState(false);
   const [proposalStatus, setProposalStatus] = useState<"saved" | "submitted">(registration.proposalStatus || "saved");
 
   // Profile state
@@ -468,6 +470,7 @@ export default function Receipt({
     setAbstract(registration.abstract || "");
     setImplementationSteps(registration.implementationSteps || "");
     setPptFileName(registration.pptFileName || "");
+    setPptFileUrl(registration.pptFileUrl || "");
     setPptBase64(registration.pptBase64 || "");
     setProposalStatus(registration.proposalStatus || "saved");
 
@@ -574,8 +577,8 @@ export default function Receipt({
     }
   };
 
-  const handleFileSelection = (file: File) => {
-    // Check file type: PPT or PDF
+  const handleFileSelection = async (file: File) => {
+    // Check file type: PPT, PPTX or PDF
     const fileExtension = file.name.split(".").pop()?.toLowerCase();
     const allowedExtensions = ["ppt", "pptx", "pdf"];
     if (!allowedExtensions.includes(fileExtension || "")) {
@@ -583,30 +586,51 @@ export default function Receipt({
       return;
     }
 
-    // Limit size to 12MB
-    if (file.size > 12 * 1024 * 1024) {
-      setErrorMsg("File is too large. Maximum allowed size is 12MB.");
+    // Limit size to 15MB
+    if (file.size > 15 * 1024 * 1024) {
+      setErrorMsg("File is too large. Maximum allowed size is 15MB.");
       return;
     }
 
     setErrorMsg("");
     setSuccessMsg("");
+    setUploadingPpt(true);
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const result = e.target?.result as string;
-      setPptBase64(result);
-      setPptFileName(file.name);
-    };
-    reader.onerror = () => {
-      setErrorMsg("Failed to read the file. Please try again.");
-    };
-    reader.readAsDataURL(file);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("category", "ppts");
+
+      // Use dedicated student multipart PPT upload route
+      const res = await fetch("/api/registrations/my/upload-ppt", {
+        method: "POST",
+        headers: getAuthHeaders(),
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPptFileName(file.name);
+        setPptFileUrl(data.file ? data.file.url : (data.registration?.pptFileUrl || ""));
+        setPptBase64(""); // Avoid heavy base64 strings
+        setSuccessMsg(data.message || "Presentation file uploaded and verified successfully!");
+        if (onUpdateRegistration && data.registration) {
+          onUpdateRegistration(data.registration);
+        }
+      } else {
+        setErrorMsg(data.error || "Failed to upload file. Please check file type and size.");
+      }
+    } catch (err) {
+      setErrorMsg("Network error. Failed to upload presentation file.");
+    } finally {
+      setUploadingPpt(false);
+    }
   };
 
   const removeUploadedFile = () => {
     if (proposalStatus === "submitted") return;
     setPptFileName("");
+    setPptFileUrl("");
     setPptBase64("");
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
@@ -614,7 +638,7 @@ export default function Receipt({
   };
 
   const triggerFileBrowser = () => {
-    if (proposalStatus === "submitted") return;
+    if (proposalStatus === "submitted" || uploadingPpt) return;
     fileInputRef.current?.click();
   };
 
@@ -639,7 +663,8 @@ export default function Receipt({
           abstract,
           implementationSteps,
           pptFileName,
-          pptBase64,
+          pptFileUrl,
+          pptBase64: pptBase64 || undefined,
           proposalStatus: status
         })
       });
@@ -662,8 +687,8 @@ export default function Receipt({
 
   // Helper to trigger download of the PPT (server URL or fallback)
   const downloadPpt = () => {
-    if (registration.pptFileUrl) {
-      window.open(registration.pptFileUrl, "_blank");
+    if (pptFileUrl || registration.pptFileUrl) {
+      window.open(pptFileUrl || registration.pptFileUrl, "_blank");
       return;
     }
     if (registration.id) {
@@ -1323,7 +1348,7 @@ export default function Receipt({
                       </div>
 
                       <div className="flex gap-2 pt-1">
-                        {pptBase64 && (
+                        {(pptFileUrl || pptBase64 || registration.pptFileUrl) && (
                           <button
                             type="button"
                             onClick={downloadPpt}
@@ -1352,26 +1377,36 @@ export default function Receipt({
                       onDrop={handleDrop}
                       onClick={triggerFileBrowser}
                       className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-3 ${
-                        proposalStatus === "submitted"
+                        proposalStatus === "submitted" || uploadingPpt
                           ? "bg-slate-50 border-slate-100 cursor-not-allowed text-slate-400"
                           : isDragging
                           ? "border-indigo-500 bg-indigo-50/40 text-indigo-600"
                           : "border-slate-200 hover:border-indigo-400 hover:bg-slate-50/50 text-slate-500"
                       }`}
                     >
-                      <CloudUpload className="w-8 h-8 text-indigo-500 shrink-0" />
-                      <div>
-                        <p className="text-xs font-bold text-slate-700">Drag & Drop presentation file</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5">or click to browse from device</p>
-                        <p className="text-[9px] text-indigo-600 mt-2 font-semibold">Allowed: .ppt, .pptx, .pdf (Max 12MB)</p>
-                      </div>
+                      {uploadingPpt ? (
+                        <div className="flex flex-col items-center justify-center gap-2 py-3">
+                          <div className="w-7 h-7 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                          <p className="text-xs font-bold text-indigo-700">Uploading & verifying file...</p>
+                          <p className="text-[10px] text-slate-400">Verifying MIME signatures</p>
+                        </div>
+                      ) : (
+                        <>
+                          <CloudUpload className="w-8 h-8 text-indigo-500 shrink-0" />
+                          <div>
+                            <p className="text-xs font-bold text-slate-700">Drag & Drop presentation file</p>
+                            <p className="text-[10px] text-slate-400 mt-0.5">or click to browse from device</p>
+                            <p className="text-[9px] text-indigo-600 mt-2 font-semibold">Allowed: .ppt, .pptx, .pdf (Max 15MB)</p>
+                          </div>
+                        </>
+                      )}
                       <input
                         type="file"
                         ref={fileInputRef}
                         onChange={handleFileChange}
                         accept=".ppt,.pptx,.pdf"
                         className="hidden"
-                        disabled={proposalStatus === "submitted"}
+                        disabled={proposalStatus === "submitted" || uploadingPpt}
                       />
                     </div>
                   )}

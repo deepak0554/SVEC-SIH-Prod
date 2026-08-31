@@ -6,35 +6,107 @@ import Razorpay from "razorpay";
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
 import { createServer as createViteServer } from "vite";
-import { ProblemStatement, Registration, Student, FeeConfig, HomepageContent, CustomPage, MenuItem } from "./src/types";
-import { db, TeamEvaluation, defaultCriteria, defaultStatements } from "./server/db";
-
-const JWT_SECRET = process.env.JWT_SECRET || "svec_sih_hackathon_jwt_secret_2026";
+import { ProblemStatement, Registration, Student, FeeConfig, HomepageContent, CustomPage, MenuItem, EvaluationCriterion, LiveUpdate } from "./src/types";
+import { db, TeamEvaluation, defaultCriteria, defaultStatements, defaultDefaultAdmins, BroadcastLog } from "./server/db";
+import {
+  getJwtSecret,
+  getAdminPasscode,
+  validateAuthStartup,
+  signStudentToken,
+  signAdminToken,
+  verifyStudentToken,
+  verifyAdminToken,
+  hashPassword,
+  verifyPassword,
+  validateStudentJWT,
+  validateAdmin,
+  requireRole,
+  authorize,
+  authenticateAnyUser,
+  extractUserOptional,
+  normalizeRole,
+  UserRole,
+  AdminUser
+} from "./server/auth";
+import {
+  upload,
+  validateAndSaveFile,
+  saveBase64Securely,
+  isPathSafe,
+  sanitizeClientFilename,
+  DATA_DIR,
+  UPLOADS_DIR,
+  UPLOADS_PPTS_DIR,
+  UPLOADS_IMAGES_DIR,
+  UPLOADS_DOCS_DIR,
+  UPLOADS_SAMPLE_PPTS_DIR,
+  CATEGORY_DIR_MAP,
+  UploadCategory
+} from "./server/fileUpload";
+import {
+  validateBody,
+  validateQuery,
+  validateParams,
+  studentRegisterSchema,
+  studentLoginSchema,
+  adminLoginSchema,
+  changePasswordSchema,
+  resetPasswordAdminSchema,
+  studentProfileUpdateSchema,
+  manageAdminCreateSchema,
+  teamRegistrationSchema,
+  updateTeamRosterSchema,
+  updateProposalSchema,
+  problemStatementSchema,
+  bulkProblemStatementsSchema,
+  evaluationCriteriaSchema,
+  updateEvaluationCriteriaBodySchema,
+  assignEvaluatorSchema,
+  evaluateTeamSchema,
+  finalizeSelectionSchema,
+  updateApprovalStatusSchema,
+  updateRegistrationAdminSchema,
+  createPaymentOrderSchema,
+  verifyPaymentSchema,
+  settingsSchema,
+  testDbSchema,
+  fileUploadSchema,
+  broadcastSmsSchema,
+  broadcastWhatsappSchema,
+  broadcastEmailSchema,
+  broadcastMessageSchema,
+  customPageSchema,
+  updateCustomPageSchema,
+  menuSchema,
+  menuItemsArraySchema,
+  homepageContentSchema,
+  updatesArraySchema,
+  paginationQuerySchema,
+  singleIdParamSchema
+} from "./server/validation";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-
-app.use(express.json({ limit: "50mb" })); // Allow larger payloads for base64 images/PPT
-
-// Ensure data directory and file uploads storage exist
 const IS_VERCEL = !!process.env.VERCEL;
-const DATA_DIR = process.env.DATA_DIR || (IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data"));
-const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
-const UPLOADS_PPTS_DIR = path.join(UPLOADS_DIR, "ppts");
-const UPLOADS_IMAGES_DIR = path.join(UPLOADS_DIR, "images");
-const UPLOADS_DOCS_DIR = path.join(UPLOADS_DIR, "documents");
-const UPLOADS_SAMPLE_PPTS_DIR = path.join(UPLOADS_DIR, "sample_ppts");
 
-// Ensure all persistent storage directories exist
-[DATA_DIR, UPLOADS_DIR, UPLOADS_PPTS_DIR, UPLOADS_IMAGES_DIR, UPLOADS_DOCS_DIR, UPLOADS_SAMPLE_PPTS_DIR].forEach(dir => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-});
+// Enforce standard 5MB JSON payload limit (multipart/form-data handles binary streams)
+app.use(express.json({ limit: "5mb" }));
 
-// Serve uploads statically directly from server disk
-app.use("/api/uploads", express.static(UPLOADS_DIR));
-app.use("/uploads", express.static(UPLOADS_DIR));
+// Legacy fallback: Keep a helper pointing to saveBase64Securely
+function saveBase64File(
+  base64Data: string,
+  category: "ppts" | "images" | "documents" | "sample_ppts",
+  suggestedName?: string
+) {
+  const res = saveBase64Securely(base64Data, category, suggestedName);
+  if (!res) return null;
+  return {
+    url: res.url,
+    filename: res.filename,
+    size: res.size,
+    relativePath: `/uploads/${category}/${res.filename}`
+  };
+}
 
 if (IS_VERCEL) {
   const sourceDir = path.join(process.cwd(), "data");
@@ -170,66 +242,6 @@ if (!fs.existsSync(CRITERIA_FILE)) {
   fs.writeFileSync(CRITERIA_FILE, JSON.stringify(defaultCriteria, null, 2), "utf-8");
 }
 
-// Helper to decode and save base64 files (images, PPTs, templates) directly to server disk
-function saveBase64File(
-  base64Data: string,
-  category: "ppts" | "images" | "documents" | "sample_ppts",
-  suggestedName?: string
-): { url: string; filename: string; size: number; relativePath: string } | null {
-  if (!base64Data || typeof base64Data !== "string") return null;
-
-  try {
-    let cleanBase64 = base64Data.trim();
-    let ext = ".bin";
-
-    // Detect MIME type and extension if Data URL
-    if (cleanBase64.startsWith("data:")) {
-      const match = cleanBase64.match(/^data:([^;]+);base64,/);
-      if (match) {
-        const mime = match[1].toLowerCase();
-        if (mime.includes("presentation") || mime.includes("powerpoint") || mime.includes("pptx")) ext = ".pptx";
-        else if (mime.includes("pdf")) ext = ".pdf";
-        else if (mime.includes("png")) ext = ".png";
-        else if (mime.includes("jpeg") || mime.includes("jpg")) ext = ".jpg";
-        else if (mime.includes("webp")) ext = ".webp";
-        else if (mime.includes("gif")) ext = ".gif";
-        else if (mime.includes("svg")) ext = ".svg";
-        cleanBase64 = cleanBase64.replace(/^data:[^;]+;base64,/, "");
-      }
-    }
-
-    if (suggestedName) {
-      const parsedExt = path.extname(suggestedName);
-      if (parsedExt) ext = parsedExt;
-    }
-
-    const safeBaseName = (suggestedName ? path.basename(suggestedName, ext) : "file")
-      .replace(/[^a-zA-Z0-9_-]/g, "_")
-      .substring(0, 50);
-
-    const uniqueFilename = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}_${safeBaseName}${ext}`;
-    const targetDir = path.join(UPLOADS_DIR, category);
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-
-    const targetPath = path.join(targetDir, uniqueFilename);
-    const buffer = Buffer.from(cleanBase64, "base64");
-    fs.writeFileSync(targetPath, buffer);
-
-    const relativeUrl = `/api/uploads/${category}/${encodeURIComponent(uniqueFilename)}`;
-    return {
-      url: relativeUrl,
-      filename: uniqueFilename,
-      size: buffer.length,
-      relativePath: `/uploads/${category}/${uniqueFilename}`
-    };
-  } catch (err) {
-    console.error(`[Upload Storage Error] Failed to save base64 file to ${category}:`, err);
-    return null;
-  }
-}
-
 // Automatically save homepage base64 images (banner, patrons, sponsors, gallery) to server disk
 function processHomepageImages(content: HomepageContent): HomepageContent {
   if (!content) return content;
@@ -279,327 +291,199 @@ function processHomepageImages(content: HomepageContent): HomepageContent {
   return updated;
 }
 
-// Helpers to read/write files
-function readCriteria(): any[] {
-  try {
-    const data = fs.readFileSync(CRITERIA_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return defaultCriteria;
-  }
+// Unified Data Access Helpers (PostgreSQL Single Source of Truth & Object Storage)
+function readCriteria(): EvaluationCriterion[] {
+  return db.readLocalFile<EvaluationCriterion[]>("evaluation_criteria.json", defaultCriteria);
 }
 
-function writeCriteria(criteria: any[]) {
-  fs.writeFileSync(CRITERIA_FILE, JSON.stringify(criteria, null, 2), "utf-8");
-  syncMetadataToExternalDB("evaluation_criteria", criteria).catch(err => {
+function writeCriteria(criteria: EvaluationCriterion[]) {
+  db.writeLocalFile("evaluation_criteria.json", criteria);
+  db.saveEvaluationCriteria(criteria).catch(err => {
     console.error("Failed to sync evaluation criteria to DB:", err);
   });
 }
+
 function readStatements(): ProblemStatement[] {
-  try {
-    const data = fs.readFileSync(STATEMENTS_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return defaultStatements;
-  }
+  return db.readLocalFile<ProblemStatement[]>("problem_statements.json", defaultStatements);
 }
 
 function writeStatements(statements: ProblemStatement[]) {
-  fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(statements, null, 2), "utf-8");
-  syncMetadataToExternalDB("problem_statements", statements).catch(err => {
+  db.writeLocalFile("problem_statements.json", statements);
+  db.saveProblemStatements(statements).catch(err => {
     console.error("Failed to sync problem statements to DB:", err);
   });
 }
 
 function readRegistrations(): Registration[] {
-  try {
-    const data = fs.readFileSync(REGISTRATIONS_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return [];
-  }
+  return db.readLocalFile<Registration[]>("registrations.json", []);
 }
 
 function writeRegistrations(registrations: Registration[]) {
-  fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(registrations, null, 2), "utf-8");
-  const settings = readSettings();
-  if (settings.dbEnabled && settings.dbType !== "none") {
-    Promise.all(registrations.map(r => syncRegistrationToExternalDB(r))).catch(err => {
-      console.error("Failed to sync registrations batch to external DB:", err);
-    });
-  }
+  db.writeLocalFile("registrations.json", registrations);
+  db.saveRegistrations(registrations).catch(err => {
+    console.error("Failed to sync registrations to DB:", err);
+  });
 }
 
 function readStudents(): Student[] {
-  try {
-    const data = fs.readFileSync(STUDENTS_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return [];
-  }
+  return db.readLocalFile<Student[]>("students.json", []);
 }
 
 function writeStudents(students: Student[]) {
-  fs.writeFileSync(STUDENTS_FILE, JSON.stringify(students, null, 2), "utf-8");
-  syncMetadataToExternalDB("students", students).catch(err => {
+  db.writeLocalFile("students.json", students);
+  db.saveStudents(students).catch(err => {
     console.error("Failed to sync students to DB:", err);
   });
 }
 
 function readHomepage(): HomepageContent {
-  try {
-    const data = fs.readFileSync(HOMEPAGE_FILE, "utf-8");
-    const parsed = JSON.parse(data) as HomepageContent;
-    if (!parsed.patrons) {
-      parsed.patrons = [
-        { id: "p1", name: "Sri G. Satyanarayana", position: "President", imageUrl: "" },
-        { id: "p2", name: "Sri Ch. V. V. Subba Rao", position: "Secretary", imageUrl: "" },
-        { id: "p3", name: "Sri K. Venkateswara Rao", position: "Technical Director", imageUrl: "" },
-        { id: "p4", name: "Dr. Ch. Rambabu", position: "Principal", imageUrl: "" }
-      ];
-      fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(parsed, null, 2), "utf-8");
-    }
-    return parsed;
-  } catch (err) {
-    return defaultHomepageContent;
+  const content = db.readLocalFile<HomepageContent>("homepage_content.json", defaultHomepageContent);
+  if (!content.patrons) {
+    content.patrons = [
+      { id: "p1", name: "Sri G. Satyanarayana", position: "President", imageUrl: "" },
+      { id: "p2", name: "Sri Ch. V. V. Subba Rao", position: "Secretary", imageUrl: "" },
+      { id: "p3", name: "Sri K. Venkateswara Rao", position: "Technical Director", imageUrl: "" },
+      { id: "p4", name: "Dr. Ch. Rambabu", position: "Principal", imageUrl: "" }
+    ];
+    db.writeLocalFile("homepage_content.json", content);
   }
+  return content;
 }
 
 function writeHomepage(content: HomepageContent) {
   const processed = processHomepageImages(content);
-  fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(processed, null, 2), "utf-8");
-  syncMetadataToExternalDB("homepage_content", processed).catch(err => {
+  db.writeLocalFile("homepage_content.json", processed);
+  db.saveHomepageContent(processed).catch(err => {
     console.error("Failed to sync homepage content to DB:", err);
   });
 }
 
-function readUpdates(): any[] {
-  try {
-    const data = fs.readFileSync(UPDATES_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return [
-      { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
-      { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
-      { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
-    ];
-  }
+function readUpdates(): LiveUpdate[] {
+  return db.readLocalFile<LiveUpdate[]>("updates.json", [
+    { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
+    { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
+    { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
+  ]);
 }
 
-function writeUpdates(updates: any[]) {
-  fs.writeFileSync(UPDATES_FILE, JSON.stringify(updates, null, 2), "utf-8");
-  syncMetadataToExternalDB("live_updates", updates).catch(err => {
+function writeUpdates(updates: LiveUpdate[]) {
+  db.writeLocalFile("updates.json", updates);
+  db.saveLiveUpdates(updates).catch(err => {
     console.error("Failed to sync live updates to DB:", err);
   });
 }
 
 function readCustomPages(): CustomPage[] {
-  try {
-    const data = fs.readFileSync(PAGES_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return defaultCustomPages;
-  }
+  return db.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
 }
 
 function writeCustomPages(pages: CustomPage[]) {
-  fs.writeFileSync(PAGES_FILE, JSON.stringify(pages, null, 2), "utf-8");
-  syncMetadataToExternalDB("custom_pages", pages).catch(err => {
+  db.writeLocalFile("custom_pages.json", pages);
+  db.saveCustomPages(pages).catch(err => {
     console.error("Failed to sync custom pages to DB:", err);
   });
 }
 
 function readMenuItems(): MenuItem[] {
-  try {
-    const data = fs.readFileSync(MENU_FILE, "utf-8");
-    return JSON.parse(data);
-  } catch (err) {
-    return defaultMenuItems;
-  }
+  return db.readLocalFile<MenuItem[]>("menu_items.json", defaultMenuItems);
 }
 
 function writeMenuItems(items: MenuItem[]) {
-  fs.writeFileSync(MENU_FILE, JSON.stringify(items, null, 2), "utf-8");
-  syncMetadataToExternalDB("menu_items", items).catch(err => {
+  db.writeLocalFile("menu_items.json", items);
+  db.saveMenuItems(items).catch(err => {
     console.error("Failed to sync menu items to DB:", err);
   });
 }
 
-
 function readSettings(): FeeConfig {
-  try {
-    const data = fs.readFileSync(SETTINGS_FILE, "utf-8");
-    const parsed = JSON.parse(data);
-    return {
-      feeEnabled: parsed.feeEnabled ?? false,
-      feeAmount: parsed.feeAmount ?? 499,
-      razorpayKeyId: parsed.razorpayKeyId ?? "",
-      razorpayKeySecret: parsed.razorpayKeySecret ?? "",
-      jwtEnabled: parsed.jwtEnabled ?? false,
-      emailEnabled: parsed.emailEnabled ?? false,
-      smtpHost: parsed.smtpHost ?? "",
-      smtpPort: parsed.smtpPort ?? 587,
-      smtpUser: parsed.smtpUser ?? "",
-      smtpPass: parsed.smtpPass ?? "",
-      smtpFrom: parsed.smtpFrom ?? "",
-      portalTheme: parsed.portalTheme ?? "light",
-      logoUrl: parsed.logoUrl ?? "",
-      portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
-      portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College",
-      teamMembersCount: parsed.teamMembersCount ?? 5,
-      genderDiversityRequired: parsed.genderDiversityRequired ?? true,
+  const parsed = db.readLocalFile<any>("settings.json", {});
+  return {
+    feeEnabled: parsed.feeEnabled ?? false,
+    feeAmount: parsed.feeAmount ?? 499,
+    razorpayKeyId: parsed.razorpayKeyId ?? "",
+    razorpayKeySecret: parsed.razorpayKeySecret ?? "",
+    jwtEnabled: parsed.jwtEnabled ?? false,
+    emailEnabled: parsed.emailEnabled ?? false,
+    smtpHost: parsed.smtpHost ?? "",
+    smtpPort: parsed.smtpPort ?? 587,
+    smtpUser: parsed.smtpUser ?? "",
+    smtpPass: parsed.smtpPass ?? "",
+    smtpFrom: parsed.smtpFrom ?? "",
+    portalTheme: parsed.portalTheme ?? "light",
+    logoUrl: parsed.logoUrl ?? "",
+    portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
+    portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College",
+    teamMembersCount: parsed.teamMembersCount ?? 5,
+    genderDiversityRequired: parsed.genderDiversityRequired ?? true,
 
-      // SMS config
-      smsEnabled: parsed.smsEnabled ?? false,
-      smsProvider: parsed.smsProvider ?? "twilio",
-      twilioSid: parsed.twilioSid ?? "",
-      twilioAuthToken: parsed.twilioAuthToken ?? "",
-      twilioFrom: parsed.twilioFrom ?? "",
-      msg91AuthKey: parsed.msg91AuthKey ?? "",
-      msg91SenderId: parsed.msg91SenderId ?? "",
-      msg91Route: parsed.msg91Route ?? "4",
-      smsCustomUrl: parsed.smsCustomUrl ?? "",
-      smsCustomMethod: parsed.smsCustomMethod ?? "POST",
-      smsCustomHeaders: parsed.smsCustomHeaders ?? "",
-      smsCustomPayload: parsed.smsCustomPayload ?? "",
+    // SMS config
+    smsEnabled: parsed.smsEnabled ?? false,
+    smsProvider: parsed.smsProvider ?? "twilio",
+    twilioSid: parsed.twilioSid ?? "",
+    twilioAuthToken: parsed.twilioAuthToken ?? "",
+    twilioFrom: parsed.twilioFrom ?? "",
+    msg91AuthKey: parsed.msg91AuthKey ?? "",
+    msg91SenderId: parsed.msg91SenderId ?? "",
+    msg91Route: parsed.msg91Route ?? "4",
+    smsCustomUrl: parsed.smsCustomUrl ?? "",
+    smsCustomMethod: parsed.smsCustomMethod ?? "POST",
+    smsCustomHeaders: parsed.smsCustomHeaders ?? "",
+    smsCustomPayload: parsed.smsCustomPayload ?? "",
 
-      // WhatsApp config
-      whatsappEnabled: parsed.whatsappEnabled ?? false,
-      whatsappProvider: parsed.whatsappProvider ?? "meta",
-      whatsappAccessToken: parsed.whatsappAccessToken ?? "",
-      whatsappPhoneId: parsed.whatsappPhoneId ?? "",
-      whatsappWabaId: parsed.whatsappWabaId ?? "",
-      whatsappCustomUrl: parsed.whatsappCustomUrl ?? "",
-      whatsappCustomMethod: parsed.whatsappCustomMethod ?? "POST",
-      whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
-      whatsappCustomPayload: parsed.whatsappCustomPayload ?? "",
+    // WhatsApp config
+    whatsappEnabled: parsed.whatsappEnabled ?? false,
+    whatsappProvider: parsed.whatsappProvider ?? "meta",
+    whatsappAccessToken: parsed.whatsappAccessToken ?? "",
+    whatsappPhoneId: parsed.whatsappPhoneId ?? "",
+    whatsappWabaId: parsed.whatsappWabaId ?? "",
+    whatsappCustomUrl: parsed.whatsappCustomUrl ?? "",
+    whatsappCustomMethod: parsed.whatsappCustomMethod ?? "POST",
+    whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
+    whatsappCustomPayload: parsed.whatsappCustomPayload ?? "",
 
-      // External DB config
-      dbEnabled: parsed.dbEnabled ?? false,
-      dbType: parsed.dbType ?? "none",
-      dbHost: parsed.dbHost ?? "",
-      dbPort: parsed.dbPort !== undefined ? Number(parsed.dbPort) : undefined,
-      dbName: parsed.dbName ?? "",
-      dbUsername: parsed.dbUsername ?? "",
-      dbPassword: parsed.dbPassword ?? "",
-      dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
-      dbStatus: parsed.dbStatus ?? "Not Connected",
+    // External DB config
+    dbEnabled: parsed.dbEnabled ?? false,
+    dbType: parsed.dbType ?? "none",
+    dbHost: parsed.dbHost ?? "",
+    dbPort: parsed.dbPort !== undefined ? Number(parsed.dbPort) : undefined,
+    dbName: parsed.dbName ?? "",
+    dbUsername: parsed.dbUsername ?? "",
+    dbPassword: parsed.dbPassword ?? "",
+    dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
+    dbStatus: parsed.dbStatus ?? "Not Connected",
 
-      // Student Profile & Member updates lock
-      lockStudentUpdates: parsed.lockStudentUpdates ?? false,
-      lockRegisterAnotherTeam: parsed.lockRegisterAnotherTeam ?? false,
+    // Student Profile & Member updates lock
+    lockStudentUpdates: parsed.lockStudentUpdates ?? false,
+    lockRegisterAnotherTeam: parsed.lockRegisterAnotherTeam ?? false,
 
-      // Customizable Certificates
-      enableCertificates: parsed.enableCertificates ?? false,
-      certificateTitle: parsed.certificateTitle ?? "CERTIFICATE OF PARTICIPATION",
-      certificateSubtitle: parsed.certificateSubtitle ?? "This is proudly presented to",
-      certificateBody: parsed.certificateBody ?? "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
-      certificateSignatory1Name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu",
-      certificateSignatory1Title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC",
-      certificateSignatory2Name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu",
-      certificateSignatory2Title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor",
-      certificateSignatories: parsed.certificateSignatories ?? [
-        { id: "sig-1", name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu", title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC" },
-        { id: "sig-2", name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu", title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor" }
-      ],
-      certificateBgType: parsed.certificateBgType ?? "classic",
-      certificateBgUrl: parsed.certificateBgUrl ?? "",
-      certificateBorderColor: parsed.certificateBorderColor ?? "#4f46e5",
-      certificateDateText: parsed.certificateDateText ?? "July 17, 2026",
-      creditsTitle: parsed.creditsTitle ?? "Department of CSE",
-      creditsContent: parsed.creditsContent ?? "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-      creditsEnabled: parsed.creditsEnabled ?? true,
+    // Customizable Certificates
+    enableCertificates: parsed.enableCertificates ?? false,
+    certificateTitle: parsed.certificateTitle ?? "CERTIFICATE OF PARTICIPATION",
+    certificateSubtitle: parsed.certificateSubtitle ?? "This is proudly presented to",
+    certificateBody: parsed.certificateBody ?? "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
+    certificateSignatory1Name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu",
+    certificateSignatory1Title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC",
+    certificateSignatory2Name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu",
+    certificateSignatory2Title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor",
+    certificateSignatories: parsed.certificateSignatories ?? [
+      { id: "sig-1", name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu", title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC" },
+      { id: "sig-2", name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu", title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor" }
+    ],
+    certificateBgType: parsed.certificateBgType ?? "classic",
+    certificateBgUrl: parsed.certificateBgUrl ?? "",
+    certificateBorderColor: parsed.certificateBorderColor ?? "#4f46e5",
+    certificateDateText: parsed.certificateDateText ?? "July 17, 2026",
+    creditsTitle: parsed.creditsTitle ?? "Department of CSE",
+    creditsContent: parsed.creditsContent ?? "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
+    creditsEnabled: parsed.creditsEnabled ?? true,
 
-      // Sample PPT / Presentation Template & Demo Link
-      samplePptEnabled: parsed.samplePptEnabled !== undefined ? parsed.samplePptEnabled : true,
-      samplePptUrl: parsed.samplePptUrl ?? "",
-      samplePptFileName: parsed.samplePptFileName ?? "",
-      samplePptFileBase64: parsed.samplePptFileBase64 ?? "",
-      samplePptDescription: parsed.samplePptDescription ?? "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
-    };
-  } catch (err) {
-    return {
-      feeEnabled: false,
-      feeAmount: 499,
-      razorpayKeyId: "",
-      razorpayKeySecret: "",
-      jwtEnabled: false,
-      emailEnabled: false,
-      smtpHost: "",
-      smtpPort: 587,
-      smtpUser: "",
-      smtpPass: "",
-      smtpFrom: "",
-      portalTheme: "light",
-      logoUrl: "",
-      portalTitle: "SVEC - SIH Internal Hackathon 2026",
-      portalCaption: "Sri Vasavi Engineering College",
-      teamMembersCount: 5,
-      genderDiversityRequired: true,
-
-      smsEnabled: false,
-      smsProvider: "twilio",
-      twilioSid: "",
-      twilioAuthToken: "",
-      twilioFrom: "",
-      msg91AuthKey: "",
-      msg91SenderId: "",
-      msg91Route: "4",
-      smsCustomUrl: "",
-      smsCustomMethod: "POST",
-      smsCustomHeaders: "",
-      smsCustomPayload: "",
-
-      whatsappEnabled: false,
-      whatsappProvider: "meta",
-      whatsappAccessToken: "",
-      whatsappPhoneId: "",
-      whatsappWabaId: "",
-      whatsappCustomUrl: "",
-      whatsappCustomMethod: "POST",
-      whatsappCustomHeaders: "",
-      whatsappCustomPayload: "",
-
-      dbEnabled: false,
-      dbType: "none",
-      dbHost: "",
-      dbPort: undefined,
-      dbName: "",
-      dbUsername: "",
-      dbPassword: "",
-      dbCollectionOrTable: "registrations",
-      dbStatus: "Not Connected",
-
-      lockStudentUpdates: false,
-      lockRegisterAnotherTeam: false,
-      enableCertificates: false,
-      certificateTitle: "CERTIFICATE OF PARTICIPATION",
-      certificateSubtitle: "This is proudly presented to",
-      certificateBody: "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
-      certificateSignatory1Name: "Dr. Ch. Rambabu",
-      certificateSignatory1Title: "Principal & Chairman, SVEC",
-      certificateSignatory2Name: "Dr. K. Shirin Bhanu",
-      certificateSignatory2Title: "SIH College SPOC & Convenor",
-      certificateSignatories: [
-        { id: "sig-1", name: "Dr. Ch. Rambabu", title: "Principal & Chairman, SVEC" },
-        { id: "sig-2", name: "Dr. K. Shirin Bhanu", title: "SIH College SPOC & Convenor" }
-      ],
-      certificateBgType: "classic",
-      certificateBgUrl: "",
-      certificateBorderColor: "#4f46e5",
-      certificateDateText: "July 17, 2026",
-      creditsTitle: "Department of CSE",
-      creditsContent: "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-      creditsEnabled: true,
-
-      // Sample PPT defaults
-      samplePptEnabled: true,
-      samplePptUrl: "",
-      samplePptFileName: "",
-      samplePptFileBase64: "",
-      samplePptDescription: "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
-    };
-  }
+    // Sample PPT / Presentation Template & Demo Link
+    samplePptEnabled: parsed.samplePptEnabled !== undefined ? parsed.samplePptEnabled : true,
+    samplePptUrl: parsed.samplePptUrl ?? "",
+    samplePptFileName: parsed.samplePptFileName ?? "",
+    samplePptFileBase64: parsed.samplePptFileBase64 ?? "",
+    samplePptDescription: parsed.samplePptDescription ?? "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
+  };
 }
 
 function writeSettings(settings: FeeConfig) {
@@ -629,25 +513,10 @@ function writeSettings(settings: FeeConfig) {
     }
   }
 
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(updatedSettings, null, 2), "utf-8");
-  if (updatedSettings.dbEnabled) {
-    syncSettingsToExternalDB(updatedSettings).catch(err => {
-      console.error("Failed to sync settings to external DB on write:", err);
-    });
-    // Trigger dynamic metadata sync in background to keep all portal configurations updated in DB
-    syncMetadataToExternalDB("problem_statements", readStatements()).catch(err => {
-      console.error("Failed to sync problem statements to DB on settings write:", err);
-    });
-    syncMetadataToExternalDB("homepage_content", readHomepage()).catch(err => {
-      console.error("Failed to sync homepage content to DB on settings write:", err);
-    });
-    syncMetadataToExternalDB("custom_pages", readCustomPages()).catch(err => {
-      console.error("Failed to sync custom pages to DB on settings write:", err);
-    });
-    syncMetadataToExternalDB("menu_items", readMenuItems()).catch(err => {
-      console.error("Failed to sync menu items to DB on settings write:", err);
-    });
-  }
+  db.writeLocalFile("settings.json", updatedSettings);
+  db.saveSettings(updatedSettings).catch(err => {
+    console.error("Failed to sync settings to DB on write:", err);
+  });
 }
 
 // Sync app settings dynamically to configured external MongoDB or SQL
@@ -851,75 +720,105 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
 
       const tableName = dbCollectionOrTable || "registrations";
 
-      // Create table query to ensure it exists
-      const createTableSql = `
+      // 1. Ensure table and all modern columns exist via safe migrations
+      await client.query(`
         CREATE TABLE IF NOT EXISTS ${tableName} (
           id VARCHAR(255) PRIMARY KEY,
-          registration_id VARCHAR(255),
-          team_name VARCHAR(255),
-          lead_name VARCHAR(255),
-          lead_department VARCHAR(255),
-          lead_mobile VARCHAR(20),
-          lead_gender VARCHAR(50),
-          member1 VARCHAR(255),
-          member1_gender VARCHAR(50),
-          member1_email VARCHAR(255),
-          member1_phone VARCHAR(20),
-          member2 VARCHAR(255),
-          member2_gender VARCHAR(50),
-          member2_email VARCHAR(255),
-          member2_phone VARCHAR(20),
-          member3 VARCHAR(255),
-          member3_gender VARCHAR(50),
-          member3_email VARCHAR(255),
-          member3_phone VARCHAR(20),
-          member4 VARCHAR(255),
-          member4_gender VARCHAR(50),
-          member4_email VARCHAR(255),
-          member4_phone VARCHAR(20),
-          member5 VARCHAR(255),
-          member5_gender VARCHAR(50),
-          member5_email VARCHAR(255),
-          member5_phone VARCHAR(20),
-          has_female_member BOOLEAN,
-          mentor_name VARCHAR(255),
-          problem_statement_id VARCHAR(255),
-          submitted_at VARCHAR(255),
-          student_email VARCHAR(255),
-          payment_status VARCHAR(50),
-          payment_id VARCHAR(255),
-          order_id VARCHAR(255),
-          amount_paid INT,
-          abstract TEXT,
-          implementation_steps TEXT,
-          ppt_file_name VARCHAR(255),
-          ppt_base64 TEXT,
-          proposal_status VARCHAR(50)
+          registration_id VARCHAR(100) UNIQUE NOT NULL,
+          team_name VARCHAR(255) NOT NULL,
+          lead_name VARCHAR(255) NOT NULL,
+          lead_department VARCHAR(100) NOT NULL,
+          lead_mobile VARCHAR(50) NOT NULL
         );
-      `;
-      await client.query(createTableSql);
+      `);
+
+      const migrationQueries = [
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS lead_gender VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS lead_academic_year VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member1 VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member1_gender VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member1_email VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member1_phone VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member1_academic_year VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member2 VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member2_gender VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member2_email VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member2_phone VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member2_academic_year VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member3 VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member3_gender VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member3_email VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member3_phone VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member3_academic_year VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member4 VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member4_gender VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member4_email VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member4_phone VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member4_academic_year VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member5 VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member5_gender VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member5_email VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member5_phone VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS member5_academic_year VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS has_female_member BOOLEAN DEFAULT FALSE;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS mentor_name VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS problem_statement_id VARCHAR(100);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS submitted_at VARCHAR(100);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS student_email VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50) DEFAULT 'free';`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS payment_id VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS order_id VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS amount_paid NUMERIC;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS abstract TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS implementation_steps TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ppt_file_name VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ppt_file_url TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS ppt_base64 TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS proposal_status VARCHAR(50);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'pending';`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS approval_notes TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS verified_at VARCHAR(100);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS verified_by VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS is_final_selected BOOLEAN DEFAULT FALSE;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS selection_notes TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS assigned_evaluator VARCHAR(255);`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS evaluator_scores TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS evaluation_notes TEXT;`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS evaluation_status VARCHAR(50) DEFAULT 'pending';`,
+        `ALTER TABLE ${tableName} ADD COLUMN IF NOT EXISTS total_score NUMERIC DEFAULT 0;`
+      ];
+
+      for (const mQuery of migrationQueries) {
+        try {
+          await client.query(mQuery);
+        } catch (e) {}
+      }
 
       const insertSql = `
         INSERT INTO ${tableName} (
-          id, registration_id, team_name, lead_name, lead_department, lead_mobile, lead_gender,
-          member1, member1_gender, member1_email, member1_phone,
-          member2, member2_gender, member2_email, member2_phone,
-          member3, member3_gender, member3_email, member3_phone,
-          member4, member4_gender, member4_email, member4_phone,
-          member5, member5_gender, member5_email, member5_phone,
+          id, registration_id, team_name, lead_name, lead_department, lead_mobile, lead_gender, lead_academic_year,
+          member1, member1_gender, member1_email, member1_phone, member1_academic_year,
+          member2, member2_gender, member2_email, member2_phone, member2_academic_year,
+          member3, member3_gender, member3_email, member3_phone, member3_academic_year,
+          member4, member4_gender, member4_email, member4_phone, member4_academic_year,
+          member5, member5_gender, member5_email, member5_phone, member5_academic_year,
           has_female_member, mentor_name, problem_statement_id, submitted_at, student_email,
           payment_status, payment_id, order_id, amount_paid, abstract, implementation_steps,
-          ppt_file_name, ppt_base64, proposal_status
+          ppt_file_name, ppt_file_url, ppt_base64, proposal_status, approval_status, approval_notes,
+          verified_at, verified_by, is_final_selected, selection_notes, assigned_evaluator,
+          evaluator_scores, evaluation_notes, evaluation_status, total_score
         ) VALUES (
-          $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10, $11,
-          $12, $13, $14, $15,
-          $16, $17, $18, $19,
-          $20, $21, $22, $23,
-          $24, $25, $26, $27,
-          $28, $29, $30, $31, $32,
-          $33, $34, $35, $36, $37, $38,
-          $39, $40, $41
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13,
+          $14, $15, $16, $17, $18,
+          $19, $20, $21, $22, $23,
+          $24, $25, $26, $27, $28,
+          $29, $30, $31, $32, $33,
+          $34, $35, $36, $37, $38,
+          $39, $40, $41, $42, $43, $44,
+          $45, $46, $47, $48, $49, $50,
+          $51, $52, $53, $54, $55,
+          $56, $57, $58, $59
         ) ON CONFLICT (id) DO UPDATE SET
           registration_id = EXCLUDED.registration_id,
           team_name = EXCLUDED.team_name,
@@ -927,26 +826,32 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
           lead_department = EXCLUDED.lead_department,
           lead_mobile = EXCLUDED.lead_mobile,
           lead_gender = EXCLUDED.lead_gender,
+          lead_academic_year = EXCLUDED.lead_academic_year,
           member1 = EXCLUDED.member1,
           member1_gender = EXCLUDED.member1_gender,
           member1_email = EXCLUDED.member1_email,
           member1_phone = EXCLUDED.member1_phone,
+          member1_academic_year = EXCLUDED.member1_academic_year,
           member2 = EXCLUDED.member2,
           member2_gender = EXCLUDED.member2_gender,
           member2_email = EXCLUDED.member2_email,
           member2_phone = EXCLUDED.member2_phone,
+          member2_academic_year = EXCLUDED.member2_academic_year,
           member3 = EXCLUDED.member3,
           member3_gender = EXCLUDED.member3_gender,
           member3_email = EXCLUDED.member3_email,
           member3_phone = EXCLUDED.member3_phone,
+          member3_academic_year = EXCLUDED.member3_academic_year,
           member4 = EXCLUDED.member4,
           member4_gender = EXCLUDED.member4_gender,
           member4_email = EXCLUDED.member4_email,
           member4_phone = EXCLUDED.member4_phone,
+          member4_academic_year = EXCLUDED.member4_academic_year,
           member5 = EXCLUDED.member5,
           member5_gender = EXCLUDED.member5_gender,
           member5_email = EXCLUDED.member5_email,
           member5_phone = EXCLUDED.member5_phone,
+          member5_academic_year = EXCLUDED.member5_academic_year,
           has_female_member = EXCLUDED.has_female_member,
           mentor_name = EXCLUDED.mentor_name,
           problem_statement_id = EXCLUDED.problem_statement_id,
@@ -959,9 +864,23 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
           abstract = EXCLUDED.abstract,
           implementation_steps = EXCLUDED.implementation_steps,
           ppt_file_name = EXCLUDED.ppt_file_name,
+          ppt_file_url = EXCLUDED.ppt_file_url,
           ppt_base64 = EXCLUDED.ppt_base64,
-          proposal_status = EXCLUDED.proposal_status
+          proposal_status = EXCLUDED.proposal_status,
+          approval_status = EXCLUDED.approval_status,
+          approval_notes = EXCLUDED.approval_notes,
+          verified_at = EXCLUDED.verified_at,
+          verified_by = EXCLUDED.verified_by,
+          is_final_selected = EXCLUDED.is_final_selected,
+          selection_notes = EXCLUDED.selection_notes,
+          assigned_evaluator = EXCLUDED.assigned_evaluator,
+          evaluator_scores = EXCLUDED.evaluator_scores,
+          evaluation_notes = EXCLUDED.evaluation_notes,
+          evaluation_status = EXCLUDED.evaluation_status,
+          total_score = EXCLUDED.total_score;
       `;
+
+      const totalScore = registration.evaluatorScores ? Object.values(registration.evaluatorScores).reduce((a, b) => Number(a) + Number(b), 0) : 0;
 
       const values = [
         registration.id,
@@ -971,30 +890,36 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
         registration.leadDepartment,
         registration.leadMobile,
         registration.leadGender || "",
+        registration.leadAcademicYear || "",
         registration.member1 || "",
         registration.member1Gender || "",
         registration.member1Email || "",
         registration.member1Phone || "",
+        registration.member1AcademicYear || "",
         registration.member2 || "",
         registration.member2Gender || "",
         registration.member2Email || "",
         registration.member2Phone || "",
+        registration.member2AcademicYear || "",
         registration.member3 || "",
         registration.member3Gender || "",
         registration.member3Email || "",
         registration.member3Phone || "",
+        registration.member3AcademicYear || "",
         registration.member4 || "",
         registration.member4Gender || "",
         registration.member4Email || "",
         registration.member4Phone || "",
+        registration.member4AcademicYear || "",
         registration.member5 || "",
         registration.member5Gender || "",
         registration.member5Email || "",
         registration.member5Phone || "",
-        registration.hasFemaleMember,
-        registration.mentorName,
-        registration.problemStatementId,
-        registration.submittedAt,
+        registration.member5AcademicYear || "",
+        !!registration.hasFemaleMember,
+        registration.mentorName || "",
+        registration.problemStatementId || "",
+        registration.submittedAt || new Date().toISOString(),
         registration.studentEmail || "",
         registration.paymentStatus || "free",
         registration.paymentId || "",
@@ -1003,8 +928,20 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
         registration.abstract || "",
         registration.implementationSteps || "",
         registration.pptFileName || "",
+        registration.pptFileUrl || "",
         registration.pptBase64 || "",
-        registration.proposalStatus || "saved"
+        registration.proposalStatus || "saved",
+        registration.approvalStatus || "pending",
+        registration.approvalNotes || "",
+        registration.verifiedAt || "",
+        registration.verifiedBy || "",
+        !!registration.isFinalSelected,
+        registration.selectionNotes || "",
+        registration.assignedEvaluator || "",
+        registration.evaluatorScores ? JSON.stringify(registration.evaluatorScores) : "",
+        registration.evaluationNotes || "",
+        registration.evaluationStatus || "pending",
+        totalScore
       ];
 
       await client.query(insertSql, values);
@@ -1100,20 +1037,24 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
       const metaColl = db.collection("app_metadata");
       const metaDocs = await metaColl.find({}).toArray();
       for (const doc of metaDocs) {
-        if (doc.key === "problem_statements" && Array.isArray(doc.data)) {
-          fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+        const rawKey = doc.key || doc.id;
+        const rawData = doc.data !== undefined ? doc.data : (doc.data_json !== undefined ? doc.data_json : doc.metadata_json);
+        if (!rawKey || !rawData) continue;
+        const data = typeof rawData === "string" ? JSON.parse(rawData) : rawData;
+        if (rawKey === "problem_statements" && Array.isArray(data)) {
+          fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
           counts.metadata++;
-        } else if (doc.key === "homepage_content" && doc.data?.sihDetails) {
-          fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+        } else if (rawKey === "homepage_content" && data?.sihDetails) {
+          fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(data, null, 2), "utf-8");
           counts.metadata++;
-        } else if (doc.key === "custom_pages" && Array.isArray(doc.data)) {
-          fs.writeFileSync(PAGES_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+        } else if (rawKey === "custom_pages" && Array.isArray(data)) {
+          fs.writeFileSync(PAGES_FILE, JSON.stringify(data, null, 2), "utf-8");
           counts.metadata++;
-        } else if (doc.key === "evaluation_criteria" && Array.isArray(doc.data)) {
-          fs.writeFileSync(CRITERIA_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+        } else if (rawKey === "evaluation_criteria" && Array.isArray(data)) {
+          fs.writeFileSync(CRITERIA_FILE, JSON.stringify(data, null, 2), "utf-8");
           counts.metadata++;
-        } else if (doc.key === "menu_items" && Array.isArray(doc.data)) {
-          fs.writeFileSync(MENU_FILE, JSON.stringify(doc.data, null, 2), "utf-8");
+        } else if (rawKey === "menu_items" && Array.isArray(data)) {
+          fs.writeFileSync(MENU_FILE, JSON.stringify(data, null, 2), "utf-8");
           counts.metadata++;
         }
       }
@@ -1152,6 +1093,13 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
           const localRegs = readRegistrations();
           const localMap = new Map(localRegs.map(r => [r.id, r]));
           for (const row of result.rows) {
+            let evaluatorScores: { [key: string]: number } | undefined;
+            if (row.evaluator_scores) {
+              try {
+                evaluatorScores = typeof row.evaluator_scores === "string" ? JSON.parse(row.evaluator_scores) : row.evaluator_scores;
+              } catch (e) {}
+            }
+
             const mappedReg: Registration = {
               id: row.id,
               registrationId: row.registration_id,
@@ -1160,43 +1108,60 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
               leadDepartment: row.lead_department,
               leadMobile: row.lead_mobile,
               leadGender: row.lead_gender,
+              leadAcademicYear: row.lead_academic_year,
               member1: row.member1,
               member1Gender: row.member1_gender,
               member1Email: row.member1_email,
               member1Phone: row.member1_phone,
+              member1AcademicYear: row.member1_academic_year,
               member2: row.member2,
               member2Gender: row.member2_gender,
               member2Email: row.member2_email,
               member2Phone: row.member2_phone,
+              member2AcademicYear: row.member2_academic_year,
               member3: row.member3,
               member3Gender: row.member3_gender,
               member3Email: row.member3_email,
               member3Phone: row.member3_phone,
+              member3AcademicYear: row.member3_academic_year,
               member4: row.member4,
               member4Gender: row.member4_gender,
               member4Email: row.member4_email,
               member4Phone: row.member4_phone,
+              member4AcademicYear: row.member4_academic_year,
               member5: row.member5,
               member5Gender: row.member5_gender,
               member5Email: row.member5_email,
               member5Phone: row.member5_phone,
-              hasFemaleMember: row.has_female_member,
+              member5AcademicYear: row.member5_academic_year,
+              hasFemaleMember: !!row.has_female_member,
               mentorName: row.mentor_name,
               problemStatementId: row.problem_statement_id,
               submittedAt: row.submitted_at,
               studentEmail: row.student_email,
-              paymentStatus: row.payment_status,
+              paymentStatus: row.payment_status || "free",
               paymentId: row.payment_id,
               orderId: row.order_id,
-              amountPaid: row.amount_paid,
+              amountPaid: row.amount_paid !== undefined && row.amount_paid !== null ? Number(row.amount_paid) : undefined,
               abstract: row.abstract,
               implementationSteps: row.implementation_steps,
               pptFileName: row.ppt_file_name,
+              pptFileUrl: row.ppt_file_url,
               pptBase64: row.ppt_base64,
-              proposalStatus: row.proposal_status
+              proposalStatus: row.proposal_status,
+              approvalStatus: row.approval_status || "pending",
+              approvalNotes: row.approval_notes,
+              verifiedAt: row.verified_at,
+              verifiedBy: row.verified_by,
+              isFinalSelected: !!row.is_final_selected,
+              selectionNotes: row.selection_notes,
+              assignedEvaluator: row.assigned_evaluator,
+              evaluatorScores,
+              evaluationNotes: row.evaluation_notes,
+              evaluationStatus: row.evaluation_status || "pending"
             };
 
-            if (mappedReg.pptBase64) {
+            if (mappedReg.pptBase64 && !mappedReg.pptFileUrl) {
               const saved = saveBase64File(mappedReg.pptBase64, "ppts", mappedReg.pptFileName || `${mappedReg.teamName}_presentation.pptx`);
               if (saved) mappedReg.pptFileUrl = saved.url;
             }
@@ -1210,6 +1175,43 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
         }
       }
 
+      // Restore Students from PostgreSQL if students table exists
+      try {
+        const studentTableCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'students'
+          );
+        `);
+        if (studentTableCheck.rows[0]?.exists) {
+          const studentRes = await client.query(`SELECT * FROM students`);
+          if (studentRes.rows && studentRes.rows.length > 0) {
+            const localStudents = readStudents();
+            const studentMap = new Map(localStudents.map(s => [s.email.toLowerCase(), s]));
+            for (const row of studentRes.rows) {
+              const studentObj: Student = {
+                id: row.id,
+                email: row.email,
+                passwordHash: row.password_hash || row.password || "",
+                gender: row.gender || "",
+                department: row.department || "",
+                mobile: row.mobile || "",
+                createdAt: row.created_at || new Date().toISOString()
+              };
+              if (studentObj.email) {
+                studentMap.set(studentObj.email.toLowerCase(), studentObj);
+              }
+            }
+            const mergedStudents = Array.from(studentMap.values());
+            fs.writeFileSync(STUDENTS_FILE, JSON.stringify(mergedStudents, null, 2), "utf-8");
+            counts.students = mergedStudents.length;
+          }
+        }
+      } catch (e) {
+        console.warn("[External DB] Could not restore students table:", e);
+      }
+
+      // Restore Metadata from PostgreSQL if app_metadata exists
       const metaCheck = await client.query(`
         SELECT EXISTS (
           SELECT FROM information_schema.tables 
@@ -1218,31 +1220,34 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
       `);
 
       if (metaCheck.rows[0]?.exists) {
-        const metaRes = await client.query(`SELECT key, data_json FROM app_metadata`);
+        const metaRes = await client.query(`SELECT * FROM app_metadata`);
         for (const row of metaRes.rows) {
           try {
-            const data = JSON.parse(row.data_json);
-            if (row.key === "problem_statements" && Array.isArray(data)) {
+            const rawKey = row.key || row.id;
+            const rawJson = row.metadata_json || row.data_json || row.data;
+            if (!rawKey || !rawJson) continue;
+            const data = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
+            if (rawKey === "problem_statements" && Array.isArray(data)) {
               fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
               counts.metadata++;
-            } else if (row.key === "homepage_content" && data?.sihDetails) {
+            } else if (rawKey === "homepage_content" && data?.sihDetails) {
               fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(data, null, 2), "utf-8");
               counts.metadata++;
-            } else if (row.key === "custom_pages" && Array.isArray(data)) {
+            } else if (rawKey === "custom_pages" && Array.isArray(data)) {
               fs.writeFileSync(PAGES_FILE, JSON.stringify(data, null, 2), "utf-8");
               counts.metadata++;
-            } else if (row.key === "evaluation_criteria" && Array.isArray(data)) {
+            } else if (rawKey === "evaluation_criteria" && Array.isArray(data)) {
               fs.writeFileSync(CRITERIA_FILE, JSON.stringify(data, null, 2), "utf-8");
               counts.metadata++;
-            } else if (row.key === "menu_items" && Array.isArray(data)) {
+            } else if (rawKey === "menu_items" && Array.isArray(data)) {
               fs.writeFileSync(MENU_FILE, JSON.stringify(data, null, 2), "utf-8");
               counts.metadata++;
-            } else if (row.key === "students" && Array.isArray(data)) {
+            } else if (rawKey === "students" && Array.isArray(data)) {
               fs.writeFileSync(STUDENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
               counts.students = data.length;
             }
           } catch (e) {
-            console.error(`Error parsing metadata ${row.key}:`, e);
+            console.error(`Error parsing metadata ${row.key || row.id}:`, e);
           }
         }
       }
@@ -1582,141 +1587,248 @@ async function sendRealWhatsapp(to: string, templateName: string, variables: str
 }
 
 
-// Student JWT authentication validation middleware
-function validateStudentJWT(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers["authorization"];
-  
-  if (authHeader && authHeader.startsWith("Bearer ")) {
-    const token = authHeader.split(" ")[1];
-    try {
-      const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string };
-      (req as any).studentUser = decoded;
-      return next();
-    } catch (err) {
-      return res.status(401).json({ error: "Your session has expired. Please log in again." });
-    }
-  }
-
-  const settings = readSettings();
-  if (settings.jwtEnabled) {
-    return res.status(401).json({ error: "Missing or invalid authorization token" });
-  }
-
-  next();
+function getAdmins(): AdminUser[] {
+  return db.readLocalFile<AdminUser[]>("admins.json", defaultDefaultAdmins);
 }
 
-
-// Admin passcode configuration (defaults to 'SIHAdmin2026')
-const ADMIN_PASSCODE = process.env.ADMIN_PASSCODE || "SIHAdmin2026";
-const ADMINS_FILE = path.join(DATA_DIR, "admins.json");
-
-interface AdminUser {
-  username: string;
-  passwordHash: string;
-  role: "SPOC" | "Student SPOC" | "Evaluator";
-}
-
-let needsWrite = !fs.existsSync(ADMINS_FILE);
-if (!needsWrite) {
-  try {
-    const existingAdmins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
-    const hasDeepak = existingAdmins.some(a => a.username.toLowerCase() === "deepak0554");
-    if (!hasDeepak) {
-      needsWrite = true;
-    }
-  } catch (err) {
-    needsWrite = true;
-  }
-}
-
-if (needsWrite) {
-  const defaultAdmins: AdminUser[] = [
-    {
-      username: "Deepak0554",
-      passwordHash: crypto.createHash("sha256").update("SIH@2026").digest("hex"),
-      role: "SPOC"
-    },
-    {
-      username: "studentspoc",
-      passwordHash: crypto.createHash("sha256").update("studpassword").digest("hex"),
-      role: "Student SPOC"
-    }
-  ];
-  fs.writeFileSync(ADMINS_FILE, JSON.stringify(defaultAdmins, null, 2), "utf-8");
-}
-
-// Auth validation middleware
-function validateAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const passcode = req.headers["x-admin-passcode"] as string;
-  if (!passcode) {
-    return res.status(401).json({ error: "Unauthorized access code" });
-  }
-
-  // 1. Support master ADMIN_PASSCODE bypass
-  if (passcode === ADMIN_PASSCODE) {
-    (req as any).adminRole = "SPOC";
-    (req as any).adminUser = "system_admin";
-    return next();
-  }
-
-  // 2. Try verifying as signed JWT admin token
-  try {
-    const decoded = jwt.verify(passcode, JWT_SECRET) as { username: string; role: string; isAdmin: boolean };
-    if (decoded && decoded.isAdmin) {
-      (req as any).adminRole = decoded.role;
-      (req as any).adminUser = decoded.username;
-      return next();
-    }
-  } catch (err) {
-    // If not a valid JWT token, fall back to old-style raw token check for seamless transition/session compatibility
-  }
-
-  // 3. Fallback: Old-style raw token compatibility check
-  if (passcode.startsWith("ADMIN:")) {
-    const parts = passcode.split(":");
-    if (parts.length === 3) {
-      const role = parts[1];
-      const username = parts[2];
-      try {
-        const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
-        const exists = admins.some(a => a.username.toLowerCase() === username.toLowerCase() && a.role === role);
-        if (exists) {
-          (req as any).adminRole = role;
-          (req as any).adminUser = username;
-          return next();
-        }
-      } catch (err) {
-        console.error("Failed to read admins for validation:", err);
-      }
-    }
-  }
-
-  res.status(401).json({ error: "Unauthorized or invalid admin session" });
+function saveAdmins(admins: AdminUser[]) {
+  db.writeLocalFile("admins.json", admins);
+  db.saveAdmins(admins).catch(err => {
+    console.error("Failed to sync admins to DB:", err);
+  });
 }
 
 // ------------------- API ROUTES -------------------
 
-// Upload files (Images, PPTs, Templates) directly to server storage
-app.post("/api/upload", (req, res) => {
-  const { data, category, filename } = req.body;
-  if (!data || typeof data !== "string") {
-    return res.status(400).json({ error: "Missing or invalid file data." });
+// ==========================================
+// SECURE FILE UPLOADS & SERVING
+// ==========================================
+
+// 1. Unified Multipart & Encrypted File Upload (PPT, PPTX, PDF, Images, Documents)
+app.post(
+  "/api/upload",
+  extractUserOptional,
+  upload.single("file"),
+  (req, res) => {
+    // A. Multipart file stream provided in req.file
+    if (req.file) {
+      const rawCategory = (req.body.category as UploadCategory) || "documents";
+      const validCategory: UploadCategory = (rawCategory === "ppts" || rawCategory === "images" || rawCategory === "sample_ppts" || rawCategory === "documents")
+        ? rawCategory
+        : "documents";
+
+      // Role authorization: Only Admins/SPOC can upload site branding, certificate images, and official templates
+      if (validCategory === "sample_ppts" || validCategory === "images") {
+        const isAdmin = (req as any).isAdmin || (req as any).adminRole;
+        if (!isAdmin) {
+          return res.status(403).json({ error: "Access Denied: Only administrators can upload images and official template files." });
+        }
+      }
+
+      // If category is ppts or documents, must be an authenticated student or admin
+      if (validCategory === "ppts" || validCategory === "documents") {
+        const isAuth = (req as any).studentUser || (req as any).adminUser || (req as any).isAdmin;
+        if (!isAuth) {
+          return res.status(401).json({ error: "Authentication required to upload proposals or project documents." });
+        }
+      }
+
+      const saveResult = validateAndSaveFile({
+        buffer: req.file.buffer,
+        clientOriginalName: req.file.originalname,
+        clientMimeType: req.file.mimetype,
+        category: validCategory
+      });
+
+      if (!saveResult.success) {
+        return res.status(400).json({ error: saveResult.error });
+      }
+
+      return res.json({ success: true, ...saveResult.file });
+    }
+
+    // B. Base64 JSON fallback with strict magic-byte validation
+    if (req.body && req.body.data) {
+      const { data, category, filename } = req.body;
+      const validCategory: UploadCategory = (category === "ppts" || category === "images" || category === "sample_ppts" || category === "documents")
+        ? category
+        : "documents";
+
+      if (validCategory === "sample_ppts" || validCategory === "images") {
+        const isAdmin = (req as any).isAdmin || (req as any).adminRole;
+        if (!isAdmin) {
+          return res.status(403).json({ error: "Access Denied: Only administrators can upload images and official template files." });
+        }
+      }
+
+      const saveResult = saveBase64Securely(data, validCategory, filename);
+      if (!saveResult) {
+        return res.status(400).json({ error: "Failed to process file. Signature mismatch or unsupported file type." });
+      }
+
+      return res.json({ success: true, ...saveResult });
+    }
+
+    return res.status(400).json({ error: "No file provided. Please send multipart/form-data with the 'file' field." });
+  }
+);
+
+// 2. Specialized Multipart Endpoint: Student Team Proposal PPT / PDF Upload
+app.post(
+  "/api/registrations/my/upload-ppt",
+  validateStudentJWT,
+  upload.single("file"),
+  (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No presentation file attached. Please select a PPT, PPTX or PDF file." });
+    }
+
+    const studentEmail = (req as any).studentUser?.email?.trim().toLowerCase();
+    if (!studentEmail) {
+      return res.status(401).json({ error: "Unauthorized: Invalid student token." });
+    }
+
+    const registrations = readRegistrations();
+    const idx = registrations.findIndex(r => r.studentEmail?.trim().toLowerCase() === studentEmail);
+    if (idx === -1) {
+      return res.status(404).json({ error: "No team registration found for this student account." });
+    }
+
+    const current = registrations[idx];
+    const saveResult = validateAndSaveFile({
+      buffer: req.file.buffer,
+      clientOriginalName: req.file.originalname,
+      clientMimeType: req.file.mimetype,
+      category: "ppts"
+    });
+
+    if (!saveResult.success) {
+      return res.status(400).json({ error: saveResult.error });
+    }
+
+    // Clean up old PPT from disk if existing
+    if (current.pptFileUrl) {
+      try {
+        const oldFilename = path.basename(current.pptFileUrl);
+        const oldPath = path.join(UPLOADS_PPTS_DIR, oldFilename);
+        if (fs.existsSync(oldPath)) {
+          fs.unlinkSync(oldPath);
+        }
+      } catch (e) {
+        console.warn("Could not remove old PPT file:", e);
+      }
+    }
+
+    current.pptFileUrl = saveResult.file.url;
+    current.pptFileName = req.file.originalname;
+    current.pptBase64 = undefined; // Drop heavy base64
+    registrations[idx] = current;
+    writeRegistrations(registrations);
+
+    // Sync to external DB in background
+    syncRegistrationToExternalDB(current).catch(err => {
+      console.error("Failed to sync registration after PPT upload:", err);
+    });
+
+    return res.json({
+      success: true,
+      message: "Proposal presentation file uploaded and verified successfully!",
+      file: saveResult.file,
+      registration: current
+    });
+  }
+);
+
+// 3. Specialized Multipart Endpoint: Admin Sample PPT / Proposal Template Upload
+app.post(
+  "/api/settings/sample-ppt/upload",
+  authorize(["ADMIN"]),
+  upload.single("file"),
+  (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No template file attached. Please select a PPT, PPTX or PDF file." });
+    }
+
+    const saveResult = validateAndSaveFile({
+      buffer: req.file.buffer,
+      clientOriginalName: req.file.originalname,
+      clientMimeType: req.file.mimetype,
+      category: "sample_ppts"
+    });
+
+    if (!saveResult.success) {
+      return res.status(400).json({ error: saveResult.error });
+    }
+
+    const settings = readSettings();
+    settings.samplePptFileName = req.file.originalname;
+    settings.samplePptFileUrl = saveResult.file.url;
+    settings.samplePptUrl = saveResult.file.url;
+    settings.samplePptFileBase64 = undefined;
+    writeSettings(settings);
+
+    return res.json({
+      success: true,
+      message: "Sample PPT template uploaded successfully!",
+      file: saveResult.file,
+      settings
+    });
+  }
+);
+
+// 4. Secure File Retrieval & Serving (Path Traversal Protected & MIME Verified)
+app.get("/api/uploads/:category/:filename", extractUserOptional, (req, res) => {
+  const { category, filename } = req.params;
+  const validCategories: UploadCategory[] = ["ppts", "images", "documents", "sample_ppts"];
+
+  if (!validCategories.includes(category as UploadCategory)) {
+    return res.status(400).json({ error: "Invalid upload category." });
   }
 
-  const validCategory = (category === "ppts" || category === "images" || category === "sample_ppts" || category === "documents") 
-    ? category 
-    : "documents";
+  const cleanFilename = path.basename(filename);
+  const targetDir = CATEGORY_DIR_MAP[category as UploadCategory];
 
-  const result = saveBase64File(data, validCategory, filename);
-  if (!result) {
-    return res.status(500).json({ error: "Failed to save file to server storage." });
+  if (!isPathSafe(targetDir, cleanFilename)) {
+    return res.status(400).json({ error: "Path traversal attempt detected." });
   }
 
-  res.json({ success: true, ...result });
+  const filePath = path.join(targetDir, cleanFilename);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found." });
+  }
+
+  // Enforce nosniff security header
+  res.setHeader("X-Content-Type-Options", "nosniff");
+
+  const ext = path.extname(cleanFilename).toLowerCase();
+
+  // Content type mapping
+  if (ext === ".png") res.setHeader("Content-Type", "image/png");
+  else if (ext === ".jpg" || ext === ".jpeg") res.setHeader("Content-Type", "image/jpeg");
+  else if (ext === ".webp") res.setHeader("Content-Type", "image/webp");
+  else if (ext === ".gif") res.setHeader("Content-Type", "image/gif");
+  else if (ext === ".pdf") res.setHeader("Content-Type", "application/pdf");
+  else if (ext === ".pptx") res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+  else if (ext === ".ppt") res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
+  else if (ext === ".docx") res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  else if (ext === ".doc") res.setHeader("Content-Type", "application/msword");
+
+  if (category === "images") {
+    res.setHeader("Content-Disposition", "inline");
+  } else {
+    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
+  }
+
+  return res.sendFile(filePath);
 });
 
-// Stream or download team PPT presentation directly from server disk
-app.get("/api/registrations/:id/ppt", (req, res) => {
+// Alias for /uploads/:category/:filename
+app.get("/uploads/:category/:filename", (req, res) => {
+  res.redirect(`/api/uploads/${encodeURIComponent(req.params.category)}/${encodeURIComponent(req.params.filename)}`);
+});
+
+// 5. Stream or download team PPT presentation directly from server disk (Authenticated)
+app.get("/api/registrations/:id/ppt", validateParams(singleIdParamSchema), extractUserOptional, (req, res) => {
   const { id } = req.params;
   const registrations = readRegistrations();
   const reg = registrations.find(r => r.id === id || r.registrationId === id);
@@ -1729,11 +1841,20 @@ app.get("/api/registrations/:id/ppt", (req, res) => {
   if (reg.pptFileUrl) {
     const filename = path.basename(reg.pptFileUrl);
     const category = reg.pptFileUrl.includes("/ppts/") ? "ppts" : "documents";
-    const filePath = path.join(UPLOADS_DIR, category, filename);
+    const targetDir = category === "ppts" ? UPLOADS_PPTS_DIR : UPLOADS_DOCS_DIR;
+
+    if (!isPathSafe(targetDir, filename)) {
+      return res.status(400).json({ error: "Invalid file path." });
+    }
+
+    const filePath = path.join(targetDir, filename);
     if (fs.existsSync(filePath)) {
-      const downloadName = reg.pptFileName || `${reg.teamName || "team"}_presentation.pptx`;
+      const ext = path.extname(filename).toLowerCase();
+      const downloadName = reg.pptFileName || `${reg.teamName || "team"}_presentation${ext || ".pptx"}`;
+      res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
-      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+      if (ext === ".pdf") res.setHeader("Content-Type", "application/pdf");
+      else res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
       return res.sendFile(filePath);
     }
   }
@@ -1747,6 +1868,7 @@ app.get("/api/registrations/:id/ppt", (req, res) => {
       const buffer = Buffer.from(base64Data, "base64");
       const downloadName = reg.pptFileName || `${reg.teamName || "team"}_presentation.pptx`;
 
+      res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Type", mimeType);
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
       return res.send(buffer);
@@ -1760,7 +1882,7 @@ app.get("/api/registrations/:id/ppt", (req, res) => {
 });
 
 // Admin: Manual Database Restore Trigger
-app.post("/api/admin/restore-from-db", validateAdmin, async (req, res) => {
+app.post("/api/admin/restore-from-db", authorize(["ADMIN"]), async (req, res) => {
   const result = await restoreDataFromExternalDB();
   if (result.success) {
     res.json(result);
@@ -1770,7 +1892,7 @@ app.post("/api/admin/restore-from-db", validateAdmin, async (req, res) => {
 });
 
 // Admin: Export Full JSON State Backup
-app.get("/api/admin/backup/export", validateAdmin, (req, res) => {
+app.get("/api/admin/backup/export", authorize(["ADMIN"]), (req, res) => {
   const backup = {
     version: "2026.1",
     exportedAt: new Date().toISOString(),
@@ -1792,7 +1914,7 @@ app.get("/api/admin/backup/export", validateAdmin, (req, res) => {
 });
 
 // Admin: Import and Restore Full JSON State Backup
-app.post("/api/admin/backup/import", validateAdmin, (req, res) => {
+app.post("/api/admin/backup/import", authorize(["ADMIN"]), (req, res) => {
   const backup = req.body;
   if (!backup || typeof backup !== "object") {
     return res.status(400).json({ error: "Invalid backup JSON format." });
@@ -1838,11 +1960,8 @@ app.post("/api/admin/backup/import", validateAdmin, (req, res) => {
 });
 
 // Student Auth: Register
-app.post("/api/auth/register", (req, res) => {
+app.post("/api/auth/register", validateBody(studentRegisterSchema), (req, res) => {
   const { email, password, gender, department, mobile } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password are required." });
-  }
 
   const emailClean = email.trim().toLowerCase();
   const students = readStudents();
@@ -1851,7 +1970,7 @@ app.post("/api/auth/register", (req, res) => {
     return res.status(400).json({ error: "A student account with this email already exists." });
   }
 
-  const passwordHash = crypto.createHash("sha256").update(password).digest("hex");
+  const passwordHash = hashPassword(password);
   const newStudent: Student = {
     id: Date.now().toString(),
     email: emailClean,
@@ -1889,10 +2008,9 @@ app.post("/api/auth/register", (req, res) => {
     console.error("Welcome email background task failed:", err);
   });
 
-  const token = jwt.sign(
-    { id: newStudent.id, email: newStudent.email },
-    JWT_SECRET,
-    { expiresIn: "1d" }
+  const token = signStudentToken(
+    { id: newStudent.id, email: newStudent.email, department: newStudent.department },
+    "24h"
   );
 
   res.status(201).json({
@@ -1909,29 +2027,35 @@ app.post("/api/auth/register", (req, res) => {
 });
 
 // Student Auth: Login
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", validateBody(studentLoginSchema), (req, res) => {
   const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email and password are required." });
-  }
 
   const emailClean = email.trim().toLowerCase();
   const students = readStudents();
-  const student = students.find(s => s.email === emailClean);
+  const studentIndex = students.findIndex(s => s.email === emailClean);
 
-  if (!student) {
+  if (studentIndex === -1) {
     return res.status(401).json({ error: "Invalid email or password." });
   }
 
-  const incomingHash = crypto.createHash("sha256").update(password).digest("hex");
-  if (incomingHash !== student.passwordHash) {
+  const student = students[studentIndex];
+  if (!verifyPassword(password, student.passwordHash)) {
     return res.status(401).json({ error: "Invalid email or password." });
   }
 
-  const token = jwt.sign(
-    { id: student.id, email: student.email },
-    JWT_SECRET,
-    { expiresIn: "1d" }
+  // Transparent migration to salted hash if stored as legacy hash
+  if (!student.passwordHash.includes(":")) {
+    try {
+      students[studentIndex].passwordHash = hashPassword(password);
+      writeStudents(students);
+    } catch (migErr) {
+      console.warn("Could not upgrade student password hash:", migErr);
+    }
+  }
+
+  const token = signStudentToken(
+    { id: student.id, email: student.email, department: student.department },
+    "24h"
   );
 
   res.json({
@@ -1994,19 +2118,13 @@ app.get("/api/settings/public", (req, res) => {
 });
 
 // Admin Settings (private, requires passcode)
-app.get("/api/settings", validateAdmin, (req, res) => {
-  if ((req as any).adminRole === "Student SPOC") {
-    return res.status(403).json({ error: "Access Denied: Student SPOC is not authorized to access system settings." });
-  }
+app.get("/api/settings", authorize(["ADMIN"]), (req, res) => {
   const settings = readSettings();
   res.json(settings);
 });
 
 // Admin Update Settings
-app.post("/api/settings", validateAdmin, (req, res) => {
-  if ((req as any).adminRole === "Student SPOC") {
-    return res.status(403).json({ error: "Access Denied: Student SPOC is not authorized to update system settings." });
-  }
+app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (req, res) => {
   const { 
     feeEnabled, 
     feeAmount, 
@@ -2088,10 +2206,6 @@ app.post("/api/settings", validateAdmin, (req, res) => {
     samplePptFileBase64,
     samplePptDescription
   } = req.body;
-  
-  if (feeEnabled && (feeAmount === undefined || feeAmount < 0)) {
-    return res.status(400).json({ error: "A valid fee amount is required when fee is enabled." });
-  }
 
   const updated: FeeConfig = {
     feeEnabled: !!feeEnabled,
@@ -2218,16 +2332,8 @@ app.get("/api/settings/sample-ppt/download", (req, res) => {
 });
 
 // POST test external DB connection & install schemas dynamically
-app.post("/api/settings/test-db", validateAdmin, async (req, res) => {
-  if ((req as any).adminRole === "Student SPOC") {
-    return res.status(403).json({ error: "Access Denied: Student SPOC is not authorized to configure system settings." });
-  }
-
+app.post("/api/settings/test-db", authorize(["ADMIN"]), validateBody(testDbSchema), async (req, res) => {
   const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword, dbCollectionOrTable } = req.body;
-
-  if (!dbHost || !dbName) {
-    return res.status(400).json({ error: "Host/Server URL and Database Name are required." });
-  }
 
   try {
     const initResult = await db.init({
@@ -2278,27 +2384,8 @@ app.post("/api/settings/test-db", validateAdmin, async (req, res) => {
 });
 
 // Broadcast Logging System
-interface BroadcastLog {
-  id: string;
-  channel: "Email" | "SMS" | "WhatsApp";
-  subject?: string;
-  message: string;
-  recipientGroup: string;
-  recipientCount: number;
-  timestamp: string;
-  sender: string;
-  status: "completed" | "failed" | "queued";
-}
-
 function readBroadcastLogs(): BroadcastLog[] {
-  try {
-    if (!fs.existsSync(BROADCAST_LOGS_FILE)) {
-      return [];
-    }
-    return JSON.parse(fs.readFileSync(BROADCAST_LOGS_FILE, "utf-8"));
-  } catch (err) {
-    return [];
-  }
+  return db.readLocalFile<BroadcastLog[]>("broadcast_logs.json", []);
 }
 
 function writeBroadcastLog(log: Omit<BroadcastLog, "id" | "timestamp">) {
@@ -2313,28 +2400,28 @@ function writeBroadcastLog(log: Omit<BroadcastLog, "id" | "timestamp">) {
     if (logs.length > 100) {
       logs.splice(100);
     }
-    fs.writeFileSync(BROADCAST_LOGS_FILE, JSON.stringify(logs, null, 2), "utf-8");
+    db.writeLocalFile("broadcast_logs.json", logs);
+    db.saveBroadcastLog(newLog).catch(err => {
+      console.error("Failed to sync broadcast log to DB:", err);
+    });
   } catch (err) {
     console.error("Error writing broadcast log:", err);
   }
 }
 
 // Get Admin Broadcast Logs
-app.get("/api/admin/broadcast-logs", validateAdmin, (req, res) => {
+app.get("/api/admin/broadcast-logs", authorize(["ADMIN", "STUDENT_SPOC"]), (req, res) => {
   res.json(readBroadcastLogs());
 });
 
 // Admin/Student SPOC Bulk Broadcast SMS API
-app.post("/api/admin/broadcast-sms", validateAdmin, async (req, res) => {
+app.post("/api/admin/broadcast-sms", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(broadcastSmsSchema), async (req, res) => {
   const settings = readSettings();
   if (!settings.smsEnabled) {
     return res.status(400).json({ error: "SMS System is disabled. Please enable SMS notifications and configure your SMS Gateway credentials in the Settings tab before sending broadcasts." });
   }
 
   const { message, recipientGroup, testMobile } = req.body;
-  if (!message || !recipientGroup) {
-    return res.status(400).json({ error: "Message content and recipient group are required." });
-  }
 
   let recipients: string[] = [];
   if (recipientGroup === "test_single") {
@@ -2407,16 +2494,13 @@ app.post("/api/admin/broadcast-sms", validateAdmin, async (req, res) => {
 });
 
 // Admin/Student SPOC Bulk Broadcast WhatsApp API
-app.post("/api/admin/broadcast-whatsapp", validateAdmin, async (req, res) => {
+app.post("/api/admin/broadcast-whatsapp", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(broadcastWhatsappSchema), async (req, res) => {
   const settings = readSettings();
   if (!settings.whatsappEnabled) {
     return res.status(400).json({ error: "WhatsApp System is disabled. Please enable WhatsApp notifications and configure your WhatsApp Business API credentials in the Settings tab before sending broadcasts." });
   }
 
   const { templateName, variables, recipientGroup, testMobile } = req.body;
-  if (!templateName || !recipientGroup) {
-    return res.status(400).json({ error: "Template selection and recipient group are required." });
-  }
 
   let recipients: string[] = [];
   if (recipientGroup === "test_single") {
@@ -2495,16 +2579,13 @@ app.post("/api/admin/broadcast-whatsapp", validateAdmin, async (req, res) => {
 });
 
 // Admin/Student SPOC Bulk Broadcast Email API
-app.post("/api/admin/broadcast-email", validateAdmin, async (req, res) => {
+app.post("/api/admin/broadcast-email", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(broadcastEmailSchema), async (req, res) => {
   const settings = readSettings();
   if (!settings.emailEnabled) {
     return res.status(400).json({ error: "Email System is disabled. Please enable email notifications and configure SMTP credentials in the Settings tab before sending broadcasts." });
   }
 
   const { subject, message, recipientGroup, testEmail } = req.body;
-  if (!subject || !message || !recipientGroup) {
-    return res.status(400).json({ error: "Subject, message and recipient group are required." });
-  }
 
   let recipientEmails: string[] = [];
 
@@ -2647,31 +2728,37 @@ app.post("/api/payments/create-order", async (req, res) => {
 
 
 // Admin login endpoint
-app.post("/api/admin/login", (req, res) => {
+app.post("/api/admin/login", validateBody(adminLoginSchema), (req, res) => {
   const { username, password, role } = req.body;
-  if (!username || !password || !role) {
-    return res.status(400).json({ error: "Username, password and role selection are required." });
-  }
 
   try {
-    const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
-    const admin = admins.find(
+    const admins = getAdmins();
+    const adminIndex = admins.findIndex(
       a => a.username.trim().toLowerCase() === username.trim().toLowerCase() && a.role === role
     );
 
-    if (!admin) {
+    if (adminIndex === -1) {
       return res.status(401).json({ error: "Invalid username, password, or role selection." });
     }
 
-    const hash = crypto.createHash("sha256").update(password).digest("hex");
-    if (hash !== admin.passwordHash) {
+    const admin = admins[adminIndex];
+    if (!verifyPassword(password, admin.passwordHash)) {
       return res.status(401).json({ error: "Invalid username, password, or role selection." });
     }
 
-    const token = jwt.sign(
-      { username: admin.username, role: admin.role, isAdmin: true },
-      JWT_SECRET,
-      { expiresIn: "1d" }
+    // Transparent upgrade of legacy SHA-256 hash to salted PBKDF2/SHA-256
+    if (!admin.passwordHash.includes(":")) {
+      try {
+        admins[adminIndex].passwordHash = hashPassword(password);
+        saveAdmins(admins);
+      } catch (upgradeErr) {
+        console.warn("Could not upgrade admin password hash:", upgradeErr);
+      }
+    }
+
+    const token = signAdminToken(
+      { username: admin.username, role: admin.role as "SPOC" | "Student SPOC" | "Evaluator" },
+      "24h"
     );
 
     res.json({
@@ -2686,55 +2773,34 @@ app.post("/api/admin/login", (req, res) => {
   }
 });
 
-// Admin check passcode (keeps backward compatibility)
+// Admin check passcode / token verification
 app.post("/api/admin/verify", (req, res) => {
   const { passcode } = req.body;
-  if (!passcode) {
-    return res.status(401).json({ error: "Passcode is required." });
+  if (!passcode || typeof passcode !== "string") {
+    return res.status(401).json({ error: "Passcode or token is required." });
   }
 
-  if (passcode === ADMIN_PASSCODE) {
+  const cleanPasscode = passcode.startsWith("Bearer ") ? passcode.slice(7).trim() : passcode.trim();
+
+  // 1. Verify as signed JWT admin token
+  const decoded = verifyAdminToken(cleanPasscode);
+  if (decoded) {
+    return res.json({ success: true, role: decoded.role, username: decoded.username });
+  }
+
+  // 2. Master pass code verification
+  const masterPasscode = getAdminPasscode();
+  if (masterPasscode && cleanPasscode === masterPasscode) {
     return res.json({ success: true, role: "SPOC", username: "system_admin" });
   }
 
-  // 1. Try verifying as signed JWT admin token
-  try {
-    const decoded = jwt.verify(passcode, JWT_SECRET) as { username: string; role: string; isAdmin: boolean };
-    if (decoded && decoded.isAdmin) {
-      return res.json({ success: true, role: decoded.role, username: decoded.username });
-    }
-  } catch (err) {
-    // If not a valid JWT token, fall back to old-style raw token check for seamless transition/session compatibility
-  }
-
-  // 2. Fallback: Old-style raw token check
-  if (passcode.startsWith("ADMIN:")) {
-    const parts = passcode.split(":");
-    if (parts.length === 3) {
-      const role = parts[1];
-      const username = parts[2];
-      try {
-        const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
-        const exists = admins.some(a => a.username.toLowerCase() === username.toLowerCase() && a.role === role);
-        if (exists) {
-          return res.json({ success: true, role, username });
-        }
-      } catch (err) {
-        console.error("Failed to read admins for verification check:", err);
-      }
-    }
-  }
-
-  res.status(401).json({ error: "Invalid passcode or admin session" });
+  res.status(401).json({ error: "Invalid or expired admin session token." });
 });
 
 // GET list of admins (Super Admin SPOC only)
-app.get("/api/admin/manage-admins", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC (Super Admin) can manage admin accounts." });
-  }
+app.get("/api/admin/manage-admins", authorize(["ADMIN"]), (req, res) => {
   try {
-    const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
+    const admins = getAdmins();
     const safeAdmins = admins.map(a => ({ username: a.username, role: a.role }));
     res.json(safeAdmins);
   } catch (err) {
@@ -2743,25 +2809,13 @@ app.get("/api/admin/manage-admins", validateAdmin, (req, res) => {
 });
 
 // POST a new admin (Super Admin SPOC only)
-app.post("/api/admin/manage-admins", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC (Super Admin) can manage admin accounts." });
-  }
+app.post("/api/admin/manage-admins", authorize(["ADMIN"]), validateBody(manageAdminCreateSchema), (req, res) => {
   const { username, password, role } = req.body;
-  if (!username || !password || !role) {
-    return res.status(400).json({ error: "Username, password and role are required." });
-  }
 
   const cleanUsername = username.trim();
-  if (cleanUsername.length < 3) {
-    return res.status(400).json({ error: "Username must be at least 3 characters long." });
-  }
-  if (password.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters long." });
-  }
 
   try {
-    const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
+    const admins = getAdmins();
     const exists = admins.some(a => a.username.toLowerCase() === cleanUsername.toLowerCase());
     if (exists) {
       return res.status(400).json({ error: "Admin with this username already exists." });
@@ -2769,12 +2823,12 @@ app.post("/api/admin/manage-admins", validateAdmin, (req, res) => {
 
     const newAdmin: AdminUser = {
       username: cleanUsername,
-      passwordHash: crypto.createHash("sha256").update(password).digest("hex"),
+      passwordHash: hashPassword(password),
       role: (role === "SPOC" || role === "Student SPOC" || role === "Evaluator") ? role : "Student SPOC"
     };
 
     admins.push(newAdmin);
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2), "utf-8");
+    saveAdmins(admins);
     res.json({ success: true, message: `Admin ${cleanUsername} created successfully as ${role}.` });
   } catch (err) {
     res.status(500).json({ error: "Failed to save new admin" });
@@ -2782,10 +2836,7 @@ app.post("/api/admin/manage-admins", validateAdmin, (req, res) => {
 });
 
 // DELETE an admin (Super Admin SPOC only)
-app.delete("/api/admin/manage-admins/:username", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC (Super Admin) can manage admin accounts." });
-  }
+app.delete("/api/admin/manage-admins/:username", authorize(["ADMIN"]), (req, res) => {
   const targetUsername = req.params.username.trim().toLowerCase();
   
   if (targetUsername === "deepak0554") {
@@ -2798,13 +2849,13 @@ app.delete("/api/admin/manage-admins/:username", validateAdmin, (req, res) => {
   }
 
   try {
-    const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
+    const admins = getAdmins();
     const filtered = admins.filter(a => a.username.toLowerCase() !== targetUsername);
     if (filtered.length === admins.length) {
       return res.status(404).json({ error: "Admin user not found." });
     }
 
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(filtered, null, 2), "utf-8");
+    saveAdmins(filtered);
     res.json({ success: true, message: "Admin account removed successfully." });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete admin" });
@@ -2817,11 +2868,8 @@ app.get("/api/problem-statements", (req, res) => {
 });
 
 // POST a new problem statement (Admin)
-app.post("/api/problem-statements", validateAdmin, (req, res) => {
+app.post("/api/problem-statements", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(problemStatementSchema), (req, res) => {
   const { code, title, category, organization } = req.body;
-  if (!code || !title || !category || !organization) {
-    return res.status(400).json({ error: "All fields are required" });
-  }
 
   const statements = readStatements();
   
@@ -2844,12 +2892,8 @@ app.post("/api/problem-statements", validateAdmin, (req, res) => {
 });
 
 // POST bulk upload problem statements (Admin)
-app.post("/api/problem-statements/bulk", validateAdmin, (req, res) => {
+app.post("/api/problem-statements/bulk", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(bulkProblemStatementsSchema), (req, res) => {
   const { statements: newStatements, action } = req.body; // action: 'merge' or 'replace'
-  
-  if (!Array.isArray(newStatements)) {
-    return res.status(400).json({ error: "Invalid data format. Expected an array of statements under 'statements'." });
-  }
 
   const validated: ProblemStatement[] = [];
   const errors: string[] = [];
@@ -2927,13 +2971,9 @@ app.post("/api/problem-statements/bulk", validateAdmin, (req, res) => {
 });
 
 // PUT update a problem statement (Admin)
-app.put("/api/problem-statements/:id", validateAdmin, (req, res) => {
+app.put("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(problemStatementSchema), (req, res) => {
   const { id } = req.params;
   const { code, title, category, organization } = req.body;
-  
-  if (!code || !title || !category || !organization) {
-    return res.status(400).json({ error: "All fields are required" });
-  }
 
   const statements = readStatements();
   const idx = statements.findIndex(s => s.id === id);
@@ -2959,7 +2999,7 @@ app.put("/api/problem-statements/:id", validateAdmin, (req, res) => {
 });
 
 // DELETE a problem statement (Admin)
-app.delete("/api/problem-statements/:id", validateAdmin, (req, res) => {
+app.delete("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
   const statements = readStatements();
   const filtered = statements.filter(s => s.id !== id);
@@ -2972,35 +3012,28 @@ app.delete("/api/problem-statements/:id", validateAdmin, (req, res) => {
   res.json({ success: true, message: "Deleted successfully" });
 });
 
-// GET registrations (Admin)
-app.get("/api/registrations", validateAdmin, (req, res) => {
+// GET registrations (Admin, Student SPOC, Evaluator, Faculty)
+app.get("/api/registrations", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), (req, res) => {
   res.json(readRegistrations());
 });
 
-// GET evaluation criteria (Admin/Evaluators)
-app.get("/api/admin/evaluation-criteria", validateAdmin, (req, res) => {
+// GET evaluation criteria (Admin/Evaluators/Faculty)
+app.get("/api/admin/evaluation-criteria", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), (req, res) => {
   res.json(readCriteria());
 });
 
 // POST update evaluation criteria (SPOC Super Admin only)
-app.post("/api/admin/evaluation-criteria", validateAdmin, (req, res) => {
+app.post("/api/admin/evaluation-criteria", authorize(["ADMIN"]), validateBody(updateEvaluationCriteriaBodySchema), (req, res) => {
   if ((req as any).adminRole !== "SPOC") {
     return res.status(403).json({ error: "Access Denied: Only SPOC (Super Admin) can manage evaluation criteria." });
   }
   const { criteria } = req.body;
-  if (!Array.isArray(criteria)) {
-    return res.status(400).json({ error: "Criteria must be an array." });
-  }
   writeCriteria(criteria);
   res.json({ success: true, message: "Evaluation criteria updated successfully." });
 });
 
 // POST assign evaluator to a team registration
-app.post("/api/admin/registrations/:id/assign-evaluator", validateAdmin, (req, res) => {
-  const role = (req as any).adminRole;
-  if (role !== "SPOC" && role !== "Student SPOC") {
-    return res.status(403).json({ error: "Access Denied: Not authorized to assign evaluators." });
-  }
+app.post("/api/admin/registrations/:id/assign-evaluator", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(assignEvaluatorSchema), (req, res) => {
   const { id } = req.params;
   const { evaluatorUsername } = req.body; // can be empty string to unassign
 
@@ -3016,8 +3049,8 @@ app.post("/api/admin/registrations/:id/assign-evaluator", validateAdmin, (req, r
   res.json({ success: true, message: "Evaluator assigned successfully." });
 });
 
-// GET all evaluations or for specific registration (Admin / Evaluator / SPOC)
-app.get("/api/admin/evaluations", validateAdmin, async (req, res) => {
+// GET all evaluations or for specific registration (Admin / Evaluator / SPOC / Faculty)
+app.get("/api/admin/evaluations", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), async (req, res) => {
   try {
     const { registrationId } = req.query;
     const evaluations = await db.getEvaluations(registrationId as string | undefined);
@@ -3028,12 +3061,10 @@ app.get("/api/admin/evaluations", validateAdmin, async (req, res) => {
 });
 
 // POST evaluate/score team (Evaluator role)
-app.post("/api/admin/registrations/:id/evaluate", validateAdmin, async (req, res) => {
+app.post("/api/admin/registrations/:id/evaluate", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), validateParams(singleIdParamSchema), validateBody(evaluateTeamSchema), async (req, res) => {
   const role = (req as any).adminRole;
   const username = (req as any).adminUser;
-  if (role !== "Evaluator" && role !== "SPOC" && role !== "Student SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only Evaluators and SPOC admins can score teams." });
-  }
+  const normRole = normalizeRole(role) || "EVALUATOR";
 
   const { id } = req.params;
   const { scores, notes, status } = req.body;
@@ -3045,7 +3076,7 @@ app.post("/api/admin/registrations/:id/evaluate", validateAdmin, async (req, res
   }
 
   // Ensure evaluator is the assigned one if role is Evaluator
-  if (role === "Evaluator" && registrations[idx].assignedEvaluator !== username) {
+  if (normRole === "EVALUATOR" && registrations[idx].assignedEvaluator && registrations[idx].assignedEvaluator !== username) {
     return res.status(403).json({ error: "Access Denied: You are not assigned to evaluate this team." });
   }
 
@@ -3073,12 +3104,7 @@ app.post("/api/admin/registrations/:id/evaluate", validateAdmin, async (req, res
 });
 
 // POST finalize student selection (SPOC only)
-app.post("/api/admin/registrations/:id/finalize-selection", validateAdmin, (req, res) => {
-  const role = (req as any).adminRole;
-  if (role !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC can manage selection status." });
-  }
-
+app.post("/api/admin/registrations/:id/finalize-selection", authorize(["ADMIN"]), validateParams(singleIdParamSchema), validateBody(finalizeSelectionSchema), (req, res) => {
   const { id } = req.params;
   const { isSelected, selectionNotes } = req.body;
 
@@ -3095,8 +3121,8 @@ app.post("/api/admin/registrations/:id/finalize-selection", validateAdmin, (req,
   res.json({ success: true, message: `Team selection finalized.` });
 });
 
-// POST update registration approval status (SPOC / Admin / Evaluator)
-app.post("/api/admin/registrations/:id/approval-status", validateAdmin, (req, res) => {
+// POST update registration approval status (SPOC / Admin / Student SPOC)
+app.post("/api/admin/registrations/:id/approval-status", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(updateApprovalStatusSchema), (req, res) => {
   const { id } = req.params;
   const { approvalStatus, approvalNotes } = req.body;
 
@@ -3163,7 +3189,7 @@ app.get("/api/registrations/my", validateStudentJWT, (req, res) => {
 });
 
 // PUT update own project proposal (Student portal)
-app.put("/api/registrations/my/proposal", validateStudentJWT, (req, res) => {
+app.put("/api/registrations/my/proposal", validateStudentJWT, validateBody(updateProposalSchema), (req, res) => {
   const { email, abstract, implementationSteps, pptFileName, pptBase64, proposalStatus } = req.body;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email is required." });
@@ -3256,7 +3282,7 @@ app.get("/api/students/profile", validateStudentJWT, (req, res) => {
 });
 
 // PUT update student's profile
-app.put("/api/students/profile", validateStudentJWT, (req, res) => {
+app.put("/api/students/profile", validateStudentJWT, validateBody(studentProfileUpdateSchema), (req, res) => {
   const { email, gender, department, mobile } = req.body;
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email is required." });
@@ -3304,22 +3330,12 @@ app.put("/api/students/profile", validateStudentJWT, (req, res) => {
 });
 
 // POST student reset/change their own password
-app.post("/api/students/change-password", validateStudentJWT, (req, res) => {
+app.post("/api/students/change-password", validateStudentJWT, validateBody(changePasswordSchema), (req, res) => {
   const { email, oldPassword, newPassword } = req.body;
-  if (!email || !oldPassword || !newPassword) {
-    return res.status(400).json({ error: "Email, old password, and new password are required." });
-  }
 
-  const settings = readSettings();
-  if (settings.jwtEnabled) {
-    const tokenEmail = (req as any).studentUser?.email;
-    if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
-      return res.status(403).json({ error: "Forbidden: Modifying another student's password is not allowed." });
-    }
-  }
-
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: "New password must be at least 6 characters long." });
+  const tokenEmail = (req as any).studentUser?.email;
+  if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
+    return res.status(403).json({ error: "Forbidden: Modifying another student's password is not allowed." });
   }
 
   const emailClean = email.trim().toLowerCase();
@@ -3331,19 +3347,18 @@ app.post("/api/students/change-password", validateStudentJWT, (req, res) => {
   }
 
   // Verify old password
-  const oldHash = crypto.createHash("sha256").update(oldPassword).digest("hex");
-  if (oldHash !== students[idx].passwordHash) {
+  if (!verifyPassword(oldPassword, students[idx].passwordHash)) {
     return res.status(400).json({ error: "Incorrect current password." });
   }
 
-  students[idx].passwordHash = crypto.createHash("sha256").update(newPassword).digest("hex");
+  students[idx].passwordHash = hashPassword(newPassword);
   writeStudents(students);
 
   res.json({ success: true, message: "Your password has been changed successfully." });
 });
 
 // PUT update student's own team member details
-app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
+app.put("/api/registrations/my/team", validateStudentJWT, validateBody(updateTeamRosterSchema), (req, res) => {
   const settings = readSettings();
   if (settings.lockStudentUpdates) {
     return res.status(403).json({ error: "Team details and roster updates are currently locked by the SPOC administrator." });
@@ -3376,10 +3391,6 @@ app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
     member5Phone,
     mentorName
   } = req.body;
-
-  if (!email || typeof email !== "string") {
-    return res.status(400).json({ error: "Email is required." });
-  }
 
   if (settings.jwtEnabled) {
     const tokenEmail = (req as any).studentUser?.email;
@@ -3450,35 +3461,26 @@ app.put("/api/registrations/my/team", validateStudentJWT, (req, res) => {
   res.json({ success: true, message: "Team roster and contact details updated successfully.", registration: registrations[idx] });
 });
 
-// POST change own admin password (for any logged-in Admin, including Student SPOC)
-app.post("/api/admin/change-password", validateAdmin, (req, res) => {
+// POST change own admin password (for any logged-in Admin, including Student SPOC / Evaluator)
+app.post("/api/admin/change-password", authorize(["ADMIN", "STUDENT_SPOC", "EVALUATOR", "FACULTY"]), validateBody(changePasswordSchema), (req, res) => {
   const currentAdminUser = (req as any).adminUser;
   const { oldPassword, newPassword } = req.body;
 
-  if (!oldPassword || !newPassword) {
-    return res.status(400).json({ error: "Old password and new password are required." });
-  }
-
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: "New password must be at least 6 characters long." });
-  }
-
   try {
-    const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
+    const admins = getAdmins();
     const idx = admins.findIndex(a => a.username.toLowerCase() === currentAdminUser.toLowerCase());
 
     if (idx === -1) {
       return res.status(404).json({ error: "Admin account not found." });
     }
 
-    // Verify old password hash
-    const oldHash = crypto.createHash("sha256").update(oldPassword).digest("hex");
-    if (oldHash !== admins[idx].passwordHash) {
+    // Verify old password
+    if (!verifyPassword(oldPassword, admins[idx].passwordHash)) {
       return res.status(400).json({ error: "Incorrect current password." });
     }
 
-    admins[idx].passwordHash = crypto.createHash("sha256").update(newPassword).digest("hex");
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2), "utf-8");
+    admins[idx].passwordHash = hashPassword(newPassword);
+    saveAdmins(admins);
 
     res.json({ success: true, message: "Your administrative password has been changed successfully." });
   } catch (err) {
@@ -3487,27 +3489,20 @@ app.post("/api/admin/change-password", validateAdmin, (req, res) => {
 });
 
 // POST reset admin password (Super Admin SPOC only)
-app.post("/api/admin/manage-admins/:username/reset-password", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC (Super Admin) can reset admin passwords." });
-  }
+app.post("/api/admin/manage-admins/:username/reset-password", authorize(["ADMIN"]), validateBody(resetPasswordAdminSchema), (req, res) => {
   const targetUsername = req.params.username.trim().toLowerCase();
   const { newPassword } = req.body;
 
-  if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters long." });
-  }
-
   try {
-    const admins: AdminUser[] = JSON.parse(fs.readFileSync(ADMINS_FILE, "utf-8"));
+    const admins = getAdmins();
     const idx = admins.findIndex(a => a.username.toLowerCase() === targetUsername);
 
     if (idx === -1) {
       return res.status(404).json({ error: "Admin not found." });
     }
 
-    admins[idx].passwordHash = crypto.createHash("sha256").update(newPassword).digest("hex");
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2), "utf-8");
+    admins[idx].passwordHash = hashPassword(newPassword);
+    saveAdmins(admins);
 
     res.json({ success: true, message: `Password for admin ${admins[idx].username} reset successfully.` });
   } catch (err) {
@@ -3516,7 +3511,7 @@ app.post("/api/admin/manage-admins/:username/reset-password", validateAdmin, (re
 });
 
 // GET all students (Admin)
-app.get("/api/admin/students", validateAdmin, (req, res) => {
+app.get("/api/admin/students", authorize(["ADMIN", "STUDENT_SPOC"]), (req, res) => {
   const students = readStudents();
   res.json(students.map(s => ({
     id: s.id,
@@ -3529,13 +3524,9 @@ app.get("/api/admin/students", validateAdmin, (req, res) => {
 });
 
 // POST reset student password (Admin)
-app.post("/api/admin/students/:id/reset-password", validateAdmin, (req, res) => {
+app.post("/api/admin/students/:id/reset-password", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(resetPasswordAdminSchema), (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
-
-  if (!newPassword || typeof newPassword !== "string" || newPassword.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters long." });
-  }
 
   const students = readStudents();
   const idx = students.findIndex(s => s.id === id);
@@ -3544,15 +3535,14 @@ app.post("/api/admin/students/:id/reset-password", validateAdmin, (req, res) => 
     return res.status(404).json({ error: "Student not found." });
   }
 
-  const passwordHash = crypto.createHash("sha256").update(newPassword).digest("hex");
-  students[idx].passwordHash = passwordHash;
+  students[idx].passwordHash = hashPassword(newPassword);
   writeStudents(students);
 
   res.json({ success: true, message: "Student password reset successfully." });
 });
 
 // DELETE student user (Admin)
-app.delete("/api/admin/students/:id", validateAdmin, (req, res) => {
+app.delete("/api/admin/students/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
   const students = readStudents();
   const filtered = students.filter(s => s.id !== id);
@@ -3580,7 +3570,7 @@ app.get("/api/registrations/check-team", (req, res) => {
 });
 
 // POST submit a registration
-app.post("/api/registrations", validateStudentJWT, (req, res) => {
+app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistrationSchema), (req, res) => {
   const {
     teamName,
     leadName,
@@ -3893,11 +3883,8 @@ app.post("/api/registrations", validateStudentJWT, (req, res) => {
 });
 
 // POST verify-payment for a pending registration
-app.post("/api/registrations/verify-payment", validateStudentJWT, (req, res) => {
+app.post("/api/registrations/verify-payment", validateStudentJWT, validateBody(verifyPaymentSchema), (req, res) => {
   const { registrationId, paymentId, orderId, signature } = req.body;
-  if (!registrationId || !paymentId || !orderId || !signature) {
-    return res.status(400).json({ error: "Missing verification parameters." });
-  }
 
   try {
     const settings = readSettings();
@@ -4032,8 +4019,8 @@ app.post("/api/registrations/verify-payment", validateStudentJWT, (req, res) => 
   }
 });
 
-// PUT update a registration (Admin)
-app.put("/api/registrations/:id", validateAdmin, (req, res) => {
+// PUT update a registration (Admin / Student SPOC)
+app.put("/api/registrations/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(updateRegistrationAdminSchema), (req, res) => {
   const { id } = req.params;
   const registrations = readRegistrations();
   const idx = registrations.findIndex(r => r.id === id);
@@ -4089,11 +4076,8 @@ app.put("/api/registrations/:id", validateAdmin, (req, res) => {
   res.json({ success: true, registration: updated });
 });
 
-// DELETE a registration (Admin)
-app.delete("/api/registrations/:id", validateAdmin, (req, res) => {
-  if ((req as any).adminRole === "Student SPOC") {
-    return res.status(403).json({ error: "Access Denied: Student SPOC is not authorized to delete team registrations." });
-  }
+// DELETE a registration (Super Admin SPOC only)
+app.delete("/api/registrations/:id", authorize(["ADMIN"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
   const registrations = readRegistrations();
   const filtered = registrations.filter(r => r.id !== id);
@@ -4115,14 +4099,8 @@ app.get("/api/homepage", (req, res) => {
 });
 
 // 2. POST Save Homepage content (Admin SPOC only)
-app.post("/api/homepage", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC is authorized to edit the home page." });
-  }
+app.post("/api/homepage", authorize(["ADMIN"]), validateBody(homepageContentSchema), (req, res) => {
   const content = req.body as HomepageContent;
-  if (!content || !content.sihDetails) {
-    return res.status(400).json({ error: "Invalid homepage content structure." });
-  }
   writeHomepage(content);
   res.json({ success: true, message: "Homepage details updated successfully!", content });
 });
@@ -4132,14 +4110,8 @@ app.get("/api/updates", (req, res) => {
   res.json(readUpdates());
 });
 
-app.post("/api/updates", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC is authorized to edit live updates." });
-  }
+app.post("/api/updates", authorize(["ADMIN"]), validateBody(updatesArraySchema), (req, res) => {
   const updates = req.body;
-  if (!Array.isArray(updates)) {
-    return res.status(400).json({ error: "Updates must be an array." });
-  }
   writeUpdates(updates);
   res.json({ success: true, message: "Live updates updated successfully!", updates });
 });
@@ -4150,16 +4122,10 @@ app.get("/api/custom-pages", (req, res) => {
 });
 
 // 4. POST Save/Create/Update Custom dynamic page (Admin SPOC only)
-app.post("/api/custom-pages", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC is authorized to manage custom pages." });
-  }
+app.post("/api/custom-pages", authorize(["ADMIN"]), validateBody(customPageSchema), (req, res) => {
   const pageInput = req.body as Partial<CustomPage>;
-  if (!pageInput.title || !pageInput.slug) {
-    return res.status(400).json({ error: "Page title and slug are required." });
-  }
 
-  const slug = pageInput.slug.trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
+  const slug = (pageInput.slug || "").trim().toLowerCase().replace(/[^a-z0-9-_]/g, "-");
   if (!slug) {
     return res.status(400).json({ error: "Invalid page slug." });
   }
@@ -4169,7 +4135,7 @@ app.post("/api/custom-pages", validateAdmin, (req, res) => {
 
   const updatedPage: CustomPage = {
     id: pageInput.id || Date.now().toString(),
-    title: pageInput.title.trim(),
+    title: (pageInput.title || "").trim(),
     slug,
     content: pageInput.content || "",
     published: pageInput.published !== undefined ? pageInput.published : true,
@@ -4191,10 +4157,7 @@ app.post("/api/custom-pages", validateAdmin, (req, res) => {
 });
 
 // 5. DELETE Custom dynamic page (Admin SPOC only)
-app.delete("/api/custom-pages/:id", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC is authorized to delete custom pages." });
-  }
+app.delete("/api/custom-pages/:id", authorize(["ADMIN"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
   const pages = readCustomPages();
   const filtered = pages.filter(p => p.id !== id);
@@ -4213,14 +4176,8 @@ app.get("/api/menu", (req, res) => {
 });
 
 // 7. POST Save Navigation menu items configuration (Admin SPOC only)
-app.post("/api/menu", validateAdmin, (req, res) => {
-  if ((req as any).adminRole !== "SPOC") {
-    return res.status(403).json({ error: "Access Denied: Only SPOC is authorized to edit the navigation menu." });
-  }
+app.post("/api/menu", authorize(["ADMIN"]), validateBody(menuItemsArraySchema), (req, res) => {
   const items = req.body as MenuItem[];
-  if (!Array.isArray(items)) {
-    return res.status(400).json({ error: "Invalid menu configuration format. Must be an array." });
-  }
   writeMenuItems(items);
   res.json({ success: true, message: "Navigation menu configuration updated successfully!", menu: items });
 });
@@ -4229,12 +4186,13 @@ app.post("/api/menu", validateAdmin, (req, res) => {
 // ------------------- VITE OR STATIC FRONTEND -------------------
 
 async function startServer() {
+  // Validate critical security secrets and JWT configuration at boot
+  validateAuthStartup();
+
   // Initialize and connect database on startup
   try {
     const settings = readSettings();
-    if (settings.dbEnabled && settings.dbType && settings.dbType !== "none") {
-      await db.init(settings);
-    }
+    await db.init(settings);
   } catch (dbErr) {
     console.error("[Database Startup Initialization Error]:", dbErr);
   }

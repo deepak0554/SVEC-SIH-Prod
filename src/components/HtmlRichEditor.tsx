@@ -45,6 +45,7 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
   const [imageWidth, setImageWidth] = useState("max-w-xl");
   const [imageRounded, setImageRounded] = useState("rounded-2xl");
   const [imageShadow, setImageShadow] = useState("shadow-md");
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
@@ -113,22 +114,38 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
     setShowBgDropdown(false);
   };
 
-  // File to Base64 image uploader
-  const handleLocalImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Multipart Image Uploader
+  const handleLocalImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 3 * 1024 * 1024) {
-      alert("Image size should be less than 3MB.");
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image size should be less than 5MB.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64Url = reader.result as string;
-      setImageUrl(base64Url);
-    };
-    reader.readAsDataURL(file);
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("category", "images");
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setImageUrl(data.url);
+      } else {
+        alert(data.error || "Failed to upload image.");
+      }
+    } catch (err) {
+      alert("Network error while uploading image.");
+    } finally {
+      setUploadingImage(false);
+    }
   };
 
   // Insert Image HTML tag at cursor
@@ -674,19 +691,29 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
               <div className="space-y-4">
                 {/* Drag and drop / local file picker */}
                 <div className="bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4 text-center space-y-2">
-                  <Upload className="w-6 h-6 text-indigo-500 mx-auto" />
-                  <div>
-                    <label className="text-xs font-bold text-indigo-600 hover:underline cursor-pointer block">
-                      Upload local image file
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleLocalImageUpload}
-                      />
-                    </label>
-                    <span className="text-[9px] text-slate-400 block mt-0.5">Accepts PNG, JPG or WebP up to 3MB</span>
-                  </div>
+                  {uploadingImage ? (
+                    <div className="flex flex-col items-center justify-center py-2 space-y-1">
+                      <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                      <span className="text-xs font-bold text-indigo-600">Uploading & verifying image...</span>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="w-6 h-6 text-indigo-500 mx-auto" />
+                      <div>
+                        <label className="text-xs font-bold text-indigo-600 hover:underline cursor-pointer block">
+                          Upload local image file
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleLocalImageUpload}
+                            disabled={uploadingImage}
+                          />
+                        </label>
+                        <span className="text-[9px] text-slate-400 block mt-0.5">Accepts PNG, JPG or WebP up to 5MB</span>
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="text-center text-[10px] text-slate-400 font-bold uppercase tracking-wider">

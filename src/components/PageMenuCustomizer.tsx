@@ -195,21 +195,36 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     fetchAllData();
   }, []);
 
-  // Helper for converting images to Base64
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, callback: (base64: string) => void) => {
+  // Helper for uploading image via multipart/form-data
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, callback: (url: string) => void) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      alert("Image size should be less than 2MB.");
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Image size should be less than 5MB.");
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      callback(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("category", "images");
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "X-Admin-Passcode": passcode },
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        callback(data.url);
+      } else {
+        alert(data.error || "Failed to upload image.");
+      }
+    } catch (err) {
+      alert("Network error while uploading image.");
+    }
   };
 
   // 1. Save Details
@@ -501,18 +516,26 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     });
   };
 
-  // Helper for reading File as Base64 with Promise
-  const readFileAsBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      if (file.size > 2 * 1024 * 1024) {
-        reject(new Error(`File "${file.name}" is larger than 2MB.`));
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error || new Error("Failed to read file."));
-      reader.readAsDataURL(file);
+  // Helper for uploading gallery file via multipart
+  const uploadGalleryFile = async (file: File): Promise<string> => {
+    if (file.size > 5 * 1024 * 1024) {
+      throw new Error(`File "${file.name}" is larger than 5MB.`);
+    }
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("category", "images");
+
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      headers: { "X-Admin-Passcode": passcode },
+      body: formData
     });
+
+    const data = await res.json();
+    if (!res.ok || !data.success) {
+      throw new Error(data.error || `Failed to upload "${file.name}".`);
+    }
+    return data.url;
   };
 
   // Upload and queue multiple gallery images
@@ -528,7 +551,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       try {
-        const base64 = await readFileAsBase64(file);
+        const imageUrl = await uploadGalleryFile(file);
         // Clean up file name to form a default title
         let defaultTitle = file.name;
         const lastDot = defaultTitle.lastIndexOf(".");
@@ -541,7 +564,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
         newPending.push({
           id: `${Date.now()}-${i}-${Math.random().toString(36).substr(2, 5)}`,
-          base64,
+          base64: imageUrl,
           title: defaultTitle,
           description: "",
           fileName: file.name

@@ -4443,18 +4443,31 @@ export default function AdminPanel({
                               type="file"
                               accept="image/*"
                               className="hidden"
-                              onChange={(e) => {
+                              onChange={async (e) => {
                                 const file = e.target.files?.[0];
                                 if (file) {
-                                  if (file.size > 1.5 * 1024 * 1024) {
-                                    alert("Logo file must be less than 1.5MB.");
+                                  if (file.size > 5 * 1024 * 1024) {
+                                    alert("Logo file must be less than 5MB.");
                                     return;
                                   }
-                                  const reader = new FileReader();
-                                  reader.onloadend = () => {
-                                    setSettingsForm(prev => ({ ...prev, logoUrl: reader.result as string }));
-                                  };
-                                  reader.readAsDataURL(file);
+                                  try {
+                                    const formData = new FormData();
+                                    formData.append("file", file);
+                                    formData.append("category", "images");
+                                    const res = await fetch("/api/upload", {
+                                      method: "POST",
+                                      headers: { "X-Admin-Passcode": passcode },
+                                      body: formData
+                                    });
+                                    const data = await res.json();
+                                    if (res.ok && data.success) {
+                                      setSettingsForm(prev => ({ ...prev, logoUrl: data.url }));
+                                    } else {
+                                      alert(data.error || "Failed to upload logo.");
+                                    }
+                                  } catch (err) {
+                                    alert("Network error while uploading logo.");
+                                  }
                                 }
                               }}
                             />
@@ -4630,22 +4643,36 @@ export default function AdminPanel({
                                 type="file"
                                 accept=".ppt,.pptx,.pdf,.odp"
                                 className="hidden"
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const file = e.target.files?.[0];
                                   if (file) {
                                     if (file.size > 15 * 1024 * 1024) {
                                       alert("File size exceeds 15MB limit. Please upload a smaller file or provide a cloud link.");
                                       return;
                                     }
-                                    const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      setSettingsForm(prev => ({
-                                        ...prev,
-                                        samplePptFileName: file.name,
-                                        samplePptFileBase64: reader.result as string
-                                      }));
-                                    };
-                                    reader.readAsDataURL(file);
+                                    try {
+                                      const formData = new FormData();
+                                      formData.append("file", file);
+                                      formData.append("category", "sample_ppts");
+                                      const res = await fetch("/api/upload", {
+                                        method: "POST",
+                                        headers: { "X-Admin-Passcode": passcode },
+                                        body: formData
+                                      });
+                                      const data = await res.json();
+                                      if (res.ok && data.success) {
+                                        setSettingsForm(prev => ({
+                                          ...prev,
+                                          samplePptFileName: file.name,
+                                          samplePptFileUrl: data.url,
+                                          samplePptFileBase64: ""
+                                        }));
+                                      } else {
+                                        alert(data.error || "Failed to upload template presentation file.");
+                                      }
+                                    } catch (err) {
+                                      alert("Network error while uploading template presentation file.");
+                                    }
                                   }
                                 }}
                               />
@@ -4963,18 +4990,31 @@ export default function AdminPanel({
                                 type="file"
                                 accept="image/*"
                                 className="hidden"
-                                onChange={(e) => {
+                                onChange={async (e) => {
                                   const file = e.target.files?.[0];
                                   if (file) {
-                                    if (file.size > 2 * 1024 * 1024) {
-                                      alert("Background image must be less than 2MB.");
+                                    if (file.size > 5 * 1024 * 1024) {
+                                      alert("Background image must be less than 5MB.");
                                       return;
                                     }
-                                    const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      setSettingsForm(prev => ({ ...prev, certificateBgUrl: reader.result as string }));
-                                    };
-                                    reader.readAsDataURL(file);
+                                    try {
+                                      const formData = new FormData();
+                                      formData.append("file", file);
+                                      formData.append("category", "images");
+                                      const res = await fetch("/api/upload", {
+                                        method: "POST",
+                                        headers: { "X-Admin-Passcode": passcode },
+                                        body: formData
+                                      });
+                                      const data = await res.json();
+                                      if (res.ok && data.success) {
+                                        setSettingsForm(prev => ({ ...prev, certificateBgUrl: data.url }));
+                                      } else {
+                                        alert(data.error || "Failed to upload certificate background.");
+                                      }
+                                    } catch (err) {
+                                      alert("Network error while uploading certificate background.");
+                                    }
                                   }
                                 }}
                               />

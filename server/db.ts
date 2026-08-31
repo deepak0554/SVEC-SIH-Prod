@@ -11,6 +11,7 @@ import {
   LiveUpdate,
   EvaluationCriterion
 } from "../src/types";
+import { AdminUser, hashPassword } from "./auth";
 
 export interface TeamEvaluation {
   id: string;
@@ -23,22 +24,41 @@ export interface TeamEvaluation {
   evaluatedAt: string;
 }
 
+export interface PaymentTransaction {
+  id: string;
+  registrationId: string;
+  orderId: string;
+  paymentId?: string;
+  amount: number;
+  currency: string;
+  status: "created" | "paid" | "failed" | "refunded";
+  paymentMethod?: string;
+  signature?: string;
+  studentEmail?: string;
+  createdAt: string;
+  rawResponse?: string;
+}
+
 export interface BroadcastLog {
   id: string;
-  channel: "email" | "sms" | "whatsapp";
-  recipient: string;
+  channel: "email" | "sms" | "whatsapp" | "Email" | "SMS" | "WhatsApp";
+  recipient?: string;
+  recipientGroup?: string;
+  recipientCount?: number;
   teamName?: string;
   subject?: string;
-  preview: string;
-  status: "sent" | "failed";
+  message?: string;
+  preview?: string;
+  sender?: string;
+  status: "sent" | "failed" | "completed" | "queued";
   timestamp: string;
   error?: string;
 }
 
 const IS_VERCEL = !!process.env.VERCEL;
-const DATA_DIR = process.env.DATA_DIR || (IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data"));
+export const DATA_DIR = process.env.DATA_DIR || (IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data"));
 
-// Default Fallback Initializers
+// Default initializers
 export const defaultCriteria: EvaluationCriterion[] = [
   { id: "c1", name: "Problem Understanding & Approach", maxScore: 10, description: "Clarity of the selected SIH problem statement and innovativeness of proposed solution." },
   { id: "c2", name: "Technical Feasibility & Architecture", maxScore: 10, description: "Tech stack, system design, hardware/software specifications and viable execution steps." },
@@ -56,11 +76,67 @@ export const defaultStatements: ProblemStatement[] = [
   { id: "6", code: "SIH1632", title: "Real-Time Disaster Relief Logistics Optimization & Offline Mesh Network", category: "Software", organization: "National Disaster Management Authority (NDMA)" }
 ];
 
+export const defaultHomepageContent: HomepageContent = {
+  sihDetails: {
+    title: "Smart India Hackathon 2026",
+    description: "The Sri Vasavi Engineering College (SVEC) Internal Hackathon 2026 is the premier institutional hackathon designed to shortlist, mentor, and nominate the top innovative teams to represent SVEC at the Smart India Hackathon (SIH 2026) organized by the Ministry of Education & AICTE.",
+    slogan: "Innovate for India",
+    dates: "August 20, 2026 - September 15, 2026",
+    bannerUrl: ""
+  },
+  sponsors: [],
+  patrons: [
+    { id: "p1", name: "Sri G. Satyanarayana", position: "President", imageUrl: "" },
+    { id: "p2", name: "Sri Ch. V. V. Subba Rao", position: "Secretary", imageUrl: "" },
+    { id: "p3", name: "Sri K. Venkateswara Rao", position: "Technical Director", imageUrl: "" },
+    { id: "p4", name: "Dr. Ch. Rambabu", position: "Principal", imageUrl: "" }
+  ],
+  studentSpocs: [],
+  collegeSpocs: [],
+  previousPhotos: []
+};
+
+export const defaultCustomPages: CustomPage[] = [
+  {
+    id: "guidelines",
+    title: "SIH Guidelines & Rules",
+    slug: "guidelines",
+    content: "<h2>Official SIH 2026 Guidelines</h2><p>Welcome to the SVEC Internal Hackathon portal. Please adhere to the team composition mandates and submission deadlines strictly.</p>",
+    published: true,
+    createdAt: new Date().toISOString()
+  }
+];
+
+export const defaultMenuItems: MenuItem[] = [
+  { id: "m1", label: "Home", type: "system", target: "home", order: 0 },
+  { id: "m2", label: "Problem Statements", type: "system", target: "statements", order: 1 },
+  { id: "m3", label: "Register Team", type: "system", target: "register", order: 2 },
+  { id: "m4", label: "Student Login", type: "system", target: "student-portal", order: 3 },
+  { id: "m5", label: "Selected Teams", type: "system", target: "selected-teams", order: 4 },
+  { id: "m6", label: "FAQ & Contact", type: "system", target: "faq", order: 5 }
+];
+
+export const defaultDefaultAdmins: AdminUser[] = [
+  {
+    username: "Deepak0554",
+    passwordHash: hashPassword("SIH@2026"),
+    role: "SPOC"
+  },
+  {
+    username: "studentspoc",
+    passwordHash: hashPassword("studpassword"),
+    role: "Student SPOC"
+  }
+];
+
+/**
+ * Production Unified PostgreSQL Database Manager
+ * Serves as the Single Source of Truth for all relational and structured data.
+ */
 class DatabaseManager {
   private pgPool: any = null;
-  private mongoClient: any = null;
   private isInitialized = false;
-  private currentDbType: "none" | "mongodb" | "sql" = "none";
+  private isPostgresActive = false;
 
   constructor() {
     if (!fs.existsSync(DATA_DIR)) {
@@ -68,28 +144,18 @@ class DatabaseManager {
     }
   }
 
-  public getDbType(): "none" | "mongodb" | "sql" {
-    return this.currentDbType;
+  public isPostgres(): boolean {
+    return this.isPostgresActive;
   }
 
-  // Initialize DB Connection Pool and Schemas
   public async init(config?: Partial<FeeConfig>): Promise<{ success: boolean; message: string; dbType: string }> {
     try {
-      const dbType = config?.dbType || 
-        (process.env.MONGODB_URI ? "mongodb" : 
-        (process.env.DATABASE_URL || process.env.PG_HOST || process.env.POSTGRES_URL ? "sql" : "none"));
-      
-      const dbEnabled = config?.dbEnabled ?? (dbType !== "none" && (!!process.env.DATABASE_URL || !!process.env.MONGODB_URI || !!config?.dbHost));
+      const connStr = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+      const pgHost = config?.dbHost || process.env.PG_HOST;
+      const isSqlConfigured = !!(connStr || pgHost || (config?.dbEnabled && config?.dbType === "sql"));
 
-      if (!dbEnabled || dbType === "none") {
-        this.currentDbType = "none";
-        this.isInitialized = true;
-        return { success: true, message: "Operating on structured local storage engine with disk persistence.", dbType: "local" };
-      }
-
-      if (dbType === "sql") {
+      if (isSqlConfigured) {
         const { default: pg } = await import("pg");
-        const connStr = process.env.DATABASE_URL || process.env.POSTGRES_URL;
         
         let poolConfig: any;
         if (connStr) {
@@ -102,7 +168,7 @@ class DatabaseManager {
           };
         } else {
           poolConfig = {
-            host: config?.dbHost || process.env.PG_HOST || "localhost",
+            host: pgHost || "localhost",
             port: config?.dbPort ? Number(config.dbPort) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : 5432),
             database: config?.dbName || process.env.PG_DATABASE || "svec_sih",
             user: config?.dbUsername || process.env.PG_USER || "postgres",
@@ -110,7 +176,7 @@ class DatabaseManager {
             max: 20,
             idleTimeoutMillis: 30000,
             connectionTimeoutMillis: 5000,
-            ssl: (config?.dbHost?.includes("localhost") || config?.dbHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
+            ssl: (pgHost?.includes("localhost") || pgHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
           };
         }
 
@@ -124,276 +190,379 @@ class DatabaseManager {
         const client = await this.pgPool.connect();
         client.release();
 
-        // Run industry standard table migrations
+        // Run tables creation and migrations
         await this.createPostgresTables();
-
-        this.currentDbType = "sql";
-        this.isInitialized = true;
-        console.log("✅ [Database] PostgreSQL connection pool initialized and tables structured successfully.");
-        return { success: true, message: "PostgreSQL database connection and schemas initialized successfully.", dbType: "sql" };
-      }
-
-      if (dbType === "mongodb") {
-        const { MongoClient } = await import("mongodb");
-        let mongoUrl = process.env.MONGODB_URI || "";
-        if (!mongoUrl) {
-          const host = config?.dbHost || "localhost";
-          const port = config?.dbPort || 27017;
-          const user = config?.dbUsername;
-          const pass = config?.dbPassword;
-          const dbName = config?.dbName || "svec_sih";
-          if (user && pass) {
-            mongoUrl = `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}/${dbName}`;
-          } else {
-            mongoUrl = `mongodb://${host}:${port}/${dbName}`;
-          }
-          if (host.startsWith("mongodb://") || host.startsWith("mongodb+srv://")) {
-            mongoUrl = host;
-          }
-        }
-
-        if (this.mongoClient) {
-          try { await this.mongoClient.close(); } catch (e) {}
-        }
-
-        this.mongoClient = new MongoClient(mongoUrl, {
-          maxPoolSize: 20,
-          serverSelectionTimeoutMS: 5000
-        });
-        await this.mongoClient.connect();
         
-        // Ensure indexes
-        await this.createMongoIndexes(config?.dbName || "svec_sih");
+        // Bootstrap initial baseline data if tables are empty
+        await this.bootstrapPostgresData();
 
-        this.currentDbType = "mongodb";
+        this.isPostgresActive = true;
         this.isInitialized = true;
-        console.log("✅ [Database] MongoDB client connected and collection indexes initialized successfully.");
-        return { success: true, message: "MongoDB connection and collections initialized successfully.", dbType: "mongodb" };
+        console.log("✅ [Database] PostgreSQL is active as the Single Source of Truth.");
+        return { success: true, message: "PostgreSQL connected and schema verified.", dbType: "sql" };
       }
 
-      return { success: false, message: "Unknown database configuration.", dbType: "none" };
+      // Local storage fallback for dev/testing when no PostgreSQL credentials exist
+      this.isPostgresActive = false;
+      this.isInitialized = true;
+      if (IS_VERCEL) {
+        console.warn("⚠️ [Storage Warning] Running on serverless /tmp. Configure DATABASE_URL for permanent PostgreSQL storage.");
+      } else {
+        console.log("ℹ️ [Database] Running on local storage adapter.");
+      }
+      return { success: true, message: "Operating on local storage adapter.", dbType: "local" };
     } catch (err: any) {
       console.error("❌ [Database Init Error]:", err.message);
-      this.currentDbType = "none";
-      return { success: false, message: `Database initialization failed: ${err.message}`, dbType: "none" };
+      this.isPostgresActive = false;
+      return { success: false, message: `Database initialization failed: ${err.message}`, dbType: "local" };
     }
   }
 
-  // Structure and run PostgreSQL Schemas
+  // Create tables and execute safe idempotent migrations
   private async createPostgresTables(): Promise<void> {
     if (!this.pgPool) return;
 
-    const queries = [
-      // 1. Registrations / Teams Table
-      `CREATE TABLE IF NOT EXISTS registrations (
-        id VARCHAR(255) PRIMARY KEY,
-        registration_id VARCHAR(100) UNIQUE NOT NULL,
-        team_name VARCHAR(255) NOT NULL,
-        lead_name VARCHAR(255) NOT NULL,
-        lead_department VARCHAR(100) NOT NULL,
-        lead_mobile VARCHAR(50) NOT NULL,
-        lead_gender VARCHAR(50),
-        lead_academic_year VARCHAR(50),
-        member1 VARCHAR(255),
-        member1_gender VARCHAR(50),
-        member1_email VARCHAR(255),
-        member1_phone VARCHAR(50),
-        member1_academic_year VARCHAR(50),
-        member2 VARCHAR(255),
-        member2_gender VARCHAR(50),
-        member2_email VARCHAR(255),
-        member2_phone VARCHAR(50),
-        member2_academic_year VARCHAR(50),
-        member3 VARCHAR(255),
-        member3_gender VARCHAR(50),
-        member3_email VARCHAR(255),
-        member3_phone VARCHAR(50),
-        member3_academic_year VARCHAR(50),
-        member4 VARCHAR(255),
-        member4_gender VARCHAR(50),
-        member4_email VARCHAR(255),
-        member4_phone VARCHAR(50),
-        member4_academic_year VARCHAR(50),
-        member5 VARCHAR(255),
-        member5_gender VARCHAR(50),
-        member5_email VARCHAR(255),
-        member5_phone VARCHAR(50),
-        member5_academic_year VARCHAR(50),
-        has_female_member BOOLEAN DEFAULT FALSE,
-        mentor_name VARCHAR(255),
-        problem_statement_id VARCHAR(100),
-        submitted_at VARCHAR(100),
-        student_email VARCHAR(255),
-        payment_status VARCHAR(50) DEFAULT 'free',
-        payment_id VARCHAR(255),
-        order_id VARCHAR(255),
-        amount_paid NUMERIC,
-        abstract TEXT,
-        implementation_steps TEXT,
-        ppt_file_name VARCHAR(255),
-        ppt_file_url TEXT,
-        ppt_base64 TEXT,
-        proposal_status VARCHAR(50),
-        approval_status VARCHAR(50) DEFAULT 'pending',
-        approval_notes TEXT,
-        verified_at VARCHAR(100),
-        verified_by VARCHAR(255),
-        is_final_selected BOOLEAN DEFAULT FALSE,
-        selection_notes TEXT,
-        assigned_evaluator VARCHAR(255),
-        evaluator_scores TEXT,
-        evaluation_notes TEXT,
-        evaluation_status VARCHAR(50) DEFAULT 'pending',
-        total_score NUMERIC DEFAULT 0,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );`,
+    const safeExecute = async (query: string, label: string) => {
+      try {
+        await this.pgPool.query(query);
+      } catch (err: any) {
+        console.warn(`[DB Schema] ${label} note: ${err.message}`);
+      }
+    };
 
-      // Indexes for Registrations
+    const tables = [
+      {
+        label: "registrations",
+        query: `CREATE TABLE IF NOT EXISTS registrations (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(100) UNIQUE NOT NULL,
+          team_name VARCHAR(255) NOT NULL,
+          lead_name VARCHAR(255) NOT NULL,
+          lead_department VARCHAR(100) NOT NULL,
+          lead_mobile VARCHAR(50) NOT NULL,
+          lead_gender VARCHAR(50),
+          lead_academic_year VARCHAR(50),
+          member1 VARCHAR(255),
+          member1_gender VARCHAR(50),
+          member1_email VARCHAR(255),
+          member1_phone VARCHAR(50),
+          member1_academic_year VARCHAR(50),
+          member2 VARCHAR(255),
+          member2_gender VARCHAR(50),
+          member2_email VARCHAR(255),
+          member2_phone VARCHAR(50),
+          member2_academic_year VARCHAR(50),
+          member3 VARCHAR(255),
+          member3_gender VARCHAR(50),
+          member3_email VARCHAR(255),
+          member3_phone VARCHAR(50),
+          member3_academic_year VARCHAR(50),
+          member4 VARCHAR(255),
+          member4_gender VARCHAR(50),
+          member4_email VARCHAR(255),
+          member4_phone VARCHAR(50),
+          member4_academic_year VARCHAR(50),
+          member5 VARCHAR(255),
+          member5_gender VARCHAR(50),
+          member5_email VARCHAR(255),
+          member5_phone VARCHAR(50),
+          member5_academic_year VARCHAR(50),
+          has_female_member BOOLEAN DEFAULT FALSE,
+          mentor_name VARCHAR(255),
+          problem_statement_id VARCHAR(100),
+          submitted_at VARCHAR(100),
+          student_email VARCHAR(255),
+          payment_status VARCHAR(50) DEFAULT 'free',
+          payment_id VARCHAR(255),
+          order_id VARCHAR(255),
+          amount_paid NUMERIC,
+          abstract TEXT,
+          implementation_steps TEXT,
+          ppt_file_name VARCHAR(255),
+          ppt_file_url TEXT,
+          ppt_base64 TEXT,
+          proposal_status VARCHAR(50) DEFAULT 'saved',
+          approval_status VARCHAR(50) DEFAULT 'pending',
+          approval_notes TEXT,
+          verified_at VARCHAR(100),
+          verified_by VARCHAR(255),
+          is_final_selected BOOLEAN DEFAULT FALSE,
+          selection_notes TEXT,
+          assigned_evaluator VARCHAR(255),
+          evaluator_scores TEXT,
+          evaluation_notes TEXT,
+          evaluation_status VARCHAR(50) DEFAULT 'pending',
+          total_score NUMERIC DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "students",
+        query: `CREATE TABLE IF NOT EXISTS students (
+          id VARCHAR(255) PRIMARY KEY,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash TEXT,
+          gender VARCHAR(50),
+          department VARCHAR(100),
+          mobile VARCHAR(50),
+          created_at VARCHAR(100)
+        );`
+      },
+      {
+        label: "admins",
+        query: `CREATE TABLE IF NOT EXISTS admins (
+          id VARCHAR(255) PRIMARY KEY,
+          username VARCHAR(100) UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL,
+          role VARCHAR(50) NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "team_evaluations",
+        query: `CREATE TABLE IF NOT EXISTS team_evaluations (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(255) NOT NULL,
+          evaluator_username VARCHAR(255) NOT NULL,
+          scores_json TEXT NOT NULL,
+          total_score NUMERIC DEFAULT 0,
+          notes TEXT,
+          status VARCHAR(50) DEFAULT 'completed',
+          evaluated_at VARCHAR(100)
+        );`
+      },
+      {
+        label: "payment_transactions",
+        query: `CREATE TABLE IF NOT EXISTS payment_transactions (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(255) NOT NULL,
+          order_id VARCHAR(255) NOT NULL,
+          payment_id VARCHAR(255),
+          amount NUMERIC NOT NULL,
+          currency VARCHAR(10) DEFAULT 'INR',
+          status VARCHAR(50) DEFAULT 'created',
+          payment_method VARCHAR(50),
+          signature TEXT,
+          student_email VARCHAR(255),
+          raw_response TEXT,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "problem_statements",
+        query: `CREATE TABLE IF NOT EXISTS problem_statements (
+          id VARCHAR(255) PRIMARY KEY,
+          code VARCHAR(100) NOT NULL,
+          title TEXT NOT NULL,
+          category VARCHAR(50) NOT NULL,
+          organization VARCHAR(255) NOT NULL
+        );`
+      },
+      {
+        label: "evaluation_criteria",
+        query: `CREATE TABLE IF NOT EXISTS evaluation_criteria (
+          id VARCHAR(255) PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          max_score INT DEFAULT 10,
+          description TEXT,
+          sort_order INT DEFAULT 0
+        );`
+      },
+      {
+        label: "app_settings",
+        query: `CREATE TABLE IF NOT EXISTS app_settings (
+          id VARCHAR(255) PRIMARY KEY,
+          settings_json TEXT NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "homepage_content",
+        query: `CREATE TABLE IF NOT EXISTS homepage_content (
+          id VARCHAR(255) PRIMARY KEY,
+          content_json TEXT NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
+      },
+      {
+        label: "custom_pages",
+        query: `CREATE TABLE IF NOT EXISTS custom_pages (
+          id VARCHAR(255) PRIMARY KEY,
+          slug VARCHAR(255) UNIQUE NOT NULL,
+          title VARCHAR(255) NOT NULL,
+          content TEXT,
+          published BOOLEAN DEFAULT TRUE,
+          created_at VARCHAR(100)
+        );`
+      },
+      {
+        label: "menu_items",
+        query: `CREATE TABLE IF NOT EXISTS menu_items (
+          id VARCHAR(255) PRIMARY KEY,
+          label VARCHAR(255) NOT NULL,
+          type VARCHAR(50) NOT NULL,
+          target VARCHAR(255) NOT NULL,
+          sort_order INT DEFAULT 0
+        );`
+      },
+      {
+        label: "live_updates",
+        query: `CREATE TABLE IF NOT EXISTS live_updates (
+          id VARCHAR(255) PRIMARY KEY,
+          text TEXT NOT NULL,
+          is_important BOOLEAN DEFAULT FALSE,
+          created_at VARCHAR(100)
+        );`
+      },
+      {
+        label: "broadcast_logs",
+        query: `CREATE TABLE IF NOT EXISTS broadcast_logs (
+          id VARCHAR(255) PRIMARY KEY,
+          channel VARCHAR(50) NOT NULL,
+          recipient VARCHAR(255) NOT NULL,
+          team_name VARCHAR(255),
+          subject VARCHAR(255),
+          preview TEXT,
+          status VARCHAR(50) NOT NULL,
+          timestamp VARCHAR(100),
+          error TEXT
+        );`
+      }
+    ];
+
+    for (const t of tables) {
+      await safeExecute(t.query, `Create table ${t.label}`);
+    }
+
+    // Indexes
+    const indexes = [
       `CREATE INDEX IF NOT EXISTS idx_reg_problem_stmt ON registrations(problem_statement_id);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_student_email ON registrations(student_email);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_approval_status ON registrations(approval_status);`,
       `CREATE INDEX IF NOT EXISTS idx_reg_assigned_evaluator ON registrations(assigned_evaluator);`,
-
-      // 2. Students Account Table
-      `CREATE TABLE IF NOT EXISTS students (
-        id VARCHAR(255) PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        password_hash TEXT,
-        gender VARCHAR(50),
-        department VARCHAR(100),
-        mobile VARCHAR(50),
-        created_at VARCHAR(100)
-      );`,
       `CREATE INDEX IF NOT EXISTS idx_students_email ON students(email);`,
-
-      // 3. Problem Statements Table
-      `CREATE TABLE IF NOT EXISTS problem_statements (
-        id VARCHAR(255) PRIMARY KEY,
-        code VARCHAR(100) NOT NULL,
-        title TEXT NOT NULL,
-        category VARCHAR(50) NOT NULL,
-        organization VARCHAR(255) NOT NULL
-      );`,
-
-      // 4. Evaluation Criteria Table
-      `CREATE TABLE IF NOT EXISTS evaluation_criteria (
-        id VARCHAR(255) PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        max_score INT DEFAULT 10,
-        description TEXT,
-        sort_order INT DEFAULT 0
-      );`,
-
-      // 5. Dedicated Team Evaluations Table
-      `CREATE TABLE IF NOT EXISTS team_evaluations (
-        id VARCHAR(255) PRIMARY KEY,
-        registration_id VARCHAR(255) NOT NULL,
-        evaluator_username VARCHAR(255) NOT NULL,
-        scores_json TEXT NOT NULL,
-        total_score NUMERIC DEFAULT 0,
-        notes TEXT,
-        status VARCHAR(50) DEFAULT 'completed',
-        evaluated_at VARCHAR(100)
-      );`,
       `CREATE INDEX IF NOT EXISTS idx_eval_reg_id ON team_evaluations(registration_id);`,
       `CREATE INDEX IF NOT EXISTS idx_eval_evaluator ON team_evaluations(evaluator_username);`,
-
-      // 6. App Metadata & Settings Tables
-      `CREATE TABLE IF NOT EXISTS app_settings (
-        id VARCHAR(255) PRIMARY KEY,
-        settings_json TEXT NOT NULL,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );`,
-
-      `CREATE TABLE IF NOT EXISTS app_metadata (
-        id VARCHAR(255) PRIMARY KEY,
-        metadata_json TEXT NOT NULL,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      );`,
-
-      // 7. Custom Pages Table
-      `CREATE TABLE IF NOT EXISTS custom_pages (
-        id VARCHAR(255) PRIMARY KEY,
-        slug VARCHAR(255) UNIQUE NOT NULL,
-        title VARCHAR(255) NOT NULL,
-        content TEXT,
-        published BOOLEAN DEFAULT TRUE,
-        created_at VARCHAR(100)
-      );`,
-
-      // 8. Menu Items Table
-      `CREATE TABLE IF NOT EXISTS menu_items (
-        id VARCHAR(255) PRIMARY KEY,
-        label VARCHAR(255) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        target VARCHAR(255) NOT NULL,
-        sort_order INT DEFAULT 0
-      );`,
-
-      // 9. Live Updates Table
-      `CREATE TABLE IF NOT EXISTS live_updates (
-        id VARCHAR(255) PRIMARY KEY,
-        text TEXT NOT NULL,
-        is_important BOOLEAN DEFAULT FALSE,
-        created_at VARCHAR(100)
-      );`,
-
-      // 10. Broadcast Logs Table
-      `CREATE TABLE IF NOT EXISTS broadcast_logs (
-        id VARCHAR(255) PRIMARY KEY,
-        channel VARCHAR(50) NOT NULL,
-        recipient VARCHAR(255) NOT NULL,
-        team_name VARCHAR(255),
-        subject VARCHAR(255),
-        preview TEXT,
-        status VARCHAR(50) NOT NULL,
-        timestamp VARCHAR(100),
-        error TEXT
-      );`
+      `CREATE INDEX IF NOT EXISTS idx_payments_reg_id ON payment_transactions(registration_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payment_transactions(order_id);`
     ];
 
-    for (const q of queries) {
-      await this.pgPool.query(q);
+    for (const idx of indexes) {
+      await safeExecute(idx, "Create index");
     }
   }
 
-  // Create MongoDB Indexes
-  private async createMongoIndexes(dbName: string): Promise<void> {
-    if (!this.mongoClient) return;
-    const db = this.mongoClient.db(dbName);
-    await db.collection("registrations").createIndex({ registrationId: 1 }, { unique: true });
-    await db.collection("registrations").createIndex({ problemStatementId: 1 });
-    await db.collection("registrations").createIndex({ studentEmail: 1 });
-    await db.collection("students").createIndex({ email: 1 }, { unique: true });
-    await db.collection("team_evaluations").createIndex({ registrationId: 1 });
-    await db.collection("team_evaluations").createIndex({ evaluatorUsername: 1 });
+  // Seed default data if PostgreSQL tables are brand new and empty
+  private async bootstrapPostgresData(): Promise<void> {
+    if (!this.pgPool) return;
+
+    try {
+      // 1. Problem Statements
+      const psRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM problem_statements`);
+      if (parseInt(psRes.rows[0].count, 10) === 0) {
+        for (const ps of defaultStatements) {
+          await this.pgPool.query(
+            `INSERT INTO problem_statements (id, code, title, category, organization) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+            [ps.id, ps.code, ps.title, ps.category, ps.organization]
+          );
+        }
+      }
+
+      // 2. Evaluation Criteria
+      const critRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM evaluation_criteria`);
+      if (parseInt(critRes.rows[0].count, 10) === 0) {
+        for (let i = 0; i < defaultCriteria.length; i++) {
+          const c = defaultCriteria[i];
+          await this.pgPool.query(
+            `INSERT INTO evaluation_criteria (id, name, max_score, description, sort_order) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+            [c.id, c.name, c.maxScore, c.description || "", i]
+          );
+        }
+      }
+
+      // 3. Default Admins
+      const adminRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM admins`);
+      if (parseInt(adminRes.rows[0].count, 10) === 0) {
+        for (const a of defaultDefaultAdmins) {
+          await this.pgPool.query(
+            `INSERT INTO admins (id, username, password_hash, role) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+            [a.username.toLowerCase(), a.username, a.passwordHash, a.role]
+          );
+        }
+      }
+
+      // 4. Homepage Content
+      const hpRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM homepage_content WHERE id = 'main'`);
+      if (parseInt(hpRes.rows[0].count, 10) === 0) {
+        await this.pgPool.query(
+          `INSERT INTO homepage_content (id, content_json) VALUES ('main', $1) ON CONFLICT DO NOTHING`,
+          [JSON.stringify(defaultHomepageContent)]
+        );
+      }
+
+      // 5. Custom Pages
+      const cpRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM custom_pages`);
+      if (parseInt(cpRes.rows[0].count, 10) === 0) {
+        for (const cp of defaultCustomPages) {
+          await this.pgPool.query(
+            `INSERT INTO custom_pages (id, slug, title, content, published, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT DO NOTHING`,
+            [cp.id, cp.slug, cp.title, cp.content, cp.published ?? true, cp.createdAt]
+          );
+        }
+      }
+
+      // 6. Menu Items
+      const menuRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM menu_items`);
+      if (parseInt(menuRes.rows[0].count, 10) === 0) {
+        for (const m of defaultMenuItems) {
+          await this.pgPool.query(
+            `INSERT INTO menu_items (id, label, type, target, sort_order) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+            [m.id, m.label, m.type, m.target, m.order]
+          );
+        }
+      }
+    } catch (err: any) {
+      console.warn("[DB Bootstrap note]:", err.message);
+    }
   }
 
-  // ===================== REGISTRATIONS DATA ACCESS =====================
+  // ===================== REGISTRATIONS / TEAMS =====================
 
   public async getRegistrations(): Promise<Registration[]> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM registrations ORDER BY created_at DESC`);
         return res.rows.map(this.mapSqlRowToRegistration);
       } catch (err) {
-        console.error("[DB Query Error] getRegistrations SQL failed, falling back to disk cache:", err);
-      }
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        const docs = await db.collection("registrations").find({}).toArray();
-        return docs.map(({ _id, ...r }: any) => r as Registration);
-      } catch (err) {
-        console.error("[DB Query Error] getRegistrations Mongo failed, falling back to disk cache:", err);
+        console.error("[PostgreSQL Query Error] getRegistrations:", err);
       }
     }
     return this.readLocalFile<Registration[]>("registrations.json", []);
   }
 
+  public async getRegistrationById(id: string): Promise<Registration | null> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(
+          `SELECT * FROM registrations WHERE id = $1 OR registration_id = $1 LIMIT 1`,
+          [id]
+        );
+        if (res.rows.length > 0) {
+          return this.mapSqlRowToRegistration(res.rows[0]);
+        }
+        return null;
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getRegistrationById:", err);
+      }
+    }
+    const local = this.readLocalFile<Registration[]>("registrations.json", []);
+    return local.find(r => r.id === id || r.registrationId === id) || null;
+  }
+
   public async saveRegistration(reg: Registration): Promise<boolean> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         const sql = `
           INSERT INTO registrations (
@@ -501,54 +670,231 @@ class DatabaseManager {
         ];
 
         await this.pgPool.query(sql, values);
+        return true;
       } catch (err) {
-        console.error("[DB Save Error] saveRegistration SQL failed:", err);
-      }
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        await db.collection("registrations").updateOne(
-          { id: reg.id },
-          { $set: { ...reg, updatedAt: new Date().toISOString() } },
-          { upsert: true }
-        );
-      } catch (err) {
-        console.error("[DB Save Error] saveRegistration Mongo failed:", err);
+        console.error("[PostgreSQL Save Error] saveRegistration:", err);
       }
     }
 
-    // Always keep local JSON cache synchronized
     const local = this.readLocalFile<Registration[]>("registrations.json", []);
     const idx = local.findIndex(r => r.id === reg.id);
     if (idx >= 0) local[idx] = reg;
     else local.push(reg);
     this.writeLocalFile("registrations.json", local);
+    return true;
+  }
 
+  public async saveRegistrations(regs: Registration[]): Promise<boolean> {
+    for (const r of regs) {
+      await this.saveRegistration(r);
+    }
     return true;
   }
 
   public async deleteRegistration(id: string): Promise<boolean> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM registrations WHERE id = $1 OR registration_id = $1`, [id]);
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        await db.collection("registrations").deleteOne({ $or: [{ id }, { registrationId: id }] });
-      } catch (e) {}
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Delete Error] deleteRegistration:", err);
+      }
     }
-
     const local = this.readLocalFile<Registration[]>("registrations.json", []);
     const filtered = local.filter(r => r.id !== id && r.registrationId !== id);
     this.writeLocalFile("registrations.json", filtered);
     return true;
   }
 
-  // ===================== EVALUATION DATA PERSISTENCE =====================
+  // ===================== STUDENTS =====================
+
+  public async getStudents(): Promise<Student[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT * FROM students ORDER BY created_at DESC`);
+        return res.rows.map(r => ({
+          id: r.id,
+          email: r.email,
+          passwordHash: r.password_hash,
+          gender: r.gender,
+          department: r.department,
+          mobile: r.mobile,
+          createdAt: r.created_at
+        }));
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getStudents:", err);
+      }
+    }
+    return this.readLocalFile<Student[]>("students.json", []);
+  }
+
+  public async getStudentByEmail(email: string): Promise<Student | null> {
+    const cleanEmail = email.trim().toLowerCase();
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT * FROM students WHERE LOWER(email) = $1 LIMIT 1`, [cleanEmail]);
+        if (res.rows.length > 0) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            email: r.email,
+            passwordHash: r.password_hash,
+            gender: r.gender,
+            department: r.department,
+            mobile: r.mobile,
+            createdAt: r.created_at
+          };
+        }
+        return null;
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getStudentByEmail:", err);
+      }
+    }
+    const local = this.readLocalFile<Student[]>("students.json", []);
+    return local.find(s => s.email.toLowerCase() === cleanEmail) || null;
+  }
+
+  public async saveStudent(student: Student): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO students (id, email, password_hash, gender, department, mobile, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          ON CONFLICT (id) DO UPDATE SET
+            email = EXCLUDED.email,
+            password_hash = EXCLUDED.password_hash,
+            gender = EXCLUDED.gender,
+            department = EXCLUDED.department,
+            mobile = EXCLUDED.mobile;
+        `, [student.id, student.email.toLowerCase(), student.passwordHash || "", student.gender || "", student.department || "", student.mobile || "", student.createdAt]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveStudent:", err);
+      }
+    }
+    const local = this.readLocalFile<Student[]>("students.json", []);
+    const idx = local.findIndex(s => s.id === student.id || s.email.toLowerCase() === student.email.toLowerCase());
+    if (idx >= 0) local[idx] = student;
+    else local.push(student);
+    this.writeLocalFile("students.json", local);
+    return true;
+  }
+
+  public async saveStudents(students: Student[]): Promise<boolean> {
+    for (const s of students) {
+      await this.saveStudent(s);
+    }
+    return true;
+  }
+
+  public async deleteStudent(id: string): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM students WHERE id = $1 OR email = $1`, [id]);
+        return true;
+      } catch (e) {}
+    }
+    const local = this.readLocalFile<Student[]>("students.json", []);
+    const filtered = local.filter(s => s.id !== id && s.email.toLowerCase() !== id.toLowerCase());
+    this.writeLocalFile("students.json", filtered);
+    return true;
+  }
+
+  // ===================== ADMINS =====================
+
+  public async getAdmins(): Promise<AdminUser[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT username, password_hash, role FROM admins ORDER BY username ASC`);
+        if (res.rows.length > 0) {
+          return res.rows.map(r => ({
+            username: r.username,
+            passwordHash: r.password_hash,
+            role: r.role as any
+          }));
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getAdmins:", err);
+      }
+    }
+    return this.readLocalFile<AdminUser[]>("admins.json", defaultDefaultAdmins);
+  }
+
+  public async getAdminByUsername(username: string): Promise<AdminUser | null> {
+    const clean = username.trim().toLowerCase();
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT username, password_hash, role FROM admins WHERE LOWER(username) = $1 LIMIT 1`, [clean]);
+        if (res.rows.length > 0) {
+          const r = res.rows[0];
+          return {
+            username: r.username,
+            passwordHash: r.password_hash,
+            role: r.role as any
+          };
+        }
+        return null;
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getAdminByUsername:", err);
+      }
+    }
+    const admins = await this.getAdmins();
+    return admins.find(a => a.username.toLowerCase() === clean) || null;
+  }
+
+  public async saveAdmin(admin: AdminUser): Promise<boolean> {
+    const id = admin.username.toLowerCase();
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO admins (id, username, password_hash, role, updated_at)
+          VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            username = EXCLUDED.username,
+            password_hash = EXCLUDED.password_hash,
+            role = EXCLUDED.role,
+            updated_at = NOW();
+        `, [id, admin.username, admin.passwordHash, admin.role]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveAdmin:", err);
+      }
+    }
+    const local = this.readLocalFile<AdminUser[]>("admins.json", defaultDefaultAdmins);
+    const idx = local.findIndex(a => a.username.toLowerCase() === id);
+    if (idx >= 0) local[idx] = admin;
+    else local.push(admin);
+    this.writeLocalFile("admins.json", local);
+    return true;
+  }
+
+  public async saveAdmins(admins: AdminUser[]): Promise<boolean> {
+    for (const a of admins) {
+      await this.saveAdmin(a);
+    }
+    return true;
+  }
+
+  public async deleteAdmin(username: string): Promise<boolean> {
+    const id = username.toLowerCase();
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM admins WHERE id = $1 OR LOWER(username) = $1`, [id]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Delete Error] deleteAdmin:", err);
+      }
+    }
+    const local = this.readLocalFile<AdminUser[]>("admins.json", defaultDefaultAdmins);
+    const filtered = local.filter(a => a.username.toLowerCase() !== id);
+    this.writeLocalFile("admins.json", filtered);
+    return true;
+  }
+
+  // ===================== EVALUATIONS =====================
 
   public async saveEvaluation(evaluation: TeamEvaluation): Promise<boolean> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         const sql = `
           INSERT INTO team_evaluations (id, registration_id, evaluator_username, scores_json, total_score, notes, status, evaluated_at)
@@ -571,7 +917,6 @@ class DatabaseManager {
           evaluation.evaluatedAt
         ]);
 
-        // Also update registration directly
         await this.pgPool.query(`
           UPDATE registrations 
           SET evaluator_scores = $1, evaluation_notes = $2, evaluation_status = $3, total_score = $4, updated_at = NOW()
@@ -583,34 +928,12 @@ class DatabaseManager {
           evaluation.totalScore,
           evaluation.registrationId
         ]);
+        return true;
       } catch (err) {
-        console.error("[DB Save Error] saveEvaluation SQL failed:", err);
-      }
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        await db.collection("team_evaluations").updateOne(
-          { id: evaluation.id },
-          { $set: evaluation },
-          { upsert: true }
-        );
-        await db.collection("registrations").updateOne(
-          { $or: [{ id: evaluation.registrationId }, { registrationId: evaluation.registrationId }] },
-          { $set: { 
-              evaluatorScores: evaluation.scores,
-              evaluationNotes: evaluation.notes,
-              evaluationStatus: evaluation.status,
-              totalScore: evaluation.totalScore,
-              updatedAt: new Date().toISOString()
-            }
-          }
-        );
-      } catch (err) {
-        console.error("[DB Save Error] saveEvaluation Mongo failed:", err);
+        console.error("[PostgreSQL Save Error] saveEvaluation:", err);
       }
     }
 
-    // Update local registrations cache
     const local = this.readLocalFile<Registration[]>("registrations.json", []);
     const idx = local.findIndex(r => r.id === evaluation.registrationId || r.registrationId === evaluation.registrationId);
     if (idx >= 0) {
@@ -619,12 +942,11 @@ class DatabaseManager {
       local[idx].evaluationStatus = evaluation.status;
       this.writeLocalFile("registrations.json", local);
     }
-
     return true;
   }
 
   public async getEvaluations(registrationId?: string): Promise<TeamEvaluation[]> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         let sql = `SELECT * FROM team_evaluations`;
         const params: any[] = [];
@@ -645,20 +967,10 @@ class DatabaseManager {
           evaluatedAt: r.evaluated_at
         }));
       } catch (err) {
-        console.error("[DB Query Error] getEvaluations SQL failed:", err);
-      }
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        const query = registrationId ? { registrationId } : {};
-        const docs = await db.collection("team_evaluations").find(query).sort({ evaluatedAt: -1 }).toArray();
-        return docs.map(({ _id, ...doc }: any) => doc as TeamEvaluation);
-      } catch (err) {
-        console.error("[DB Query Error] getEvaluations Mongo failed:", err);
+        console.error("[PostgreSQL Query Error] getEvaluations:", err);
       }
     }
 
-    // Fallback construct from registrations cache
     const regs = this.readLocalFile<Registration[]>("registrations.json", []);
     const evals: TeamEvaluation[] = [];
     for (const r of regs) {
@@ -680,68 +992,85 @@ class DatabaseManager {
     return evals;
   }
 
-  // ===================== STUDENTS DATA ACCESS =====================
+  // ===================== PAYMENTS =====================
 
-  public async getStudents(): Promise<Student[]> {
-    if (this.currentDbType === "sql" && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT * FROM students ORDER BY created_at DESC`);
-        return res.rows.map(r => ({
-          id: r.id,
-          email: r.email,
-          passwordHash: r.password_hash,
-          gender: r.gender,
-          department: r.department,
-          mobile: r.mobile,
-          createdAt: r.created_at
-        }));
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        const docs = await db.collection("students").find({}).toArray();
-        return docs.map(({ _id, ...s }: any) => s as Student);
-      } catch (e) {}
-    }
-    return this.readLocalFile<Student[]>("students.json", []);
-  }
-
-  public async saveStudent(student: Student): Promise<boolean> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+  public async savePaymentTransaction(payment: PaymentTransaction): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
-          INSERT INTO students (id, email, password_hash, gender, department, mobile, created_at)
-          VALUES ($1, $2, $3, $4, $5, $6, $7)
+          INSERT INTO payment_transactions (id, registration_id, order_id, payment_id, amount, currency, status, payment_method, signature, student_email, raw_response, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
           ON CONFLICT (id) DO UPDATE SET
-            email = EXCLUDED.email,
-            password_hash = EXCLUDED.password_hash,
-            gender = EXCLUDED.gender,
-            department = EXCLUDED.department,
-            mobile = EXCLUDED.mobile;
-        `, [student.id, student.email, student.passwordHash || "", student.gender || "", student.department || "", student.mobile || "", student.createdAt]);
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        await db.collection("students").updateOne({ id: student.id }, { $set: student }, { upsert: true });
-      } catch (e) {}
+            payment_id = EXCLUDED.payment_id,
+            status = EXCLUDED.status,
+            signature = EXCLUDED.signature,
+            raw_response = EXCLUDED.raw_response;
+        `, [
+          payment.id,
+          payment.registrationId,
+          payment.orderId,
+          payment.paymentId || null,
+          payment.amount,
+          payment.currency || "INR",
+          payment.status || "created",
+          payment.paymentMethod || null,
+          payment.signature || null,
+          payment.studentEmail || null,
+          payment.rawResponse || null
+        ]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] savePaymentTransaction:", err);
+      }
     }
-
-    const local = this.readLocalFile<Student[]>("students.json", []);
-    const idx = local.findIndex(s => s.id === student.id || s.email.toLowerCase() === student.email.toLowerCase());
-    if (idx >= 0) local[idx] = student;
-    else local.push(student);
-    this.writeLocalFile("students.json", local);
-
+    const local = this.readLocalFile<PaymentTransaction[]>("payments.json", []);
+    const idx = local.findIndex(p => p.id === payment.id);
+    if (idx >= 0) local[idx] = payment;
+    else local.push(payment);
+    this.writeLocalFile("payments.json", local);
     return true;
   }
 
-  // ===================== METADATA & CONFIG DATA ACCESS =====================
+  public async getPaymentTransactions(registrationId?: string): Promise<PaymentTransaction[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        let sql = `SELECT * FROM payment_transactions`;
+        const params: any[] = [];
+        if (registrationId) {
+          sql += ` WHERE registration_id = $1`;
+          params.push(registrationId);
+        }
+        sql += ` ORDER BY created_at DESC;`;
+        const res = await this.pgPool.query(sql, params);
+        return res.rows.map(r => ({
+          id: r.id,
+          registrationId: r.registration_id,
+          orderId: r.order_id,
+          paymentId: r.payment_id,
+          amount: Number(r.amount),
+          currency: r.currency,
+          status: r.status,
+          paymentMethod: r.payment_method,
+          signature: r.signature,
+          studentEmail: r.student_email,
+          createdAt: r.created_at,
+          rawResponse: r.raw_response
+        }));
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getPaymentTransactions:", err);
+      }
+    }
+    const local = this.readLocalFile<PaymentTransaction[]>("payments.json", []);
+    if (registrationId) return local.filter(p => p.registrationId === registrationId);
+    return local;
+  }
+
+  // ===================== PROBLEM STATEMENTS =====================
 
   public async getProblemStatements(): Promise<ProblemStatement[]> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
-        const res = await this.pgPool.query(`SELECT * FROM problem_statements`);
+        const res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
         if (res.rows && res.rows.length > 0) {
           return res.rows.map(r => ({
             id: r.id,
@@ -751,19 +1080,15 @@ class DatabaseManager {
             organization: r.organization
           }));
         }
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        const doc = await db.collection("app_metadata").findOne({ id: "problem_statements" });
-        if (doc && Array.isArray(doc.data) && doc.data.length > 0) return doc.data;
-      } catch (e) {}
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getProblemStatements:", err);
+      }
     }
-    return this.readLocalFile<ProblemStatement[]>("statements.json", defaultStatements);
+    return this.readLocalFile<ProblemStatement[]>("problem_statements.json", defaultStatements);
   }
 
   public async saveProblemStatements(statements: ProblemStatement[]): Promise<boolean> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM problem_statements`);
         for (const ps of statements) {
@@ -772,23 +1097,19 @@ class DatabaseManager {
             VALUES ($1, $2, $3, $4, $5)
           `, [ps.id, ps.code, ps.title, ps.category, ps.organization]);
         }
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        await db.collection("app_metadata").updateOne(
-          { id: "problem_statements" },
-          { $set: { id: "problem_statements", data: statements, updatedAt: new Date().toISOString() } },
-          { upsert: true }
-        );
-      } catch (e) {}
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveProblemStatements:", err);
+      }
     }
-    this.writeLocalFile("statements.json", statements);
+    this.writeLocalFile("problem_statements.json", statements);
     return true;
   }
 
+  // ===================== EVALUATION CRITERIA =====================
+
   public async getEvaluationCriteria(): Promise<EvaluationCriterion[]> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM evaluation_criteria ORDER BY sort_order ASC`);
         if (res.rows && res.rows.length > 0) {
@@ -799,19 +1120,15 @@ class DatabaseManager {
             description: r.description
           }));
         }
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        const doc = await db.collection("app_metadata").findOne({ id: "evaluation_criteria" });
-        if (doc && Array.isArray(doc.data) && doc.data.length > 0) return doc.data;
-      } catch (e) {}
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getEvaluationCriteria:", err);
+      }
     }
     return this.readLocalFile<EvaluationCriterion[]>("evaluation_criteria.json", defaultCriteria);
   }
 
   public async saveEvaluationCriteria(criteria: EvaluationCriterion[]): Promise<boolean> {
-    if (this.currentDbType === "sql" && this.pgPool) {
+    if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM evaluation_criteria`);
         for (let i = 0; i < criteria.length; i++) {
@@ -821,22 +1138,311 @@ class DatabaseManager {
             VALUES ($1, $2, $3, $4, $5)
           `, [c.id, c.name, c.maxScore || 10, c.description || "", i]);
         }
-      } catch (e) {}
-    } else if (this.currentDbType === "mongodb" && this.mongoClient) {
-      try {
-        const db = this.mongoClient.db();
-        await db.collection("app_metadata").updateOne(
-          { id: "evaluation_criteria" },
-          { $set: { id: "evaluation_criteria", data: criteria, updatedAt: new Date().toISOString() } },
-          { upsert: true }
-        );
-      } catch (e) {}
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveEvaluationCriteria:", err);
+      }
     }
     this.writeLocalFile("evaluation_criteria.json", criteria);
     return true;
   }
 
-  // ===================== HELPER MAPPER & FILE PERSISTENCE =====================
+  // ===================== SETTINGS & METADATA =====================
+
+  public async getSettings(): Promise<FeeConfig> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'main' LIMIT 1`);
+        if (res.rows.length > 0 && res.rows[0].settings_json) {
+          return JSON.parse(res.rows[0].settings_json) as FeeConfig;
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getSettings:", err);
+      }
+    }
+    return this.readLocalFile<FeeConfig>("settings.json", {
+      feeEnabled: false,
+      feeAmount: 499,
+      razorpayKeyId: "",
+      razorpayKeySecret: "",
+      jwtEnabled: false
+    });
+  }
+
+  public async saveSettings(settings: FeeConfig): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO app_settings (id, settings_json, updated_at)
+          VALUES ('main', $1, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            settings_json = EXCLUDED.settings_json,
+            updated_at = NOW();
+        `, [JSON.stringify(settings)]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveSettings:", err);
+      }
+    }
+    this.writeLocalFile("settings.json", settings);
+    return true;
+  }
+
+  // ===================== HOMEPAGE CONTENT =====================
+
+  public async getHomepageContent(): Promise<HomepageContent> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT content_json FROM homepage_content WHERE id = 'main' LIMIT 1`);
+        if (res.rows.length > 0 && res.rows[0].content_json) {
+          return JSON.parse(res.rows[0].content_json) as HomepageContent;
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getHomepageContent:", err);
+      }
+    }
+    return this.readLocalFile<HomepageContent>("homepage_content.json", defaultHomepageContent);
+  }
+
+  public async saveHomepageContent(content: HomepageContent): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO homepage_content (id, content_json, updated_at)
+          VALUES ('main', $1, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            content_json = EXCLUDED.content_json,
+            updated_at = NOW();
+        `, [JSON.stringify(content)]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveHomepageContent:", err);
+      }
+    }
+    this.writeLocalFile("homepage_content.json", content);
+    return true;
+  }
+
+  // ===================== CUSTOM PAGES =====================
+
+  public async getCustomPages(): Promise<CustomPage[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT * FROM custom_pages ORDER BY created_at ASC`);
+        if (res.rows && res.rows.length > 0) {
+          return res.rows.map(r => ({
+            id: r.id,
+            slug: r.slug,
+            title: r.title,
+            content: r.content,
+            published: r.published !== false,
+            createdAt: r.created_at
+          }));
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getCustomPages:", err);
+      }
+    }
+    return this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
+  }
+
+  public async saveCustomPages(pages: CustomPage[]): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM custom_pages`);
+        for (const p of pages) {
+          await this.pgPool.query(`
+            INSERT INTO custom_pages (id, slug, title, content, published, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+          `, [p.id, p.slug, p.title, p.content, p.published ?? true, p.createdAt || new Date().toISOString()]);
+        }
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveCustomPages:", err);
+      }
+    }
+    this.writeLocalFile("custom_pages.json", pages);
+    return true;
+  }
+
+  public async saveCustomPage(page: CustomPage): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO custom_pages (id, slug, title, content, published, created_at)
+          VALUES ($1, $2, $3, $4, $5, $6)
+          ON CONFLICT (id) DO UPDATE SET
+            slug = EXCLUDED.slug,
+            title = EXCLUDED.title,
+            content = EXCLUDED.content,
+            published = EXCLUDED.published;
+        `, [page.id, page.slug, page.title, page.content, page.published ?? true, page.createdAt || new Date().toISOString()]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveCustomPage:", err);
+      }
+    }
+    const local = this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
+    const idx = local.findIndex(p => p.id === page.id);
+    if (idx >= 0) local[idx] = page;
+    else local.push(page);
+    this.writeLocalFile("custom_pages.json", local);
+    return true;
+  }
+
+  public async deleteCustomPage(id: string): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM custom_pages WHERE id = $1 OR slug = $1`, [id]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Delete Error] deleteCustomPage:", err);
+      }
+    }
+    const local = this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
+    const filtered = local.filter(p => p.id !== id && p.slug !== id);
+    this.writeLocalFile("custom_pages.json", filtered);
+    return true;
+  }
+
+  // ===================== MENU ITEMS =====================
+
+  public async getMenuItems(): Promise<MenuItem[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT * FROM menu_items ORDER BY sort_order ASC`);
+        if (res.rows && res.rows.length > 0) {
+          return res.rows.map(r => ({
+            id: r.id,
+            label: r.label,
+            type: r.type as any,
+            target: r.target,
+            order: r.sort_order
+          }));
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getMenuItems:", err);
+      }
+    }
+    return this.readLocalFile<MenuItem[]>("menu_items.json", defaultMenuItems);
+  }
+
+  public async saveMenuItems(items: MenuItem[]): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM menu_items`);
+        for (let i = 0; i < items.length; i++) {
+          const m = items[i];
+          await this.pgPool.query(`
+            INSERT INTO menu_items (id, label, type, target, sort_order)
+            VALUES ($1, $2, $3, $4, $5)
+          `, [m.id, m.label, m.type, m.target, i]);
+        }
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveMenuItems:", err);
+      }
+    }
+    this.writeLocalFile("menu_items.json", items);
+    return true;
+  }
+
+  // ===================== LIVE UPDATES =====================
+
+  public async getLiveUpdates(): Promise<LiveUpdate[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT * FROM live_updates ORDER BY created_at DESC`);
+        if (res.rows && res.rows.length > 0) {
+          return res.rows.map(r => ({
+            id: r.id,
+            text: r.text,
+            isImportant: !!r.is_important,
+            createdAt: r.created_at
+          }));
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getLiveUpdates:", err);
+      }
+    }
+    return this.readLocalFile<LiveUpdate[]>("updates.json", [
+      { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
+      { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
+      { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
+    ]);
+  }
+
+  public async saveLiveUpdates(updates: LiveUpdate[]): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM live_updates`);
+        for (const u of updates) {
+          await this.pgPool.query(`
+            INSERT INTO live_updates (id, text, is_important, created_at)
+            VALUES ($1, $2, $3, $4)
+          `, [u.id, u.text, !!u.isImportant, u.createdAt || new Date().toISOString()]);
+        }
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveLiveUpdates:", err);
+      }
+    }
+    this.writeLocalFile("updates.json", updates);
+    return true;
+  }
+
+  // ===================== BROADCAST LOGS =====================
+
+  public async getBroadcastLogs(): Promise<BroadcastLog[]> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`SELECT * FROM broadcast_logs ORDER BY timestamp DESC LIMIT 500`);
+        return res.rows.map(r => ({
+          id: r.id,
+          channel: r.channel as any,
+          recipient: r.recipient,
+          teamName: r.team_name,
+          subject: r.subject,
+          preview: r.preview,
+          status: r.status as any,
+          timestamp: r.timestamp,
+          error: r.error
+        }));
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getBroadcastLogs:", err);
+      }
+    }
+    return this.readLocalFile<BroadcastLog[]>("broadcast_logs.json", []);
+  }
+
+  public async saveBroadcastLog(log: BroadcastLog): Promise<boolean> {
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO broadcast_logs (id, channel, recipient, team_name, subject, preview, status, timestamp, error)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          ON CONFLICT (id) DO NOTHING;
+        `, [log.id, log.channel, log.recipient, log.teamName || null, log.subject || null, log.preview, log.status, log.timestamp, log.error || null]);
+        return true;
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveBroadcastLog:", err);
+      }
+    }
+    const local = this.readLocalFile<BroadcastLog[]>("broadcast_logs.json", []);
+    local.unshift(log);
+    if (local.length > 500) local.splice(500);
+    this.writeLocalFile("broadcast_logs.json", local);
+    return true;
+  }
+
+  public async saveBroadcastLogs(logs: BroadcastLog[]): Promise<boolean> {
+    for (const l of logs) {
+      await this.saveBroadcastLog(l);
+    }
+    return true;
+  }
+
+  // ===================== HELPERS =====================
 
   private mapSqlRowToRegistration(row: any): Registration {
     let evaluatorScores: any = undefined;

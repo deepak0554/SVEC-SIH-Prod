@@ -1,0 +1,12 @@
+[
+  {
+    "username": "Deepak0554",
+    "passwordHash": "9c7de601e801b9e0cc6e4aa5ff65f965:dfc168be68ac18b50fecee883e8c77895501284a84d17b5f21a2d13b7179b0e7f62efa10d4a039fda0dd6e3f0ebad219fd3a17364d7f865f8810bf43bcee7090",
+    "role": "SPOC"
+  },
+  {
+    "username": "studentspoc",
+    "passwordHash": "5bae4df1554eb8087b884f50132f05dfa357e6a1e1927ff5b1a0a76d258fd3b0",
+    "role": "Student SPOC"
+  }
+]

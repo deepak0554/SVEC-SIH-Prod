@@ -1,0 +1,11 @@
+[
+  {
+    "id": "1788101982092",
+    "email": "test_student_2026@svec.ac.in",
+    "passwordHash": "1ec81c3872300ab9304a17d85876b3ba:6af27a43a7edf5393611df9227c6aadd27e1961fa6d7565471dbf47f6a43b04c2798090da0b31b18d7e193331bb6597fae0246964c3e7d73aeeb781e83074980",
+    "createdAt": "2026-08-30T14:59:42.092Z",
+    "gender": "Male",
+    "department": "CSE",
+    "mobile": "9876543210"
+  }
+]
