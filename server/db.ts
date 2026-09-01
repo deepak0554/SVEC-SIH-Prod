@@ -591,6 +591,20 @@ class DatabaseManager {
           timestamp VARCHAR(100),
           error TEXT
         );`
+      },
+      {
+        label: "app_files",
+        query: `CREATE TABLE IF NOT EXISTS app_files (
+          id VARCHAR(255) PRIMARY KEY,
+          category VARCHAR(50) NOT NULL,
+          filename VARCHAR(255) NOT NULL,
+          original_name VARCHAR(255),
+          mime_type VARCHAR(100) NOT NULL,
+          size INT NOT NULL,
+          data_base64 TEXT NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );`
       }
     ];
 
@@ -630,7 +644,9 @@ class DatabaseManager {
       `CREATE INDEX IF NOT EXISTS idx_reg_assigned_evaluator ON registrations(assigned_evaluator);`,
       `CREATE INDEX IF NOT EXISTS idx_eval_reg_id ON team_evaluations(registration_id);`,
       `CREATE INDEX IF NOT EXISTS idx_eval_evaluator ON team_evaluations(evaluator_username);`,
-      `CREATE INDEX IF NOT EXISTS idx_payments_reg_id ON payment_transactions(registration_id);`
+      `CREATE INDEX IF NOT EXISTS idx_payments_reg_id ON payment_transactions(registration_id);`,
+      `CREATE INDEX IF NOT EXISTS idx_app_files_cat ON app_files(category);`,
+      `CREATE INDEX IF NOT EXISTS idx_app_files_name ON app_files(filename);`
     ];
 
     for (const idx of indexes) {
@@ -1945,6 +1961,262 @@ class DatabaseManager {
       await this.saveBroadcastLog(l);
     }
     return true;
+  }
+
+  // ===================== PERSISTENT APP FILES & MEDIA =====================
+
+  public async saveFileRecord(file: {
+    category: string;
+    filename: string;
+    originalName?: string;
+    mimeType: string;
+    size: number;
+    dataBase64?: string;
+    buffer?: Buffer;
+  }): Promise<boolean> {
+    const id = `${file.category}/${file.filename}`;
+    const base64 = file.dataBase64 || (file.buffer ? `data:${file.mimeType};base64,${file.buffer.toString("base64")}` : "");
+    if (!base64) return false;
+
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`
+          INSERT INTO app_files (id, category, filename, original_name, mime_type, size, data_base64, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+          ON CONFLICT (id) DO UPDATE SET
+            original_name = EXCLUDED.original_name,
+            mime_type = EXCLUDED.mime_type,
+            size = EXCLUDED.size,
+            data_base64 = EXCLUDED.data_base64,
+            updated_at = NOW();
+        `, [id, file.category, file.filename, file.originalName || file.filename, file.mimeType, file.size, base64]);
+      } catch (err) {
+        console.error("[PostgreSQL Save Error] saveFileRecord:", err);
+      }
+    }
+
+    // Local JSON cache fallback (stores index/content so it survives local reload)
+    const localStore = this.readLocalFile<Record<string, any>>("files_store.json", {});
+    localStore[id] = {
+      id,
+      category: file.category,
+      filename: file.filename,
+      originalName: file.originalName || file.filename,
+      mimeType: file.mimeType,
+      size: file.size,
+      dataBase64: base64,
+      updatedAt: new Date().toISOString()
+    };
+    this.writeLocalFile("files_store.json", localStore);
+    return true;
+  }
+
+  public async getFileRecord(category: string, filename: string): Promise<{
+    id: string;
+    category: string;
+    filename: string;
+    originalName?: string;
+    mimeType: string;
+    size: number;
+    dataBase64: string;
+  } | null> {
+    const id = `${category}/${filename}`;
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        const res = await this.pgPool.query(`
+          SELECT * FROM app_files WHERE (id = $1) OR (category = $2 AND filename = $3) LIMIT 1
+        `, [id, category, filename]);
+        if (res.rows && res.rows.length > 0) {
+          const r = res.rows[0];
+          return {
+            id: r.id,
+            category: r.category,
+            filename: r.filename,
+            originalName: r.original_name,
+            mimeType: r.mime_type,
+            size: Number(r.size),
+            dataBase64: r.data_base64
+          };
+        }
+      } catch (err) {
+        console.error("[PostgreSQL Query Error] getFileRecord:", err);
+      }
+    }
+
+    const localStore = this.readLocalFile<Record<string, any>>("files_store.json", {});
+    const record = localStore[id];
+    if (record) {
+      return record;
+    }
+    // Search by filename in case id key format differs
+    for (const key in localStore) {
+      if (localStore[key]?.filename === filename && (!category || localStore[key]?.category === category)) {
+        return localStore[key];
+      }
+    }
+
+    return null;
+  }
+
+  public async deleteFileRecord(category: string, filename: string): Promise<boolean> {
+    const id = `${category}/${filename}`;
+    if (this.isPostgresActive && this.pgPool) {
+      try {
+        await this.pgPool.query(`DELETE FROM app_files WHERE id = $1 OR (category = $2 AND filename = $3)`, [id, category, filename]);
+      } catch (err) {
+        console.error("[PostgreSQL Delete Error] deleteFileRecord:", err);
+      }
+    }
+    const localStore = this.readLocalFile<Record<string, any>>("files_store.json", {});
+    delete localStore[id];
+    this.writeLocalFile("files_store.json", localStore);
+    return true;
+  }
+
+  public async syncAllFilesToDisk(): Promise<{ restoredCount: number }> {
+    let restoredCount = 0;
+    try {
+      const uploadsDir = path.join(DATA_DIR, "uploads");
+      const categoryDirMap: Record<string, string> = {
+        ppts: path.join(uploadsDir, "ppts"),
+        images: path.join(uploadsDir, "images"),
+        documents: path.join(uploadsDir, "documents"),
+        sample_ppts: path.join(uploadsDir, "sample_ppts"),
+        abstracts: path.join(uploadsDir, "documents"),
+        gallery: path.join(uploadsDir, "images"),
+        homepage: path.join(uploadsDir, "images"),
+        logos: path.join(uploadsDir, "images"),
+        certificates: path.join(uploadsDir, "images"),
+        media: path.join(uploadsDir, "documents")
+      };
+
+      // 1. Gather all file records from PostgreSQL
+      const filesToRestore: Array<{
+        category: string;
+        filename: string;
+        mimeType: string;
+        dataBase64: string;
+      }> = [];
+
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT category, filename, mime_type, data_base64 FROM app_files`);
+          if (res.rows && res.rows.length > 0) {
+            for (const r of res.rows) {
+              filesToRestore.push({
+                category: r.category,
+                filename: r.filename,
+                mimeType: r.mime_type,
+                dataBase64: r.data_base64
+              });
+            }
+          }
+        } catch (err) {
+          console.error("[Storage Hydration Error] Querying app_files:", err);
+        }
+      }
+
+      // Also incorporate from files_store.json
+      const localStore = this.readLocalFile<Record<string, any>>("files_store.json", {});
+      for (const key in localStore) {
+        const item = localStore[key];
+        if (item && item.filename && item.dataBase64) {
+          if (!filesToRestore.some(f => f.filename === item.filename && f.category === item.category)) {
+            filesToRestore.push(item);
+          }
+        }
+      }
+
+      // 2. Write missing files onto disk
+      for (const item of filesToRestore) {
+        try {
+          const dir = categoryDirMap[item.category] || path.join(uploadsDir, item.category);
+          if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+          }
+          const targetPath = path.join(dir, item.filename);
+          if (!fs.existsSync(targetPath)) {
+            const cleanBase64 = item.dataBase64.replace(/^data:[^;]+;base64,/, "");
+            const buffer = Buffer.from(cleanBase64, "base64");
+            if (buffer.length > 0) {
+              fs.writeFileSync(targetPath, buffer);
+              restoredCount++;
+            }
+          }
+        } catch (fileErr) {
+          console.error(`[Storage Hydration] Error restoring ${item.category}/${item.filename}:`, fileErr);
+        }
+      }
+
+      // 3. Hydrate from registrations pptBase64
+      const registrations = await this.getRegistrations();
+      for (const reg of registrations) {
+        if (reg.pptBase64) {
+          try {
+            let filename = reg.pptFileName;
+            if (reg.pptFileUrl) {
+              filename = path.basename(reg.pptFileUrl);
+            }
+            if (!filename) {
+              filename = `${reg.teamName || reg.id || "team"}_presentation.pptx`;
+            }
+            const pptsDir = categoryDirMap["ppts"];
+            if (!fs.existsSync(pptsDir)) fs.mkdirSync(pptsDir, { recursive: true });
+            const targetPath = path.join(pptsDir, filename);
+            if (!fs.existsSync(targetPath)) {
+              const cleanBase64 = reg.pptBase64.replace(/^data:[^;]+;base64,/, "");
+              const buffer = Buffer.from(cleanBase64, "base64");
+              if (buffer.length > 0) {
+                fs.writeFileSync(targetPath, buffer);
+                restoredCount++;
+                await this.saveFileRecord({
+                  category: "ppts",
+                  filename,
+                  originalName: reg.pptFileName || filename,
+                  mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                  size: buffer.length,
+                  buffer
+                });
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // 4. Hydrate from settings samplePptFileBase64
+      const settings = await this.getSettings();
+      if (settings.samplePptFileBase64) {
+        try {
+          const filename = settings.samplePptFileName || (settings.samplePptFileUrl ? path.basename(settings.samplePptFileUrl) : "sample_template.pptx");
+          const sampleDir = categoryDirMap["sample_ppts"];
+          if (!fs.existsSync(sampleDir)) fs.mkdirSync(sampleDir, { recursive: true });
+          const targetPath = path.join(sampleDir, filename);
+          if (!fs.existsSync(targetPath)) {
+            const cleanBase64 = settings.samplePptFileBase64.replace(/^data:[^;]+;base64,/, "");
+            const buffer = Buffer.from(cleanBase64, "base64");
+            if (buffer.length > 0) {
+              fs.writeFileSync(targetPath, buffer);
+              restoredCount++;
+              await this.saveFileRecord({
+                category: "sample_ppts",
+                filename,
+                originalName: settings.samplePptFileName || filename,
+                mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                size: buffer.length,
+                buffer
+              });
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (restoredCount > 0) {
+        console.log(`✅ [Storage Hydration] Successfully auto-restored ${restoredCount} uploaded files/images from persistent database storage to disk.`);
+      }
+    } catch (err) {
+      console.error("[Storage Hydration Global Error]:", err);
+    }
+    return { restoredCount };
   }
 
   // ===================== HELPERS =====================

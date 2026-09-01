@@ -1690,20 +1690,22 @@ app.post(
     // A. Multipart file stream provided in req.file
     if (req.file) {
       const rawCategory = (req.body.category as UploadCategory) || "documents";
-      const validCategory: UploadCategory = (rawCategory === "ppts" || rawCategory === "images" || rawCategory === "sample_ppts" || rawCategory === "documents")
-        ? rawCategory
-        : "documents";
+      const validCategories: UploadCategory[] = [
+        "ppts", "images", "documents", "sample_ppts", "abstracts",
+        "gallery", "homepage", "logos", "certificates", "media"
+      ];
+      const validCategory: UploadCategory = validCategories.includes(rawCategory) ? rawCategory : "documents";
 
       // Role authorization: Only Admins/SPOC can upload site branding, certificate images, and official templates
-      if (validCategory === "sample_ppts" || validCategory === "images") {
+      if (["sample_ppts", "images", "gallery", "homepage", "logos", "certificates"].includes(validCategory)) {
         const isAdmin = (req as any).isAdmin || (req as any).adminRole;
         if (!isAdmin) {
-          return res.status(403).json({ error: "Access Denied: Only administrators can upload images and official template files." });
+          return res.status(403).json({ error: "Access Denied: Only administrators can upload images, gallery items and official template files." });
         }
       }
 
-      // If category is ppts or documents, must be an authenticated student or admin
-      if (validCategory === "ppts" || validCategory === "documents") {
+      // If category is ppts or documents or abstracts, must be an authenticated student or admin
+      if (["ppts", "documents", "abstracts", "media"].includes(validCategory)) {
         const isAuth = (req as any).studentUser || (req as any).adminUser || (req as any).isAdmin;
         if (!isAuth) {
           return res.status(401).json({ error: "Authentication required to upload proposals or project documents." });
@@ -1727,11 +1729,14 @@ app.post(
     // B. Base64 JSON fallback with strict magic-byte validation
     if (req.body && req.body.data) {
       const { data, category, filename } = req.body;
-      const validCategory: UploadCategory = (category === "ppts" || category === "images" || category === "sample_ppts" || category === "documents")
-        ? category
-        : "documents";
+      const validCategories: UploadCategory[] = [
+        "ppts", "images", "documents", "sample_ppts", "abstracts",
+        "gallery", "homepage", "logos", "certificates", "media"
+      ];
+      const rawCat = (category as UploadCategory) || "documents";
+      const validCategory: UploadCategory = validCategories.includes(rawCat) ? rawCat : "documents";
 
-      if (validCategory === "sample_ppts" || validCategory === "images") {
+      if (["sample_ppts", "images", "gallery", "homepage", "logos", "certificates"].includes(validCategory)) {
         const isAdmin = (req as any).isAdmin || (req as any).adminRole;
         if (!isAdmin) {
           return res.status(403).json({ error: "Access Denied: Only administrators can upload images and official template files." });
@@ -1853,50 +1858,145 @@ app.post(
   }
 );
 
-// 4. Secure File Retrieval & Serving (Path Traversal Protected & MIME Verified)
-app.get("/api/uploads/:category/:filename", extractUserOptional, (req, res) => {
+// 4. Secure File Retrieval & Serving (Path Traversal Protected, MIME Verified & Auto-Hydrated from DB on Redeploy)
+app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res) => {
   const { category, filename } = req.params;
-  const validCategories: UploadCategory[] = ["ppts", "images", "documents", "sample_ppts"];
+  const validCategories: UploadCategory[] = [
+    "ppts",
+    "images",
+    "documents",
+    "sample_ppts",
+    "abstracts",
+    "gallery",
+    "homepage",
+    "logos",
+    "certificates",
+    "media"
+  ];
 
   if (!validCategories.includes(category as UploadCategory)) {
     return res.status(400).json({ error: "Invalid upload category." });
   }
 
   const cleanFilename = path.basename(filename);
-  const targetDir = CATEGORY_DIR_MAP[category as UploadCategory];
+  const targetDir = CATEGORY_DIR_MAP[category as UploadCategory] || path.join(UPLOADS_DIR, category);
 
   if (!isPathSafe(targetDir, cleanFilename)) {
     return res.status(400).json({ error: "Path traversal attempt detected." });
   }
 
   const filePath = path.join(targetDir, cleanFilename);
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "File not found." });
-  }
 
-  // Enforce nosniff security header
-  res.setHeader("X-Content-Type-Options", "nosniff");
-
+  // Content type mapping helper
   const ext = path.extname(cleanFilename).toLowerCase();
+  let contentType = "application/octet-stream";
+  if (ext === ".png") contentType = "image/png";
+  else if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
+  else if (ext === ".webp") contentType = "image/webp";
+  else if (ext === ".gif") contentType = "image/gif";
+  else if (ext === ".pdf") contentType = "application/pdf";
+  else if (ext === ".pptx") contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  else if (ext === ".ppt") contentType = "application/vnd.ms-powerpoint";
+  else if (ext === ".docx") contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  else if (ext === ".doc") contentType = "application/msword";
 
-  // Content type mapping
-  if (ext === ".png") res.setHeader("Content-Type", "image/png");
-  else if (ext === ".jpg" || ext === ".jpeg") res.setHeader("Content-Type", "image/jpeg");
-  else if (ext === ".webp") res.setHeader("Content-Type", "image/webp");
-  else if (ext === ".gif") res.setHeader("Content-Type", "image/gif");
-  else if (ext === ".pdf") res.setHeader("Content-Type", "application/pdf");
-  else if (ext === ".pptx") res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
-  else if (ext === ".ppt") res.setHeader("Content-Type", "application/vnd.ms-powerpoint");
-  else if (ext === ".docx") res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
-  else if (ext === ".doc") res.setHeader("Content-Type", "application/msword");
+  const isImage = ["images", "gallery", "homepage", "logos", "certificates"].includes(category) || [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext);
 
-  if (category === "images") {
-    res.setHeader("Content-Disposition", "inline");
-  } else {
-    res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
+  // 1. If file is available on local disk, serve immediately
+  if (fs.existsSync(filePath)) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    if (isImage) {
+      res.setHeader("Content-Disposition", "inline");
+    } else {
+      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
+    }
+    return res.sendFile(filePath);
   }
 
-  return res.sendFile(filePath);
+  // 2. On-demand restoration from persistent Database / Cloud Storage (Survives Container Redeploys)
+  try {
+    const fileRecord = await db.getFileRecord(category, cleanFilename);
+    if (fileRecord && fileRecord.dataBase64) {
+      const cleanBase64 = fileRecord.dataBase64.replace(/^data:[^;]+;base64,/, "");
+      const buffer = Buffer.from(cleanBase64, "base64");
+      if (buffer.length > 0) {
+        // Write back to ephemeral container disk for fast subsequent requests
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+        fs.writeFileSync(filePath, buffer);
+
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Type", fileRecord.mimeType || contentType);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        if (isImage) {
+          res.setHeader("Content-Disposition", "inline");
+        } else {
+          res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(fileRecord.originalName || cleanFilename)}"`);
+        }
+        return res.send(buffer);
+      }
+    }
+
+    // 3. Fallback check for PPT presentations in registrations
+    if (category === "ppts") {
+      const registrations = await db.getRegistrations();
+      const matchingReg = registrations.find(r => 
+        (r.pptFileUrl && r.pptFileUrl.includes(cleanFilename)) || 
+        (r.pptFileName && r.pptFileName === cleanFilename)
+      );
+      if (matchingReg && matchingReg.pptBase64) {
+        const cleanBase64 = matchingReg.pptBase64.replace(/^data:[^;]+;base64,/, "");
+        const buffer = Buffer.from(cleanBase64, "base64");
+        if (buffer.length > 0) {
+          if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+          fs.writeFileSync(filePath, buffer);
+          // Persist to app_files
+          await db.saveFileRecord({
+            category: "ppts",
+            filename: cleanFilename,
+            originalName: matchingReg.pptFileName || cleanFilename,
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            size: buffer.length,
+            buffer
+          });
+          res.setHeader("X-Content-Type-Options", "nosniff");
+          res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+          res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(matchingReg.pptFileName || cleanFilename)}"`);
+          return res.send(buffer);
+        }
+      }
+    }
+
+    // 4. Fallback check for sample PPT in settings
+    if (category === "sample_ppts") {
+      const settings = await db.getSettings();
+      if (settings.samplePptFileBase64) {
+        const cleanBase64 = settings.samplePptFileBase64.replace(/^data:[^;]+;base64,/, "");
+        const buffer = Buffer.from(cleanBase64, "base64");
+        if (buffer.length > 0) {
+          if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+          fs.writeFileSync(filePath, buffer);
+          await db.saveFileRecord({
+            category: "sample_ppts",
+            filename: cleanFilename,
+            originalName: settings.samplePptFileName || cleanFilename,
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            size: buffer.length,
+            buffer
+          });
+          res.setHeader("X-Content-Type-Options", "nosniff");
+          res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+          res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(settings.samplePptFileName || cleanFilename)}"`);
+          return res.send(buffer);
+        }
+      }
+    }
+  } catch (lookupErr) {
+    console.error(`[Upload Lookup Error] ${category}/${cleanFilename}:`, lookupErr);
+  }
+
+  return res.status(404).json({ error: "File not found." });
 });
 
 // Alias for /uploads/:category/:filename
@@ -1904,10 +2004,10 @@ app.get("/uploads/:category/:filename", (req, res) => {
   res.redirect(`/api/uploads/${encodeURIComponent(req.params.category)}/${encodeURIComponent(req.params.filename)}`);
 });
 
-// 5. Stream or download team PPT presentation directly from server disk (Authenticated)
-app.get("/api/registrations/:id/ppt", validateParams(singleIdParamSchema), extractUserOptional, (req, res) => {
+// 5. Stream or download team PPT presentation directly from server disk / database (Authenticated)
+app.get("/api/registrations/:id/ppt", validateParams(singleIdParamSchema), extractUserOptional, async (req, res) => {
   const { id } = req.params;
-  const registrations = readRegistrations();
+  const registrations = await db.getRegistrations();
   const reg = registrations.find(r => r.id === id || r.registrationId === id);
 
   if (!reg) {
@@ -1934,6 +2034,22 @@ app.get("/api/registrations/:id/ppt", validateParams(singleIdParamSchema), extra
       else res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
       return res.sendFile(filePath);
     }
+
+    // Attempt restoration from db app_files
+    const fileRecord = await db.getFileRecord(category, filename);
+    if (fileRecord && fileRecord.dataBase64) {
+      const cleanBase64 = fileRecord.dataBase64.replace(/^data:[^;]+;base64,/, "");
+      const buffer = Buffer.from(cleanBase64, "base64");
+      if (buffer.length > 0) {
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+        fs.writeFileSync(filePath, buffer);
+        const downloadName = reg.pptFileName || fileRecord.originalName || filename;
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.setHeader("Content-Type", fileRecord.mimeType || "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
+        return res.send(buffer);
+      }
+    }
   }
 
   // 2. Fallback to pptBase64
@@ -1944,6 +2060,13 @@ app.get("/api/registrations/:id/ppt", validateParams(singleIdParamSchema), extra
       const base64Data = match ? match[2] : reg.pptBase64;
       const buffer = Buffer.from(base64Data, "base64");
       const downloadName = reg.pptFileName || `${reg.teamName || "team"}_presentation.pptx`;
+
+      // Restore to disk for future requests
+      const safeFilename = `${reg.registrationId || reg.id}_ppt.pptx`;
+      const targetPath = path.join(UPLOADS_PPTS_DIR, safeFilename);
+      if (!fs.existsSync(targetPath)) {
+        fs.writeFileSync(targetPath, buffer);
+      }
 
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Type", mimeType);
@@ -4456,6 +4579,8 @@ async function startServer() {
   try {
     const settings = readSettings();
     await db.init(settings);
+    // Auto-restore and hydrate all persistent images, documents, and PPT presentations from database to disk
+    await db.syncAllFilesToDisk();
   } catch (dbErr) {
     console.error("[Database Startup Initialization Error]:", dbErr);
   }

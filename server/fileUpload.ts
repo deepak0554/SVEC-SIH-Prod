@@ -4,6 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { Request, Response, NextFunction } from "express";
 import { objectStorage } from "./objectStorage";
+import { db } from "./db";
 
 // Storage root directory configuration
 const IS_VERCEL = !!process.env.VERCEL;
@@ -22,14 +23,29 @@ export const UPLOADS_SAMPLE_PPTS_DIR = path.join(UPLOADS_DIR, "sample_ppts");
 });
 
 // Category to directory mapping
-export type UploadCategory = "ppts" | "images" | "documents" | "sample_ppts" | "abstracts";
+export type UploadCategory =
+  | "ppts"
+  | "images"
+  | "documents"
+  | "sample_ppts"
+  | "abstracts"
+  | "gallery"
+  | "homepage"
+  | "logos"
+  | "certificates"
+  | "media";
 
 export const CATEGORY_DIR_MAP: Record<UploadCategory, string> = {
   ppts: UPLOADS_PPTS_DIR,
   images: UPLOADS_IMAGES_DIR,
   documents: UPLOADS_DOCS_DIR,
   sample_ppts: UPLOADS_SAMPLE_PPTS_DIR,
-  abstracts: UPLOADS_DOCS_DIR
+  abstracts: UPLOADS_DOCS_DIR,
+  gallery: UPLOADS_IMAGES_DIR,
+  homepage: UPLOADS_IMAGES_DIR,
+  logos: UPLOADS_IMAGES_DIR,
+  certificates: UPLOADS_IMAGES_DIR,
+  media: UPLOADS_DOCS_DIR
 };
 
 // ==========================================
@@ -328,9 +344,9 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
   let allowedTypes: AllowedFileType[] = [];
   if (category === "ppts" || category === "sample_ppts") {
     allowedTypes = [...PRESENTATION_TYPES, ...DOCUMENT_TYPES.filter(d => d.extension === ".pdf")];
-  } else if (category === "images") {
+  } else if (category === "images" || category === "gallery" || category === "homepage" || category === "logos" || category === "certificates") {
     allowedTypes = IMAGE_TYPES;
-  } else if (category === "documents") {
+  } else if (category === "documents" || category === "abstracts" || category === "media") {
     allowedTypes = [...DOCUMENT_TYPES, ...PRESENTATION_TYPES];
   } else {
     return { success: false, error: "Invalid upload category." };
@@ -371,7 +387,7 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
   }
 
   // 5. Generate secure UUID filename & ensure target dir
-  const targetDir = CATEGORY_DIR_MAP[category];
+  const targetDir = CATEGORY_DIR_MAP[category] || path.join(UPLOADS_DIR, category);
   if (!fs.existsSync(targetDir)) {
     fs.mkdirSync(targetDir, { recursive: true });
   }
@@ -383,16 +399,31 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
   }
 
   const targetPath = path.join(targetDir, secureFilename);
+  const mimeType = clientMimeType || matchedType.mimeTypes[0];
+  const sanitizedOriginal = sanitizeClientFilename(clientOriginalName) + matchedType.extension;
 
   try {
     fs.writeFileSync(targetPath, buffer);
+
+    // Persist to relational database and backup store so files survive container redeployments
+    db.saveFileRecord({
+      category,
+      filename: secureFilename,
+      originalName: sanitizedOriginal,
+      mimeType,
+      size: buffer.length,
+      buffer
+    }).catch(err => {
+      console.error(`[File DB Persistence Error] ${category}/${secureFilename}:`, err);
+    });
+
     // If Cloud Object Storage is configured, sync to S3/R2/Cloud bucket
     if (objectStorage.isCloud()) {
       objectStorage.upload({
         category,
         filename: secureFilename,
         buffer,
-        contentType: clientMimeType || matchedType.mimeTypes[0]
+        contentType: mimeType
       }).catch(err => {
         console.error(`[Object Storage Cloud Sync Error] ${category}/${secureFilename}:`, err);
       });
@@ -402,7 +433,6 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
     return { success: false, error: "Internal error writing file to secure storage." };
   }
 
-  const sanitizedOriginal = sanitizeClientFilename(clientOriginalName) + matchedType.extension;
   const relativeUrl = `/api/uploads/${category}/${encodeURIComponent(secureFilename)}`;
 
   return {
