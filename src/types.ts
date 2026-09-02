@@ -45,10 +45,18 @@ export interface Registration {
   problemStatementId: string;
   submittedAt: string;
   studentEmail?: string;
-  paymentStatus?: "free" | "paid" | "pending";
+  paymentStatus?: "free" | "paid" | "pending" | "pending_verification" | "rejected";
+  paymentMode?: "gateway" | "manual_upi" | "free";
   paymentId?: string;
   orderId?: string;
   amountPaid?: number;
+  paymentProofUrl?: string;
+  paymentProofFileName?: string;
+  paymentProofBase64?: string;
+  upiTransactionId?: string;
+  paymentRemarks?: string;
+  paymentVerifiedBy?: string;
+  paymentVerifiedAt?: string;
   abstract?: string;
   implementationSteps?: string;
   pptFileName?: string;
@@ -83,14 +91,24 @@ export interface Student {
   email: string;
   passwordHash?: string;
   createdAt: string;
+  name?: string;
   gender?: string;
   department?: string;
   mobile?: string;
+  academicYear?: string;
+  rollNumber?: string;
 }
 
 export interface FeeConfig {
   feeEnabled: boolean;
   feeAmount: number;
+  paymentMode?: "gateway" | "manual_upi" | "both" | "free";
+  manualPaymentEnabled?: boolean;
+  upiQrCodeUrl?: string;
+  upiId?: string;
+  upiPayeeName?: string;
+  upiInstructions?: string;
+  requirePaymentScreenshot?: boolean;
   razorpayKeyId: string;
   razorpayKeySecret: string;
   jwtEnabled?: boolean;

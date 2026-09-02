@@ -33,7 +33,9 @@ export type UploadCategory =
   | "homepage"
   | "logos"
   | "certificates"
-  | "media";
+  | "media"
+  | "payment_proofs"
+  | "upi_qr";
 
 export const CATEGORY_DIR_MAP: Record<UploadCategory, string> = {
   ppts: UPLOADS_PPTS_DIR,
@@ -45,7 +47,9 @@ export const CATEGORY_DIR_MAP: Record<UploadCategory, string> = {
   homepage: UPLOADS_IMAGES_DIR,
   logos: UPLOADS_IMAGES_DIR,
   certificates: UPLOADS_IMAGES_DIR,
-  media: UPLOADS_DOCS_DIR
+  media: UPLOADS_DOCS_DIR,
+  payment_proofs: UPLOADS_IMAGES_DIR,
+  upi_qr: UPLOADS_IMAGES_DIR
 };
 
 // ==========================================
@@ -344,8 +348,10 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
   let allowedTypes: AllowedFileType[] = [];
   if (category === "ppts" || category === "sample_ppts") {
     allowedTypes = [...PRESENTATION_TYPES, ...DOCUMENT_TYPES.filter(d => d.extension === ".pdf")];
-  } else if (category === "images" || category === "gallery" || category === "homepage" || category === "logos" || category === "certificates") {
+  } else if (category === "images" || category === "gallery" || category === "homepage" || category === "logos" || category === "certificates" || category === "upi_qr") {
     allowedTypes = IMAGE_TYPES;
+  } else if (category === "payment_proofs") {
+    allowedTypes = [...IMAGE_TYPES, ...DOCUMENT_TYPES.filter(d => d.extension === ".pdf")];
   } else if (category === "documents" || category === "abstracts" || category === "media") {
     allowedTypes = [...DOCUMENT_TYPES, ...PRESENTATION_TYPES];
   } else {

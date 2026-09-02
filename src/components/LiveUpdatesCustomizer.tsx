@@ -4,6 +4,7 @@ import {
   Plus, Trash2, Bell, AlertCircle, CheckCircle, Save, Megaphone, Clock, Info
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { getErrorMessage } from "../utils/error";
 
 interface LiveUpdatesCustomizerProps {
   passcode: string;
@@ -64,7 +65,7 @@ export default function LiveUpdatesCustomizer({ passcode }: LiveUpdatesCustomize
         setTimeout(() => setSuccess(""), 4000);
       } else {
         const errData = await res.json();
-        setError(errData.error || "Failed to save live updates.");
+        setError(getErrorMessage(errData, "Failed to save live updates."));
       }
     } catch (err) {
       console.error(err);

@@ -53,7 +53,12 @@ import {
   XCircle,
   BadgeCheck,
   HardDrive,
-  RefreshCw
+  RefreshCw,
+  RotateCcw,
+  QrCode,
+  Copy,
+  Eye,
+  ImageIcon
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
@@ -416,7 +421,7 @@ export default function AdminPanel({
         }
         fetchBroadcastLogs();
       } else {
-        setSmsError(data.error || "Failed to dispatch SMS broadcast.");
+        setSmsError(getErrorMessage(data, "Failed to dispatch SMS broadcast."));
       }
     } catch (err) {
       setSmsError("Network error. Could not dispatch SMS broadcast.");
@@ -460,7 +465,7 @@ export default function AdminPanel({
         setWhatsappVar3("");
         fetchBroadcastLogs();
       } else {
-        setWhatsappError(data.error || "Failed to dispatch WhatsApp broadcast.");
+        setWhatsappError(getErrorMessage(data, "Failed to dispatch WhatsApp broadcast."));
       }
     } catch (err) {
       setWhatsappError("Network error. Could not dispatch WhatsApp broadcast.");
@@ -560,7 +565,7 @@ export default function AdminPanel({
         setCustomAdminDept("");
         fetchAdminsList();
       } else {
-        setAdminAddError(data.error || "Failed to create admin.");
+        setAdminAddError(getErrorMessage(data, "Failed to create admin."));
       }
     } catch (err) {
       setAdminAddError("Network error. Failed to connect to server.");
@@ -584,7 +589,7 @@ export default function AdminPanel({
           if (res.ok && data.success) {
             fetchAdminsList();
           } else {
-            alert(data.error || "Failed to delete admin.");
+            alert(getErrorMessage(data, "Failed to delete admin."));
           }
         } catch (err) {
           alert("Network error. Failed to delete admin.");
@@ -639,7 +644,7 @@ export default function AdminPanel({
           setBroadcastMessage("");
         }
       } else {
-        setBroadcastError(data.error || "Failed to dispatch broadcast email.");
+        setBroadcastError(getErrorMessage(data, "Failed to dispatch broadcast email."));
       }
     } catch (err) {
       setBroadcastError("Network error. Could not reach server to dispatch broadcast.");
@@ -653,6 +658,13 @@ export default function AdminPanel({
     teamMembersCount: 5,
     feeEnabled: false,
     feeAmount: 0,
+    paymentMode: "manual_upi" as "manual_upi" | "gateway" | "both" | "free",
+    manualPaymentEnabled: true,
+    upiQrCodeUrl: "",
+    upiId: "svec@upi",
+    upiPayeeName: "Sri Vasavi Engineering College",
+    upiInstructions: "Scan the UPI QR code using any UPI App (Google Pay, PhonePe, Paytm, BHIM). Complete the payment, enter your 12-digit UTR/Transaction ID and attach the payment screenshot below.",
+    requirePaymentScreenshot: true,
     razorpayKeyId: "",
     razorpayKeySecret: "",
     jwtEnabled: false,
@@ -755,6 +767,13 @@ export default function AdminPanel({
           teamMembersCount: data.teamMembersCount !== undefined ? data.teamMembersCount : 5,
           feeEnabled: data.feeEnabled || false,
           feeAmount: data.feeAmount || 0,
+          paymentMode: data.paymentMode || (data.manualPaymentEnabled ? "manual_upi" : (data.feeEnabled ? "gateway" : "free")),
+          manualPaymentEnabled: data.manualPaymentEnabled !== undefined ? data.manualPaymentEnabled : true,
+          upiQrCodeUrl: data.upiQrCodeUrl || "",
+          upiId: data.upiId || "svec@upi",
+          upiPayeeName: data.upiPayeeName || "Sri Vasavi Engineering College",
+          upiInstructions: data.upiInstructions || "Scan the UPI QR code using any UPI App (Google Pay, PhonePe, Paytm, BHIM). Complete the payment, enter your 12-digit UTR/Transaction ID and attach the payment screenshot below.",
+          requirePaymentScreenshot: data.requirePaymentScreenshot !== undefined ? data.requirePaymentScreenshot : true,
           razorpayKeyId: data.razorpayKeyId || "",
           razorpayKeySecret: data.razorpayKeySecret || "",
           jwtEnabled: data.jwtEnabled || false,
@@ -861,9 +880,17 @@ export default function AdminPanel({
         setSettingsError("Fee amount must be greater than 0 if fee is enabled.");
         return;
       }
-      if (!settingsForm.razorpayKeyId.trim() || !settingsForm.razorpayKeySecret.trim()) {
-        setSettingsError("Razorpay Key ID and Key Secret are required when registration fee is enabled.");
-        return;
+      if (settingsForm.paymentMode === "gateway" || settingsForm.paymentMode === "both") {
+        if (!settingsForm.razorpayKeyId.trim() || !settingsForm.razorpayKeySecret.trim()) {
+          setSettingsError("Razorpay Key ID and Key Secret are required when online payment gateway is selected.");
+          return;
+        }
+      }
+      if (settingsForm.paymentMode === "manual_upi" || settingsForm.paymentMode === "both") {
+        if (!settingsForm.upiId.trim()) {
+          setSettingsError("A valid UPI ID (e.g. svec@upi) is required for manual QR code payment collection.");
+          return;
+        }
       }
     }
 
@@ -920,7 +947,7 @@ export default function AdminPanel({
       if (res.ok && data.success) {
         setSettingsSuccess("Settings saved and updated successfully!");
       } else {
-        setSettingsError(data.error || "Failed to update settings.");
+        setSettingsError(getErrorMessage(data, "Failed to update settings."));
       }
     } catch (err) {
       setSettingsError("Network error. Could not update settings.");
@@ -956,10 +983,11 @@ export default function AdminPanel({
           dbStatus: `Connected Successfully (${new Date().toLocaleTimeString()})`
         }));
       } else {
-        setDbTestError(data.error || "Database connection test failed.");
+        const errorMsg = getErrorMessage(data, "Database connection test failed.");
+        setDbTestError(errorMsg);
         setSettingsForm(prev => ({
           ...prev,
-          dbStatus: `Connection Failed: ${data.error || "Unknown Error"}`
+          dbStatus: `Connection Failed: ${errorMsg}`
         }));
       }
     } catch (err: any) {
@@ -982,7 +1010,7 @@ export default function AdminPanel({
   const [backupError, setBackupError] = useState("");
 
   const handleRestoreFromDB = async () => {
-    if (!window.confirm("Restore all registrations, students, and settings from the configured database?")) {
+    if (!window.confirm("Restore all registrations, students, problem statements, media files, and settings from the configured database?")) {
       return;
     }
     setDbRestoring(true);
@@ -994,7 +1022,8 @@ export default function AdminPanel({
         headers: {
           "Content-Type": "application/json",
           "X-Admin-Passcode": passcode
-        }
+        },
+        body: JSON.stringify(settingsForm)
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -1002,8 +1031,11 @@ export default function AdminPanel({
         fetchRegistrations();
         fetchStudents();
         fetchSettings();
+        if (typeof fetchCriteria === "function") fetchCriteria();
+        if (typeof fetchAdminsList === "function") fetchAdminsList();
+        if (typeof fetchBroadcastLogs === "function") fetchBroadcastLogs();
       } else {
-        setDbRestoreError(data.message || data.error || "Failed to restore data from database.");
+        setDbRestoreError(getErrorMessage(data, "Failed to restore data from database."));
       }
     } catch (err: any) {
       setDbRestoreError("Network error while restoring data.");
@@ -1062,7 +1094,7 @@ export default function AdminPanel({
         fetchStudents();
         fetchSettings();
       } else {
-        setBackupError(data.error || "Failed to restore backup.");
+        setBackupError(getErrorMessage(data, "Failed to restore backup."));
       }
     } catch (err: any) {
       setBackupError("Failed to parse JSON backup file.");
@@ -1081,6 +1113,14 @@ export default function AdminPanel({
 
   // Payment details popup state
   const [selectedRegPayment, setSelectedRegPayment] = useState<Registration | null>(null);
+  const [verifyActionLoading, setVerifyActionLoading] = useState(false);
+  const [verifyRemarks, setVerifyRemarks] = useState("");
+  const [verifySuccessMessage, setVerifySuccessMessage] = useState("");
+  const [verifyErrorMessage, setVerifyErrorMessage] = useState("");
+  const [previewProofModalUrl, setPreviewProofModalUrl] = useState<string | null>(null);
+  const [qrUploading, setQrUploading] = useState(false);
+  const [qrUploadError, setQrUploadError] = useState("");
+  const [regFilterPaymentStatus, setRegFilterPaymentStatus] = useState<string>("All");
 
   // Proposal details popup state
   const [selectedRegProposal, setSelectedRegProposal] = useState<Registration | null>(null);
@@ -1303,7 +1343,7 @@ export default function AdminPanel({
             setStudentsSuccess(`Account for ${email} deleted successfully.`);
             fetchStudents();
           } else {
-            setStudentsError(data.error || "Failed to delete student account.");
+            setStudentsError(getErrorMessage(data, "Failed to delete student account."));
           }
         } catch (err) {
           setStudentsError("Network error. Could not delete student.");
@@ -1338,7 +1378,7 @@ export default function AdminPanel({
         setNewStudentPassword("");
         fetchStudents();
       } else {
-        setStudentsError(data.error || "Failed to reset password.");
+        setStudentsError(getErrorMessage(data, "Failed to reset password."));
       }
     } catch (err) {
       setStudentsError("Network error. Could not reset password.");
@@ -1508,7 +1548,7 @@ export default function AdminPanel({
         sessionStorage.setItem("svec_sih_admin_username", data.username);
         sessionStorage.setItem("svec_sih_admin_dept", data.department || "");
       } else {
-        setLoginError(data.error || "Incorrect credentials or role selection.");
+        setLoginError(getErrorMessage(data, "Incorrect credentials or role selection."));
       }
     } catch (err) {
       setLoginError("Failed to connect to backend server");
@@ -1546,7 +1586,7 @@ export default function AdminPanel({
         setShowPsFormModal(false);
         onRefreshStatements();
       } else {
-        setPsError(data.error || "Failed to save problem statement");
+        setPsError(getErrorMessage(data, "Failed to save problem statement"));
       }
     } catch (err) {
       setPsError("Network error occurred.");
@@ -1582,7 +1622,7 @@ export default function AdminPanel({
             setPsSuccess("Deleted successfully!");
           } else {
             const data = await res.json();
-            alert(data.error || "Failed to delete");
+            alert(getErrorMessage(data, "Failed to delete"));
           }
         } catch (err) {
           alert("Network error.");
@@ -1591,6 +1631,171 @@ export default function AdminPanel({
         }
       }
     });
+  };
+
+  const handleSyncPSFromDB = async () => {
+    setPsError("");
+    setPsSuccess("");
+    try {
+      const res = await fetch("/api/problem-statements/sync", {
+        method: "POST",
+        headers: { "X-Admin-Passcode": passcode }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onRefreshStatements();
+        setPsSuccess(data.message || "Synced problem statements from database successfully!");
+      } else {
+        setPsError(getErrorMessage(data, "Failed to sync problem statements from database"));
+      }
+    } catch (e) {
+      setPsError("Network error while syncing from database.");
+    }
+  };
+
+  const handleRestoreDefaultPS = async () => {
+    if (!window.confirm("Are you sure you want to restore the official default problem statements? This will reset custom statements and synchronize with database.")) return;
+    setPsError("");
+    setPsSuccess("");
+    try {
+      const res = await fetch("/api/problem-statements/restore-default", {
+        method: "POST",
+        headers: { "X-Admin-Passcode": passcode }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        onRefreshStatements();
+        setPsSuccess(data.message || "Restored default problem statements successfully!");
+      } else {
+        setPsError(getErrorMessage(data, "Failed to restore defaults"));
+      }
+    } catch (e) {
+      setPsError("Network error while restoring defaults.");
+    }
+  };
+
+  const handleQrCodeUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setQrUploadError("Please upload a valid image file (.png, .jpg, .jpeg, .webp)");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setQrUploadError("QR Code image must be smaller than 5MB");
+      return;
+    }
+    setQrUploading(true);
+    setQrUploadError("");
+
+    try {
+      // 1. Try Multipart Upload with FormData
+      const formData = new FormData();
+      formData.append("file", file);
+      
+      const res = await fetch("/api/settings/upi-qr/upload", {
+        method: "POST",
+        headers: {
+          "X-Admin-Passcode": passcode
+        },
+        body: formData
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSettingsForm(prev => ({
+          ...prev,
+          upiQrCodeUrl: data.url
+        }));
+        setSettingsSuccess("UPI QR Code uploaded successfully! Please click 'Save All Settings' to apply.");
+      } else {
+        // Fallback to reading file as base64 and uploading via JSON payload
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64 = reader.result as string;
+          try {
+            const fallbackRes = await fetch("/api/settings/upi-qr/upload", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Admin-Passcode": passcode
+              },
+              body: JSON.stringify({
+                fileBase64: base64,
+                fileName: file.name
+              })
+            });
+            const fallbackData = await fallbackRes.json();
+            if (fallbackRes.ok && fallbackData.success) {
+              setSettingsForm(prev => ({
+                ...prev,
+                upiQrCodeUrl: fallbackData.url || base64
+              }));
+              setSettingsSuccess("UPI QR Code uploaded successfully! Please click 'Save All Settings' to apply.");
+            } else {
+              setSettingsForm(prev => ({
+                ...prev,
+                upiQrCodeUrl: base64
+              }));
+            }
+          } catch (e) {
+            setSettingsForm(prev => ({
+              ...prev,
+              upiQrCodeUrl: base64
+            }));
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result as string;
+        setSettingsForm(prev => ({
+          ...prev,
+          upiQrCodeUrl: base64
+        }));
+      };
+      reader.readAsDataURL(file);
+    } finally {
+      setQrUploading(false);
+    }
+  };
+
+  const handleVerifyManualPayment = async (regId: string, action: "approve" | "reject") => {
+    setVerifyActionLoading(true);
+    setVerifyErrorMessage("");
+    setVerifySuccessMessage("");
+    try {
+      const res = await fetch(`/api/registrations/${regId}/verify-manual-payment`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Admin-Passcode": passcode
+        },
+        body: JSON.stringify({ action, remarks: verifyRemarks })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setVerifySuccessMessage(action === "approve" ? "Payment verified and registration marked as PAID successfully!" : "Payment rejected. Student can re-upload proof.");
+        fetchRegistrations();
+        if (selectedRegPayment) {
+          setSelectedRegPayment(prev => prev ? ({
+            ...prev,
+            paymentStatus: action === "approve" ? "paid" : "rejected",
+            paymentRemarks: verifyRemarks || (action === "approve" ? "UPI payment verified & approved." : "Payment proof rejected."),
+            paymentVerifiedBy: "Admin / SPOC",
+            paymentVerifiedAt: new Date().toISOString()
+          }) : null);
+        }
+      } else {
+        setVerifyErrorMessage(getErrorMessage(data, "Failed to process payment verification."));
+      }
+    } catch (err) {
+      setVerifyErrorMessage("Network error while submitting verification.");
+    } finally {
+      setVerifyActionLoading(false);
+    }
   };
 
   const handleDeleteRegistration = (id: string) => {
@@ -1608,7 +1813,7 @@ export default function AdminPanel({
             fetchRegistrations();
           } else {
             const data = await res.json();
-            alert(data.error || "Failed to delete registration");
+            alert(getErrorMessage(data, "Failed to delete registration"));
           }
         } catch (err) {
           alert("Network error.");
@@ -1649,7 +1854,7 @@ export default function AdminPanel({
           setEditingReg(null);
         }, 1000);
       } else {
-        setEditError(data.error || "Failed to update registration");
+        setEditError(getErrorMessage(data, "Failed to update registration"));
       }
     } catch (err) {
       setEditError("Network error updating registration.");
@@ -1796,9 +2001,11 @@ export default function AdminPanel({
         setParsedData([]);
         onRefreshStatements();
       } else {
-        setImportError(data.error || "Failed to import statements.");
+        const errorMsg = getErrorMessage(data, "Failed to import statements.");
         if (data.details && Array.isArray(data.details)) {
-          setImportError(`${data.error}:\n${data.details.slice(0, 5).join("\n")}`);
+          setImportError(`${errorMsg}:\n${data.details.slice(0, 5).join("\n")}`);
+        } else {
+          setImportError(errorMsg);
         }
       }
     } catch (err) {
@@ -1888,12 +2095,14 @@ export default function AdminPanel({
   const filteredRegs = registrations.filter(reg => {
     const ps = problemStatements.find(p => p.id === reg.problemStatementId);
     const approval = reg.approvalStatus || "pending";
-    const searchStr = `${reg.teamName} ${reg.leadName} ${reg.mentorName} ${reg.registrationId} ${approval} ${ps?.code || ""} ${ps?.title || ""}`.toLowerCase();
+    const payment = reg.paymentStatus || "free";
+    const searchStr = `${reg.teamName} ${reg.leadName} ${reg.mentorName} ${reg.registrationId} ${approval} ${payment} ${reg.upiTransactionId || ""} ${ps?.code || ""} ${ps?.title || ""}`.toLowerCase();
     const matchesSearch = searchStr.includes(regSearchTerm.toLowerCase());
     const matchesDept = regFilterDept === "All" || reg.leadDepartment.trim().toLowerCase() === regFilterDept.trim().toLowerCase();
     const matchesPS = regFilterPS === "All" || reg.problemStatementId === regFilterPS;
     const matchesStatus = regFilterStatus === "All" || approval === regFilterStatus;
-    return matchesSearch && matchesDept && matchesPS && matchesStatus;
+    const matchesPayment = regFilterPaymentStatus === "All" || payment === regFilterPaymentStatus;
+    return matchesSearch && matchesDept && matchesPS && matchesStatus && matchesPayment;
   });
 
   // Approval status counter helpers
@@ -1901,6 +2110,7 @@ export default function AdminPanel({
   const verifiedApprovalCount = registrations.filter(r => r.approvalStatus === "verified").length;
   const underReviewApprovalCount = registrations.filter(r => r.approvalStatus === "under_review").length;
   const rejectedApprovalCount = registrations.filter(r => r.approvalStatus === "rejected").length;
+  const pendingPaymentVerificationCount = registrations.filter(r => r.paymentStatus === "pending_verification").length;
 
   // Sorting logic
   const sortedRegs = [...filteredRegs].sort((a, b) => {
@@ -2562,6 +2772,25 @@ export default function AdminPanel({
                 </select>
               </div>
 
+              {/* Payment Status Filter */}
+              <div className="flex items-center gap-1">
+                <CreditCard className="w-3.5 h-3.5 text-slate-400" />
+                <select
+                  value={regFilterPaymentStatus}
+                  onChange={(e) => setRegFilterPaymentStatus(e.target.value)}
+                  className="px-2 py-1.5 border border-slate-200 rounded-lg text-xs bg-white outline-none focus:border-indigo-500 cursor-pointer"
+                >
+                  <option value="All">All Payments ({registrations.length})</option>
+                  {pendingPaymentVerificationCount > 0 && (
+                    <option value="pending_verification">⚠️ Needs Verification ({pendingPaymentVerificationCount})</option>
+                  )}
+                  <option value="paid">Paid ({registrations.filter(r => r.paymentStatus === "paid").length})</option>
+                  <option value="pending">Pending ({registrations.filter(r => r.paymentStatus === "pending").length})</option>
+                  <option value="rejected">Rejected ({registrations.filter(r => r.paymentStatus === "rejected").length})</option>
+                  <option value="free">Free / Exempted ({registrations.filter(r => (r.paymentStatus || "free") === "free").length})</option>
+                </select>
+              </div>
+
             </div>
 
             {/* CSV export trigger */}
@@ -2805,17 +3034,31 @@ export default function AdminPanel({
                           <td className="py-4 px-6 whitespace-nowrap">
                             <button
                               onClick={() => setSelectedRegPayment(reg)}
-                              title="Click to view full payment details"
-                              className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all hover:scale-105 cursor-pointer flex items-center gap-1 ${
+                              title="Click to view full payment details & proof verification"
+                              className={`px-3 py-1.5 rounded-xl text-[10px] font-bold border transition-all hover:scale-105 cursor-pointer flex items-center gap-1.5 shadow-2xs ${
                                 reg.paymentStatus === "paid"
                                   ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                  : reg.paymentStatus === "pending_verification"
+                                  ? "bg-amber-500 text-white border-amber-600 animate-pulse hover:bg-amber-600 shadow-sm"
+                                  : reg.paymentStatus === "rejected"
+                                  ? "bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100"
                                   : reg.paymentStatus === "free"
                                   ? "bg-slate-100 text-slate-700 border-slate-200 hover:bg-slate-200"
                                   : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
                               }`}
                             >
                               <CreditCard className="w-3.5 h-3.5" />
-                              <span className="capitalize">{reg.paymentStatus || "Free"}</span>
+                              <span>
+                                {reg.paymentStatus === "pending_verification" 
+                                  ? "Verify UPI" 
+                                  : reg.paymentStatus === "paid" 
+                                  ? "Paid" 
+                                  : reg.paymentStatus === "rejected"
+                                  ? "Rejected"
+                                  : reg.paymentStatus === "free"
+                                  ? "Free / Exempt"
+                                  : "Pending"}
+                              </span>
                             </button>
                           </td>
                           <td className="py-4 px-6 whitespace-nowrap">
@@ -2896,24 +3139,45 @@ export default function AdminPanel({
         <div className="space-y-6">
           
           {/* Heading with action item */}
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold text-slate-800 font-display">Manage Problem Statements</h2>
-              <p className="text-xs text-slate-500">Add, edit, or remove the challenge definitions displayed on the student form.</p>
+              <p className="text-xs text-slate-500">Add, edit, or remove the challenge definitions displayed on the student form, or synchronize directly with the central database.</p>
             </div>
-            <button
-              onClick={() => {
-                setPsForm({ code: "", title: "", category: "Software", organization: "" });
-                setEditingPsId(null);
-                setPsError("");
-                setPsSuccess("");
-                setShowPsFormModal(true);
-              }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-all shadow-md shadow-indigo-100 flex items-center gap-1 cursor-pointer"
-            >
-              <Plus className="w-4 h-4" />
-              Add Statement
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={handleSyncPSFromDB}
+                title="Synchronize problem statements from central database"
+                className="bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs px-3.5 py-2.5 rounded-xl border border-slate-200 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-indigo-600" />
+                Sync from DB
+              </button>
+              <button
+                type="button"
+                onClick={handleRestoreDefaultPS}
+                title="Restore default problem statements to database"
+                className="bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-semibold text-xs px-3.5 py-2.5 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                Restore Defaults
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPsForm({ code: "", title: "", category: "Software", organization: "" });
+                  setEditingPsId(null);
+                  setPsError("");
+                  setPsSuccess("");
+                  setShowPsFormModal(true);
+                }}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs px-4 py-2.5 rounded-xl transition-all shadow-md shadow-indigo-100 flex items-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Add Statement
+              </button>
+            </div>
           </div>
 
           {psSuccess && (
@@ -3575,9 +3839,12 @@ export default function AdminPanel({
                     {/* Toggle Fee Requirement */}
                     <div className="bg-slate-50/50 border border-slate-100 rounded-xl p-4 flex items-center justify-between">
                       <div>
-                        <span className="text-xs font-bold text-slate-700 block">Enable Registration Fee Collection</span>
+                        <span className="text-xs font-bold text-slate-700 block flex items-center gap-1.5">
+                          <CreditCard className="w-4 h-4 text-indigo-500" />
+                          Enable Registration Fee Collection
+                        </span>
                         <span className="text-[11px] text-slate-400 block mt-0.5">
-                          Toggle whether students must pay a registration fee during form submission.
+                          Toggle whether student teams must pay a registration fee (via UPI QR Code scan & UTR or Razorpay Gateway).
                         </span>
                       </div>
                       <label className="relative inline-flex items-center cursor-pointer select-none">
@@ -3598,62 +3865,281 @@ export default function AdminPanel({
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: "auto" }}
                           exit={{ opacity: 0, height: 0 }}
-                          className="space-y-4 overflow-hidden"
+                          className="space-y-5 overflow-hidden"
                         >
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
                             {/* Fee Amount */}
                             <div className="space-y-1.5 sm:col-span-2">
-                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                Registration Fee Amount (₹)
+                              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                Registration Fee Amount per Team (₹) <span className="text-rose-500">*</span>
                               </label>
-                              <input
-                                type="number"
-                                min="1"
-                                value={settingsForm.feeAmount || ""}
-                                onChange={(e) => setSettingsForm(prev => ({ ...prev, feeAmount: parseInt(e.target.value, 10) || 0 }))}
-                                placeholder="e.g. 500"
-                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono font-bold"
-                                required={settingsForm.feeEnabled}
-                              />
+                              <div className="relative">
+                                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-bold text-slate-400">₹</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  value={settingsForm.feeAmount || ""}
+                                  onChange={(e) => setSettingsForm(prev => ({ ...prev, feeAmount: parseInt(e.target.value, 10) || 0 }))}
+                                  placeholder="e.g. 500"
+                                  className="w-full pl-8 pr-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono font-bold"
+                                  required={settingsForm.feeEnabled}
+                                />
+                              </div>
                             </div>
 
-                            {/* Razorpay Key ID */}
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                Razorpay Key ID
+                            {/* Payment Mode Selection */}
+                            <div className="space-y-1.5 sm:col-span-2">
+                              <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                Primary Payment Processing Mode <span className="text-rose-500">*</span>
                               </label>
-                              <input
-                                type="text"
-                                value={settingsForm.razorpayKeyId}
-                                onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeyId: e.target.value }))}
-                                placeholder="rzp_test_..."
-                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
-                                required={settingsForm.feeEnabled}
-                              />
-                            </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <label className={`p-3.5 rounded-xl border-2 flex flex-col gap-1 cursor-pointer transition-all ${
+                                  settingsForm.paymentMode === "manual_upi"
+                                    ? "border-indigo-600 bg-indigo-50/50 shadow-xs"
+                                    : "border-slate-200 bg-slate-50 hover:bg-white"
+                                }`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                      <QrCode className="w-3.5 h-3.5 text-indigo-600" />
+                                      UPI QR Code
+                                    </span>
+                                    <input
+                                      type="radio"
+                                      name="paymentMode"
+                                      value="manual_upi"
+                                      checked={settingsForm.paymentMode === "manual_upi"}
+                                      onChange={() => setSettingsForm(prev => ({ ...prev, paymentMode: "manual_upi" }))}
+                                      className="text-indigo-600"
+                                    />
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 leading-snug">
+                                    Zero 0% gateway fees. Students scan QR with GPay/PhonePe and submit UTR & screenshot.
+                                  </span>
+                                </label>
 
-                            {/* Razorpay Key Secret */}
-                            <div className="space-y-1.5">
-                              <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                Razorpay Key Secret
-                              </label>
-                              <input
-                                type="password"
-                                value={settingsForm.razorpayKeySecret}
-                                onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeySecret: e.target.value }))}
-                                placeholder="••••••••••••••••••••••••"
-                                className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
-                                required={settingsForm.feeEnabled}
-                              />
-                            </div>
-                            
-                            <div className="sm:col-span-2 bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 text-[11px] text-indigo-700 leading-relaxed flex items-start gap-2">
-                              <span className="text-sm">💡</span>
-                              <div>
-                                <span className="font-bold">Local Host Friendly Tip:</span> To test or run the entire registration fee & receipt workflow locally without configuring actual Razorpay credentials, simply enter <code className="bg-white px-1.5 py-0.5 rounded border border-indigo-200 font-bold font-mono">rzp_test_mock</code> as the Key ID and any value as the Key Secret. This unlocks an interactive offline simulation gateway!
+                                <label className={`p-3.5 rounded-xl border-2 flex flex-col gap-1 cursor-pointer transition-all ${
+                                  settingsForm.paymentMode === "gateway"
+                                    ? "border-indigo-600 bg-indigo-50/50 shadow-xs"
+                                    : "border-slate-200 bg-slate-50 hover:bg-white"
+                                }`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                      <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                                      Razorpay Gateway
+                                    </span>
+                                    <input
+                                      type="radio"
+                                      name="paymentMode"
+                                      value="gateway"
+                                      checked={settingsForm.paymentMode === "gateway"}
+                                      onChange={() => setSettingsForm(prev => ({ ...prev, paymentMode: "gateway" }))}
+                                      className="text-indigo-600"
+                                    />
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 leading-snug">
+                                    Automated instant verification via Razorpay Cards/Netbanking/UPI webhook.
+                                  </span>
+                                </label>
+
+                                <label className={`p-3.5 rounded-xl border-2 flex flex-col gap-1 cursor-pointer transition-all ${
+                                  settingsForm.paymentMode === "both"
+                                    ? "border-indigo-600 bg-indigo-50/50 shadow-xs"
+                                    : "border-slate-200 bg-slate-50 hover:bg-white"
+                                }`}>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                                      Both Options
+                                    </span>
+                                    <input
+                                      type="radio"
+                                      name="paymentMode"
+                                      value="both"
+                                      checked={settingsForm.paymentMode === "both"}
+                                      onChange={() => setSettingsForm(prev => ({ ...prev, paymentMode: "both" }))}
+                                      className="text-indigo-600"
+                                    />
+                                  </div>
+                                  <span className="text-[11px] text-slate-500 leading-snug">
+                                    Let teams choose either scanning the College UPI QR or paying via Razorpay.
+                                  </span>
+                                </label>
                               </div>
                             </div>
                           </div>
+
+                          {/* UPI QR Code Configuration Panel */}
+                          {(settingsForm.paymentMode === "manual_upi" || settingsForm.paymentMode === "both") && (
+                            <div className="bg-indigo-50/30 border border-indigo-150 rounded-2xl p-5 space-y-4">
+                              <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+                                <div className="flex items-center gap-2">
+                                  <QrCode className="w-4 h-4 text-indigo-600" />
+                                  <h4 className="text-xs font-bold text-indigo-900 uppercase tracking-wider">
+                                    UPI QR Code & Verification Settings
+                                  </h4>
+                                </div>
+                                <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
+                                  Manual Approval Mode
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-1.5">
+                                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                    College / Department UPI ID (VPA) <span className="text-rose-500">*</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={settingsForm.upiId}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, upiId: e.target.value }))}
+                                    placeholder="e.g. svec@upi, principal@oksbi"
+                                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 font-mono bg-white"
+                                  />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                    Payee / College Account Name <span className="text-rose-500">*</span>
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={settingsForm.upiPayeeName}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, upiPayeeName: e.target.value }))}
+                                    placeholder="e.g. Sri Vasavi Engineering College"
+                                    className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 bg-white"
+                                  />
+                                </div>
+
+                                <div className="space-y-1.5 sm:col-span-2">
+                                  <label className="block text-xs font-bold text-slate-600 uppercase tracking-wider">
+                                    Payment Instructions for Students
+                                  </label>
+                                  <textarea
+                                    rows={2}
+                                    value={settingsForm.upiInstructions}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, upiInstructions: e.target.value }))}
+                                    placeholder="Instructions displayed on registration form..."
+                                    className="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 bg-white"
+                                  />
+                                </div>
+
+                                {/* QR Code Image Upload & Preview */}
+                                <div className="space-y-2 sm:col-span-2 bg-white border border-slate-200 rounded-xl p-4">
+                                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                                    <div>
+                                      <span className="text-xs font-bold text-slate-800 block">Custom Official UPI QR Code Image</span>
+                                      <span className="text-[11px] text-slate-500 block">Upload college account barcode/QR image, or leave blank to auto-render standard dynamic UPI QR</span>
+                                    </div>
+                                    <label className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0">
+                                      <Upload className="w-3.5 h-3.5" />
+                                      <span>{qrUploading ? "Uploading..." : "Upload QR Image"}</span>
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleQrCodeUpload}
+                                        className="sr-only"
+                                        disabled={qrUploading}
+                                      />
+                                    </label>
+                                  </div>
+
+                                  {qrUploadError && (
+                                    <p className="text-xs text-rose-600 font-medium">{qrUploadError}</p>
+                                  )}
+
+                                  {settingsForm.upiQrCodeUrl && (
+                                    <div className="flex items-center gap-4 pt-2 border-t border-slate-100">
+                                      <img
+                                        src={settingsForm.upiQrCodeUrl}
+                                        alt="UPI QR Code Preview"
+                                        className="w-24 h-24 object-contain rounded-lg border border-slate-200 bg-slate-50 p-1"
+                                      />
+                                      <div className="space-y-1 text-xs">
+                                        <span className="font-bold text-emerald-700 flex items-center gap-1">
+                                          <CheckCircle2 className="w-3.5 h-3.5" /> Custom QR Code Configured
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setSettingsForm(prev => ({ ...prev, upiQrCodeUrl: "" }))}
+                                          className="text-rose-600 hover:underline text-[11px] font-semibold cursor-pointer block"
+                                        >
+                                          Remove custom image & use auto QR generator
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Require Screenshot Toggle */}
+                                <div className="sm:col-span-2 flex items-center justify-between bg-white border border-slate-200 rounded-xl p-3.5">
+                                  <div>
+                                    <span className="text-xs font-bold text-slate-700 block">Require Payment Screenshot Upload</span>
+                                    <span className="text-[11px] text-slate-400 block">
+                                      When enabled, students must attach a proof screenshot along with the 12-digit UTR/Transaction ID.
+                                    </span>
+                                  </div>
+                                  <label className="relative inline-flex items-center cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={settingsForm.requirePaymentScreenshot}
+                                      onChange={(e) => setSettingsForm(prev => ({ ...prev, requirePaymentScreenshot: e.target.checked }))}
+                                      className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                  </label>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Razorpay Gateway Fields */}
+                          {(settingsForm.paymentMode === "gateway" || settingsForm.paymentMode === "both") && (
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-4">
+                              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                                <div className="flex items-center gap-2">
+                                  <CreditCard className="w-4 h-4 text-indigo-600" />
+                                  <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                                    Razorpay Online Gateway Credentials
+                                  </h4>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className="space-y-1.5">
+                                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                    Razorpay Key ID
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={settingsForm.razorpayKeyId}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeyId: e.target.value }))}
+                                    placeholder="rzp_test_..."
+                                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono bg-white"
+                                  />
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                    Razorpay Key Secret
+                                  </label>
+                                  <input
+                                    type="password"
+                                    value={settingsForm.razorpayKeySecret}
+                                    onChange={(e) => setSettingsForm(prev => ({ ...prev, razorpayKeySecret: e.target.value }))}
+                                    placeholder="••••••••••••••••••••••••"
+                                    className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono bg-white"
+                                  />
+                                </div>
+
+                                <div className="sm:col-span-2 bg-indigo-50/50 border border-indigo-100 rounded-xl p-3 text-[11px] text-indigo-700 leading-relaxed flex items-start gap-2">
+                                  <span className="text-sm">💡</span>
+                                  <div>
+                                    <span className="font-bold">Developer Sandbox Mode:</span> To simulate and test the Razorpay payment modal offline, enter <code className="bg-white px-1.5 py-0.5 rounded border border-indigo-200 font-bold font-mono">rzp_test_mock</code> as Key ID and any value as Key Secret.
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -4140,10 +4626,15 @@ export default function AdminPanel({
                             type="text"
                             value={settingsForm.dbHost}
                             onChange={(e) => setSettingsForm(prev => ({ ...prev, dbHost: e.target.value }))}
-                            placeholder={settingsForm.dbType === "mongodb" ? "e.g. localhost or mongodb+srv://cluster.mongodb.net" : "e.g. pg-instance-svec.sih.gcp.com"}
+                            placeholder={settingsForm.dbType === "mongodb" ? "e.g. localhost or mongodb+srv://cluster.mongodb.net" : "e.g. aws-0-ap-southeast-1.pooler.supabase.com or pg-host.com"}
                             className="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 transition-all font-mono"
                             required={settingsForm.dbEnabled && settingsForm.dbType !== "none"}
                           />
+                          {settingsForm.dbType === "sql" && (
+                            <p className="text-[10px] text-slate-400">
+                              💡 <strong>Supabase Note:</strong> Direct hosts (<code className="font-mono text-slate-600">db.xxx.supabase.co</code>) use IPv6. For reliable container access, use the Supabase IPv4 Pooler host: <code className="font-mono text-indigo-600">aws-0-[region].pooler.supabase.com</code> on port <code className="font-mono text-indigo-600">6543</code> with username <code className="font-mono text-indigo-600">postgres.[project-id]</code>.
+                            </p>
+                          )}
                         </div>
                       </div>
 
@@ -4305,7 +4796,7 @@ export default function AdminPanel({
                       <button
                         type="button"
                         onClick={handleRestoreFromDB}
-                        disabled={dbRestoring || !settingsForm.dbEnabled || settingsForm.dbType === "none"}
+                        disabled={dbRestoring || (settingsForm.dbType === "none" && !settingsForm.dbHost)}
                         className="w-full py-2 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       >
                         {dbRestoring ? (
@@ -4502,7 +4993,7 @@ export default function AdminPanel({
                                     if (res.ok && data.success) {
                                       setSettingsForm(prev => ({ ...prev, logoUrl: data.url }));
                                     } else {
-                                      alert(data.error || "Failed to upload logo.");
+                                      alert(getErrorMessage(data, "Failed to upload logo."));
                                     }
                                   } catch (err) {
                                     alert("Network error while uploading logo.");
@@ -4707,7 +5198,7 @@ export default function AdminPanel({
                                           samplePptFileBase64: ""
                                         }));
                                       } else {
-                                        alert(data.error || "Failed to upload template presentation file.");
+                                        alert(getErrorMessage(data, "Failed to upload template presentation file."));
                                       }
                                     } catch (err) {
                                       alert("Network error while uploading template presentation file.");
@@ -5049,7 +5540,7 @@ export default function AdminPanel({
                                       if (res.ok && data.success) {
                                         setSettingsForm(prev => ({ ...prev, certificateBgUrl: data.url }));
                                       } else {
-                                        alert(data.error || "Failed to upload certificate background.");
+                                        alert(getErrorMessage(data, "Failed to upload certificate background."));
                                       }
                                     } catch (err) {
                                       alert("Network error while uploading certificate background.");
@@ -5490,7 +5981,7 @@ export default function AdminPanel({
                                               setSelectedAdminForReset(null);
                                               setNewAdminPassword("");
                                             } else {
-                                              alert(data.error || "Failed to reset admin password.");
+                                              alert(getErrorMessage(data, "Failed to reset admin password."));
                                             }
                                           } catch (err) {
                                             alert("Network error. Failed to reset password.");
@@ -5616,7 +6107,7 @@ export default function AdminPanel({
                     setNewAdminPasswordSelf("");
                     setConfirmAdminPasswordSelf("");
                   } else {
-                    setAdminPasswordSelfError(data.error || "Failed to change password.");
+                    setAdminPasswordSelfError(getErrorMessage(data, "Failed to change password."));
                   }
                 } catch (err) {
                   setAdminPasswordSelfError("Network error. Please try again.");
@@ -5930,7 +6421,7 @@ export default function AdminPanel({
                               setActiveEvalTeam(null);
                             }, 1000);
                           } else {
-                            setEvaluationError(data.error || "Failed to submit score.");
+                            setEvaluationError(getErrorMessage(data, "Failed to submit score."));
                           }
                         } catch (err) {
                           setEvaluationError("Network error. Could not save score.");
@@ -7514,7 +8005,7 @@ export default function AdminPanel({
         )}
       </AnimatePresence>
 
-      {/* PAYMENT DETAILS POPUP */}
+      {/* PAYMENT DETAILS & MANUAL UPI VERIFICATION POPUP */}
       <AnimatePresence>
         {selectedRegPayment && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 text-slate-800">
@@ -7532,12 +8023,15 @@ export default function AdminPanel({
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
-              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden relative z-10"
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-xl w-full overflow-hidden relative z-10 max-h-[90vh] flex flex-col"
             >
-              <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between">
+              <div className="bg-slate-900 text-white px-6 py-4 flex items-center justify-between shrink-0">
                 <div className="flex items-center gap-2">
                   <CreditCard className="w-5 h-5 text-indigo-400" />
-                  <h3 className="font-bold font-display text-base">Payment Verification Record</h3>
+                  <div>
+                    <h3 className="font-bold font-display text-base">Payment & Verification Console</h3>
+                    <p className="text-[10px] text-slate-400 font-mono">Team: {selectedRegPayment.teamName} • Reg ID: {selectedRegPayment.registrationId}</p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setSelectedRegPayment(null)}
@@ -7547,69 +8041,263 @@ export default function AdminPanel({
                 </button>
               </div>
 
-              <div className="p-6 space-y-4">
-                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-3 text-left">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400 uppercase font-bold tracking-wider text-[10px]">Registration ID</span>
-                    <span className="font-mono font-bold text-slate-800 bg-slate-200 px-2 py-0.5 rounded text-[11px]">{selectedRegPayment.registrationId}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs border-t border-slate-200/50 pt-2">
-                    <span className="text-slate-400 uppercase font-bold tracking-wider text-[10px]">Team Name</span>
-                    <span className="font-bold text-slate-800">{selectedRegPayment.teamName}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs border-t border-slate-200/50 pt-2">
+              <div className="p-6 space-y-4 overflow-y-auto flex-1">
+                {/* Team & Lead Card */}
+                <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 space-y-2 text-left text-xs">
+                  <div className="flex justify-between items-center">
                     <span className="text-slate-400 uppercase font-bold tracking-wider text-[10px]">Team Leader</span>
-                    <span className="font-medium text-slate-700">{selectedRegPayment.leadName}</span>
+                    <span className="font-bold text-slate-800">{selectedRegPayment.leadName} ({selectedRegPayment.leadMobile})</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t border-slate-200/50 pt-1.5">
+                    <span className="text-slate-400 uppercase font-bold tracking-wider text-[10px]">Department</span>
+                    <span className="font-medium text-slate-700">{selectedRegPayment.leadDepartment}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t border-slate-200/50 pt-1.5">
+                    <span className="text-slate-400 uppercase font-bold tracking-wider text-[10px]">Submitted Date</span>
+                    <span className="font-mono text-slate-600">{new Date(selectedRegPayment.submittedAt).toLocaleString()}</span>
                   </div>
                 </div>
 
-                <div className="bg-indigo-50/50 border border-indigo-100 rounded-2xl p-4 space-y-3 text-xs text-left">
+                {/* Status & Amount Block */}
+                <div className="bg-indigo-50/40 border border-indigo-100 rounded-2xl p-4 space-y-2.5 text-xs text-left">
                   <div className="flex justify-between items-center">
-                    <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Payment Status</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                    <span className="text-indigo-900 font-bold uppercase tracking-wider text-[10px]">Payment Status</span>
+                    <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${
                       selectedRegPayment.paymentStatus === "paid"
-                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                        : selectedRegPayment.paymentStatus === "pending_verification"
+                        ? "bg-amber-100 text-amber-900 border-amber-300 animate-pulse"
+                        : selectedRegPayment.paymentStatus === "rejected"
+                        ? "bg-rose-100 text-rose-800 border-rose-300"
                         : selectedRegPayment.paymentStatus === "free"
-                        ? "bg-slate-100 text-slate-600 border-slate-200"
+                        ? "bg-slate-100 text-slate-700 border-slate-200"
                         : "bg-amber-50 text-amber-700 border-amber-200"
                     }`}>
-                      {selectedRegPayment.paymentStatus || "Free / Exempted"}
+                      {selectedRegPayment.paymentStatus === "pending_verification"
+                        ? "⚠️ Awaiting Manual UPI Verification"
+                        : selectedRegPayment.paymentStatus === "paid"
+                        ? "✓ Verified & Paid"
+                        : selectedRegPayment.paymentStatus === "rejected"
+                        ? "✗ Payment Proof Rejected"
+                        : selectedRegPayment.paymentStatus || "Free"}
                     </span>
                   </div>
 
-                  <div className="flex justify-between items-center border-t border-indigo-100/50 pt-2">
-                    <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Amount Charged</span>
-                    <span className="font-mono font-bold text-slate-800 text-sm">
+                  <div className="flex justify-between items-center border-t border-indigo-100/60 pt-2">
+                    <span className="text-indigo-900 font-bold uppercase tracking-wider text-[10px]">Registration Fee</span>
+                    <span className="font-mono font-bold text-slate-900 text-base">
                       {selectedRegPayment.amountPaid ? `₹${selectedRegPayment.amountPaid}` : "₹0 (Exempted)"}
                     </span>
                   </div>
 
-                  {selectedRegPayment.paymentStatus === "paid" && (
-                    <>
-                      <div className="flex justify-between items-center border-t border-indigo-100/50 pt-2">
-                        <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Transaction ID</span>
-                        <span className="font-mono font-bold text-indigo-700 bg-white border border-indigo-150 px-2 py-0.5 rounded">{selectedRegPayment.paymentId}</span>
+                  <div className="flex justify-between items-center border-t border-indigo-100/60 pt-2">
+                    <span className="text-indigo-900 font-bold uppercase tracking-wider text-[10px]">Payment Channel</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedRegPayment.paymentMode === "manual_upi"
+                        ? "📱 UPI QR Code (Manual Proof Submission)"
+                        : selectedRegPayment.paymentMode === "gateway"
+                        ? "⚡ Razorpay Online Gateway"
+                        : "Exempted / Offline"}
+                    </span>
+                  </div>
+
+                  {/* UPI UTR / Transaction ID */}
+                  {(selectedRegPayment.upiTransactionId || selectedRegPayment.paymentId) && (
+                    <div className="flex justify-between items-center border-t border-indigo-100/60 pt-2">
+                      <span className="text-indigo-900 font-bold uppercase tracking-wider text-[10px]">UTR / Transaction ID</span>
+                      <div className="flex items-center gap-1.5 font-mono font-bold text-indigo-800 bg-white border border-indigo-200 px-2 py-0.5 rounded text-[11px]">
+                        <span>{selectedRegPayment.upiTransactionId || selectedRegPayment.paymentId}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(selectedRegPayment.upiTransactionId || selectedRegPayment.paymentId || "");
+                          }}
+                          className="hover:text-indigo-600 text-slate-400 p-0.5 cursor-pointer"
+                          title="Copy Transaction ID"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
                       </div>
-                      <div className="flex justify-between items-center border-t border-indigo-100/50 pt-2">
-                        <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Razorpay Order ID</span>
-                        <span className="font-mono font-bold text-slate-600 select-all text-[10px]">{selectedRegPayment.orderId}</span>
-                      </div>
-                      <div className="flex justify-between items-center border-t border-indigo-100/50 pt-2">
-                        <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Payment Gateway</span>
-                        <span className="font-medium text-slate-700">Razorpay Smart Gateway</span>
-                      </div>
-                    </>
+                    </div>
                   )}
+
+                  {selectedRegPayment.orderId && (
+                    <div className="flex justify-between items-center border-t border-indigo-100/60 pt-2">
+                      <span className="text-indigo-900 font-bold uppercase tracking-wider text-[10px]">Gateway Order ID</span>
+                      <span className="font-mono text-slate-600 text-[10px] select-all">{selectedRegPayment.orderId}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Proof Screenshot Section */}
+                {selectedRegPayment.paymentProofUrl ? (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2 text-left">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                        Submitted Payment Proof Screenshot
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPreviewProofModalUrl(selectedRegPayment.paymentProofUrl || null)}
+                          className="text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3 h-3" /> View Fullscreen
+                        </button>
+                        <a
+                          href={selectedRegPayment.paymentProofUrl}
+                          download={`payment-proof-${selectedRegPayment.registrationId}.png`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1"
+                        >
+                          <Download className="w-3 h-3" /> Download
+                        </a>
+                      </div>
+                    </div>
+                    <div 
+                      onClick={() => setPreviewProofModalUrl(selectedRegPayment.paymentProofUrl || null)}
+                      className="cursor-pointer group relative rounded-xl overflow-hidden border border-slate-200 bg-white flex items-center justify-center max-h-56 p-2 hover:border-indigo-400 transition-all"
+                    >
+                      <img
+                        src={selectedRegPayment.paymentProofUrl}
+                        alt="Payment Screenshot Proof"
+                        className="max-h-52 object-contain rounded-lg shadow-2xs group-hover:scale-102 transition-transform"
+                      />
+                      <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-xs font-bold gap-1 backdrop-blur-xs">
+                        <Eye className="w-4 h-4" /> Click to zoom
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  selectedRegPayment.paymentMode === "manual_upi" && (
+                    <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>No screenshot attached. Student only submitted UTR / Transaction ID.</span>
+                    </div>
+                  )
+                )}
+
+                {/* Audit Information */}
+                {selectedRegPayment.paymentVerifiedBy && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-600 space-y-1 text-left">
+                    <div className="flex justify-between">
+                      <span className="font-medium text-slate-400">Verified By:</span>
+                      <span className="font-bold text-slate-700">{selectedRegPayment.paymentVerifiedBy}</span>
+                    </div>
+                    {selectedRegPayment.paymentVerifiedAt && (
+                      <div className="flex justify-between">
+                        <span className="font-medium text-slate-400">Verified At:</span>
+                        <span className="font-mono text-slate-700">{new Date(selectedRegPayment.paymentVerifiedAt).toLocaleString()}</span>
+                      </div>
+                    )}
+                    {selectedRegPayment.paymentRemarks && (
+                      <div className="border-t border-slate-200/60 pt-1 mt-1">
+                        <span className="font-medium text-slate-400 block text-[10px]">Verification Remarks:</span>
+                        <p className="font-medium text-slate-800 italic">"{selectedRegPayment.paymentRemarks}"</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Verification Actions (Approve / Reject) for Admin and SPOCs */}
+                <div className="border-t border-slate-200 pt-4 space-y-3">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider text-left">
+                    Verification Decision & Remarks
+                  </label>
+                  <input
+                    type="text"
+                    value={verifyRemarks}
+                    onChange={(e) => setVerifyRemarks(e.target.value)}
+                    placeholder="Enter review remarks (e.g. 'Bank UTR matches college account' or 'Invalid transaction ID')..."
+                    className="w-full px-3.5 py-2 border border-slate-200 rounded-xl outline-none text-xs focus:border-indigo-500 bg-white"
+                  />
+
+                  {verifyErrorMessage && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-medium text-left flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      {verifyErrorMessage}
+                    </div>
+                  )}
+
+                  {verifySuccessMessage && (
+                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-700 font-medium text-left flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                      {verifySuccessMessage}
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2.5 justify-end pt-1">
+                    <button
+                      type="button"
+                      disabled={verifyActionLoading}
+                      onClick={() => handleVerifyManualPayment(selectedRegPayment.id, "reject")}
+                      className="px-4 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      Reject Payment
+                    </button>
+                    <button
+                      type="button"
+                      disabled={verifyActionLoading}
+                      onClick={() => handleVerifyManualPayment(selectedRegPayment.id, "approve")}
+                      className="px-5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-100 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {verifyActionLoading ? "Processing..." : "Approve & Mark Paid"}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex justify-end pt-2 border-t border-slate-100">
                   <button
-                    onClick={() => setSelectedRegPayment(null)}
-                    className="px-5 py-2 text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white rounded-xl transition-colors cursor-pointer"
+                    type="button"
+                    onClick={() => {
+                      setSelectedRegPayment(null);
+                      setVerifyErrorMessage("");
+                      setVerifySuccessMessage("");
+                      setVerifyRemarks("");
+                    }}
+                    className="px-5 py-2 text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
                   >
-                    Close Record
+                    Close
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* FULLSCREEN PROOF PREVIEW MODAL */}
+      <AnimatePresence>
+        {previewProofModalUrl && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="relative max-w-3xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl border border-slate-700 flex flex-col max-h-[90vh]"
+            >
+              <div className="px-6 py-3 bg-slate-800 text-white flex items-center justify-between border-b border-slate-700">
+                <span className="text-xs font-bold flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-indigo-400" /> Payment Proof Full Resolution Preview
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPreviewProofModalUrl(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-white/10 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="p-4 flex items-center justify-center overflow-auto flex-1 bg-black/40">
+                <img
+                  src={previewProofModalUrl}
+                  alt="Full resolution payment screenshot proof"
+                  className="max-h-[75vh] object-contain rounded-lg shadow-lg"
+                />
               </div>
             </motion.div>
           </div>

@@ -385,7 +385,7 @@ export default function Receipt({
 
       const orderData = await orderRes.json();
       if (!orderRes.ok) {
-        setPaymentError(orderData.error || "Failed to initiate payment. Please contact SVEC admin.");
+        setPaymentError(getErrorMessage(orderData, "Failed to initiate payment. Please contact SVEC admin."));
         setPaymentLoading(false);
         setPaymentStatusMessage("");
         return;
@@ -430,7 +430,7 @@ export default function Receipt({
                 onUpdateRegistration(verifyData.registration);
               }
             } else {
-              setPaymentError(verifyData.error || "Payment verification failed. Please contact support.");
+              setPaymentError(getErrorMessage(verifyData, "Payment verification failed. Please contact support."));
             }
           } catch (err: any) {
             setPaymentError("Network error during payment verification.");
@@ -809,7 +809,45 @@ export default function Receipt({
         </div>
       )}
 
-      {/* Payment Pending Banner */}
+      {/* Payment Pending / Verification Banner */}
+      {registration.paymentStatus === "pending_verification" && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5 shadow-sm print:hidden animate-fade-in text-left">
+          <div className="flex items-start gap-3">
+            <span className="p-2 bg-amber-100 rounded-xl text-amber-700 font-bold text-lg leading-none">⏳</span>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-amber-900">UPI Payment Proof Under Verification</h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-900">Pending Review</span>
+              </div>
+              <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
+                Your team registration for <strong className="font-semibold">{registration.teamName}</strong> has been submitted. Your payment proof with UTR <code className="font-mono bg-amber-100 px-1.5 py-0.5 rounded font-bold">{registration.upiTransactionId || registration.paymentId || "N/A"}</code> is currently being reviewed by the Institutional SPOC / Admin committee.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {registration.paymentStatus === "rejected" && (
+        <div className="mb-6 bg-rose-50 border border-rose-200 rounded-2xl p-5 shadow-sm print:hidden animate-fade-in text-left">
+          <div className="flex items-start gap-3">
+            <span className="p-2 bg-rose-100 rounded-xl text-rose-700 font-bold text-lg leading-none">❌</span>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <h4 className="text-sm font-bold text-rose-900">Payment Proof Rejected</h4>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-200 text-rose-900">Action Required</span>
+              </div>
+              <p className="text-xs text-rose-800/90 mt-1 leading-relaxed">
+                The administrator could not verify your payment proof. 
+                {registration.paymentRemarks && (
+                  <span className="block mt-1 font-semibold italic">Remarks: "{registration.paymentRemarks}"</span>
+                )}
+                Please contact your department coordinator or institutional SPOC for assistance.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {registration.paymentStatus === "pending" && (
         <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5 shadow-sm print:hidden animate-fade-in">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1055,38 +1093,91 @@ export default function Receipt({
                   <div className={`rounded-xl p-4 border ${
                     registration.paymentStatus === "paid"
                       ? "bg-emerald-50/40 border-emerald-100"
+                      : registration.paymentStatus === "pending_verification"
+                      ? "bg-amber-50/50 border-amber-200"
+                      : registration.paymentStatus === "rejected"
+                      ? "bg-rose-50/50 border-rose-200"
                       : registration.paymentStatus === "pending"
                       ? "bg-amber-50/40 border-amber-100"
                       : "bg-slate-50 border-slate-100"
                   }`}>
                     <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                      Payment Information
+                      Payment & Fee Information
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                       <div>
                         <span className="text-slate-400 block">Payment Status</span>
-                        <span className={`font-bold uppercase ${
+                        <span className={`font-bold uppercase inline-flex items-center gap-1.5 ${
                           registration.paymentStatus === "paid"
-                            ? "text-emerald-700"
+                            ? "text-emerald-700 font-extrabold"
+                            : registration.paymentStatus === "pending_verification"
+                            ? "text-amber-700 font-extrabold"
+                            : registration.paymentStatus === "rejected"
+                            ? "text-rose-700 font-extrabold"
                             : registration.paymentStatus === "pending"
                             ? "text-amber-700 font-extrabold animate-pulse"
                             : "text-slate-700"
                         }`}>
-                          {registration.paymentStatus === "paid" ? "Paid" : registration.paymentStatus === "pending" ? "Pending" : "Waived / Free"}
+                          {registration.paymentStatus === "paid" 
+                            ? "✓ Verified & Paid" 
+                            : registration.paymentStatus === "pending_verification"
+                            ? "⏳ Pending Verification"
+                            : registration.paymentStatus === "rejected"
+                            ? "✗ Proof Rejected"
+                            : registration.paymentStatus === "pending" 
+                            ? "⚠️ Pending Payment" 
+                            : "Waived / Free"}
                         </span>
                       </div>
-                      {registration.paymentStatus === "paid" && (
+                      <div>
+                        <span className="text-slate-400 block">Amount</span>
+                        <span className="font-bold text-slate-800 text-sm">
+                          {registration.amountPaid ? `₹${registration.amountPaid}` : "₹0 (Free / Exempted)"}
+                        </span>
+                      </div>
+
+                      {registration.paymentMode && (
                         <div>
-                          <span className="text-slate-400 block">Amount Paid</span>
-                          <span className="font-bold text-slate-800 text-sm">₹{registration.amountPaid}</span>
+                          <span className="text-slate-400 block">Payment Channel</span>
+                          <span className="font-semibold text-slate-700">
+                            {registration.paymentMode === "manual_upi"
+                              ? "📱 UPI QR Code"
+                              : registration.paymentMode === "gateway"
+                              ? "⚡ Razorpay Gateway"
+                              : "Standard"}
+                          </span>
                         </div>
                       )}
-                      {registration.paymentId && (
-                        <div className="sm:col-span-2 pt-2 border-t border-slate-100">
-                          <span className="text-slate-400 block">Transaction Reference ID</span>
-                          <span className="font-mono font-semibold text-slate-600 block break-all select-all">
-                            {registration.paymentId}
+
+                      {(registration.upiTransactionId || registration.paymentId) && (
+                        <div className="sm:col-span-2 pt-2 border-t border-slate-200/50">
+                          <span className="text-slate-400 block">
+                            {registration.paymentMode === "manual_upi" ? "Submitted UPI UTR / Txn ID" : "Transaction Reference ID"}
                           </span>
+                          <span className="font-mono font-semibold text-slate-800 bg-white/70 px-2 py-0.5 rounded border border-slate-200 inline-block mt-0.5 select-all">
+                            {registration.upiTransactionId || registration.paymentId}
+                          </span>
+                        </div>
+                      )}
+
+                      {registration.paymentProofUrl && (
+                        <div className="sm:col-span-2 pt-2 border-t border-slate-200/50 flex items-center justify-between">
+                          <span className="text-slate-400">Payment Proof Screenshot</span>
+                          <a
+                            href={registration.paymentProofUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-indigo-600 font-bold hover:underline flex items-center gap-1"
+                          >
+                            <FileUp className="w-3.5 h-3.5" /> View Uploaded Receipt
+                          </a>
+                        </div>
+                      )}
+
+                      {registration.paymentRemarks && (
+                        <div className="sm:col-span-2 pt-2 border-t border-slate-200/50 text-[11px] text-slate-600">
+                          <span className="text-slate-400 block font-medium">Coordinator Remarks</span>
+                          <p className="italic font-semibold text-slate-700 mt-0.5">"{registration.paymentRemarks}"</p>
                         </div>
                       )}
                     </div>

@@ -1,0 +1,51 @@
+[
+  {
+    "id": "m1",
+    "label": "Home",
+    "type": "system",
+    "target": "home",
+    "order": 0
+  },
+  {
+    "id": "m2",
+    "label": "Problem Statements",
+    "type": "system",
+    "target": "statements",
+    "order": 1
+  },
+  {
+    "id": "m3",
+    "label": "Register Team",
+    "type": "system",
+    "target": "register",
+    "order": 2
+  },
+  {
+    "id": "m4",
+    "label": "Student Login",
+    "type": "system",
+    "target": "student-portal",
+    "order": 3
+  },
+  {
+    "id": "m5",
+    "label": "Selected Teams",
+    "type": "system",
+    "target": "selected-teams",
+    "order": 4
+  },
+  {
+    "id": "m6",
+    "label": "FAQ & Contact",
+    "type": "system",
+    "target": "faq",
+    "order": 5
+  },
+  {
+    "id": "m7",
+    "label": "Admin Login",
+    "type": "system",
+    "target": "admin",
+    "order": 6
+  }
+]

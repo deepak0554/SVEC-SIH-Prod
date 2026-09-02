@@ -18,7 +18,17 @@ import {
   Mail,
   RotateCcw,
   Clock,
-  Sparkles
+  Sparkles,
+  QrCode,
+  Copy,
+  Check,
+  UploadCloud,
+  FileImage,
+  X,
+  CreditCard,
+  Smartphone,
+  CheckCircle2,
+  Image as ImageIcon
 } from "lucide-react";
 import { ProblemStatement, Registration } from "../types";
 import SvecLogo from "./SvecLogo";
@@ -121,10 +131,27 @@ export default function RegistrationForm({
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<"All" | "Software" | "Hardware">("All");
 
-  const [feeSettings, setFeeSettings] = useState<{ feeEnabled: boolean; feeAmount: number; razorpayKeyId: string } | null>(null);
+  const [feeSettings, setFeeSettings] = useState<{
+    feeEnabled: boolean;
+    feeAmount: number;
+    paymentMode?: "gateway" | "manual_upi" | "both" | "free";
+    manualPaymentEnabled?: boolean;
+    upiQrCodeUrl?: string;
+    upiId?: string;
+    upiPayeeName?: string;
+    upiInstructions?: string;
+    requirePaymentScreenshot?: boolean;
+    razorpayKeyId?: string;
+  } | null>(null);
   const [teamMembersCount, setTeamMembersCount] = useState<number>(5);
   const [genderDiversityRequired, setGenderDiversityRequired] = useState<boolean>(true);
   const [paymentStatusMessage, setPaymentStatusMessage] = useState("");
+
+  const [selectedPaymentMode, setSelectedPaymentMode] = useState<"manual_upi" | "gateway">("manual_upi");
+  const [upiTransactionId, setUpiTransactionId] = useState("");
+  const [paymentProofBase64, setPaymentProofBase64] = useState("");
+  const [paymentProofFileName, setPaymentProofFileName] = useState("");
+  const [isCopiedUpi, setIsCopiedUpi] = useState(false);
 
   // Check if draft was previously saved on mount
   useEffect(() => {
@@ -148,6 +175,12 @@ export default function RegistrationForm({
             }
           }
         }
+        if (parsed && parsed.upiTransactionId) {
+          setUpiTransactionId(parsed.upiTransactionId);
+        }
+        if (parsed && parsed.selectedPaymentMode) {
+          setSelectedPaymentMode(parsed.selectedPaymentMode);
+        }
       }
     } catch (e) {}
   }, [STORAGE_KEY, student]);
@@ -158,6 +191,8 @@ export default function RegistrationForm({
       const payload = {
         formData,
         step,
+        upiTransactionId,
+        selectedPaymentMode,
         updatedAt: new Date().toISOString()
       };
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -166,7 +201,7 @@ export default function RegistrationForm({
     } catch (e) {
       console.error("Failed to auto-save draft to sessionStorage", e);
     }
-  }, [formData, step, STORAGE_KEY]);
+  }, [formData, step, upiTransactionId, selectedPaymentMode, STORAGE_KEY]);
 
   const handleResetDraft = () => {
     if (window.confirm("Are you sure you want to clear your saved draft and reset the form? All unsaved inputs will be cleared.")) {
@@ -175,6 +210,9 @@ export default function RegistrationForm({
       } catch (e) {}
       setFormData(defaultFormData);
       setStep(1);
+      setUpiTransactionId("");
+      setPaymentProofBase64("");
+      setPaymentProofFileName("");
       setHasRestoredDraft(false);
       setLastSavedTime(null);
       setErrors({});
@@ -194,9 +232,48 @@ export default function RegistrationForm({
         if (data.genderDiversityRequired !== undefined) {
           setGenderDiversityRequired(data.genderDiversityRequired);
         }
+        if (data.paymentMode === "gateway") {
+          setSelectedPaymentMode("gateway");
+        } else {
+          setSelectedPaymentMode("manual_upi");
+        }
       })
       .catch(err => console.error("Error loading public settings", err));
   }, []);
+
+  const handleCopyUpi = () => {
+    const textToCopy = feeSettings?.upiId || "svec@upi";
+    navigator.clipboard.writeText(textToCopy);
+    setIsCopiedUpi(true);
+    setTimeout(() => setIsCopiedUpi(false), 2500);
+  };
+
+  const handleProofUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setErrors(prev => ({ ...prev, paymentProof: "File size exceeds 5MB limit. Please upload a smaller image." }));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPaymentProofBase64(reader.result as string);
+      setPaymentProofFileName(file.name);
+      setErrors(prev => {
+        const copy = { ...prev };
+        delete copy.paymentProof;
+        return copy;
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveProof = () => {
+    setPaymentProofBase64("");
+    setPaymentProofFileName("");
+  };
 
 
   // Debounced check for team name uniqueness
@@ -321,6 +398,20 @@ export default function RegistrationForm({
 
       if (genderDiversityRequired && teamMembersCount > 0 && !hasFemale) {
         newErrors.femaleRepresentation = `SIH guidelines mandate at least one female student in every ${teamMembersCount + 1}-member team. Please check the gender field of the Team Lead or Team Members to ensure at least one female member is registered.`;
+      }
+
+      if (feeSettings?.feeEnabled) {
+        const isUpi = feeSettings.paymentMode === "manual_upi" || (feeSettings.paymentMode === "both" && selectedPaymentMode === "manual_upi");
+        if (isUpi) {
+          if (!upiTransactionId.trim()) {
+            newErrors.upiTransactionId = "Please enter the 12-digit UPI Transaction / UTR ID after completing payment.";
+          } else if (upiTransactionId.trim().length < 6) {
+            newErrors.upiTransactionId = "Please enter a valid Transaction / UTR reference ID (at least 6 characters).";
+          }
+          if (feeSettings.requirePaymentScreenshot !== false && !paymentProofBase64) {
+            newErrors.paymentProof = "Please upload a screenshot or photo of your successful UPI payment receipt.";
+          }
+        }
       }
     }
 
@@ -538,7 +629,7 @@ export default function RegistrationForm({
     });
   };
 
-  const submitRegistration = async (paymentDetails?: { paymentId: string; orderId: string; signature: string }) => {
+  const submitRegistration = async (paymentDetails?: Record<string, any>) => {
     setIsSubmitting(true);
     setPaymentStatusMessage("Finalizing SVEC SIH Hackathon Registration...");
     try {
@@ -593,6 +684,20 @@ export default function RegistrationForm({
     if (!validateStep(3)) return;
 
     if (feeSettings?.feeEnabled) {
+      const isUpi = feeSettings.paymentMode === "manual_upi" || (feeSettings.paymentMode === "both" && selectedPaymentMode === "manual_upi");
+
+      if (isUpi) {
+        submitRegistration({
+          paymentMode: "manual_upi",
+          upiTransactionId: upiTransactionId.trim(),
+          paymentProofBase64: paymentProofBase64 || undefined,
+          paymentProofFileName: paymentProofFileName || "upi_payment_proof.png",
+          amountPaid: feeSettings.feeAmount
+        });
+        return;
+      }
+
+      // Razorpay Payment Gateway Flow
       setIsSubmitting(true);
       setPaymentStatusMessage("Initiating secure Razorpay payment...");
       setErrors({});
@@ -606,7 +711,7 @@ export default function RegistrationForm({
 
         const orderData = await orderRes.json();
         if (!orderRes.ok) {
-          setErrors({ submit: orderData.error || "Failed to initiate payment. Please contact SVEC admin." });
+          setErrors({ submit: getErrorMessage(orderData, "Failed to initiate payment. Please contact SVEC admin.") });
           setIsSubmitting(false);
           setPaymentStatusMessage("");
           return;
@@ -632,9 +737,11 @@ export default function RegistrationForm({
           order_id: orderData.orderId,
           handler: async function (response: any) {
             submitRegistration({
+              paymentMode: "gateway",
               paymentId: response.razorpay_payment_id,
               orderId: response.razorpay_order_id,
-              signature: response.razorpay_signature
+              signature: response.razorpay_signature,
+              amountPaid: feeSettings.feeAmount
             });
           },
           prefill: {
@@ -1444,8 +1551,261 @@ export default function RegistrationForm({
                   })}
                 </div>
 
+                {/* Step 3: Registration Fee & Payment Verification Section */}
+                {feeSettings?.feeEnabled && (
+                  <div className="mt-8 border border-indigo-100 bg-gradient-to-br from-indigo-50/70 via-slate-50 to-white rounded-2xl p-6 shadow-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-100 pb-4 mb-6">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-200">
+                          <QrCode className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-base font-bold text-slate-800">
+                            Registration Fee & Payment Verification
+                          </h4>
+                          <p className="text-xs text-slate-500">
+                            Complete payment to confirm your team's hackathon registration
+                          </p>
+                        </div>
+                      </div>
+                      <div className="inline-flex items-center gap-2 self-start sm:self-auto bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-sm">
+                        <span>Total Amount:</span>
+                        <span className="text-base font-black">₹{feeSettings.feeAmount}</span>
+                      </div>
+                    </div>
+
+                    {/* Mode Selector if both are enabled */}
+                    {feeSettings.paymentMode === "both" && (
+                      <div className="flex gap-2 p-1 bg-slate-100 rounded-xl mb-6 max-w-md">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPaymentMode("manual_upi")}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                            selectedPaymentMode === "manual_upi"
+                              ? "bg-white text-indigo-600 shadow-sm"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <Smartphone className="w-4 h-4" />
+                          UPI QR Code Scan
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPaymentMode("gateway")}
+                          className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                            selectedPaymentMode === "gateway"
+                              ? "bg-white text-indigo-600 shadow-sm"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          Online Gateway
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Manual UPI Flow */}
+                    {(feeSettings.paymentMode === "manual_upi" || (feeSettings.paymentMode === "both" && selectedPaymentMode === "manual_upi")) && (
+                      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                        {/* Left Column: QR Code & Bank UPI Details */}
+                        <div className="lg:col-span-5 bg-white border border-slate-200 rounded-2xl p-5 flex flex-col items-center text-center">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full mb-3">
+                            Scan with Any UPI App
+                          </span>
+                          
+                          {/* QR Code Container */}
+                          <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-sm mb-3">
+                            <img
+                              src={
+                                feeSettings.upiQrCodeUrl ||
+                                `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                                  `upi://pay?pa=${feeSettings.upiId || "svec@upi"}&pn=${encodeURIComponent(
+                                    feeSettings.upiPayeeName || "Sri Vasavi Engineering College"
+                                  )}&am=${feeSettings.feeAmount}&cu=INR&tn=${encodeURIComponent(
+                                    `SVEC SIH Hackathon - ${formData.teamName || "Team"}`
+                                  )}`
+                                )}`
+                              }
+                              alt="UPI QR Code"
+                              className="w-44 h-44 object-contain rounded-lg"
+                            />
+                          </div>
+
+                          <p className="text-[11px] text-slate-400 mb-4">
+                            Google Pay • PhonePe • Paytm • BHIM • Cred
+                          </p>
+
+                          {/* UPI ID Copy Box */}
+                          <div className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-left">
+                            <div className="flex items-center justify-between text-xs mb-1">
+                              <span className="text-slate-500 font-medium">College UPI ID:</span>
+                              <button
+                                type="button"
+                                onClick={handleCopyUpi}
+                                className="text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1 text-[11px]"
+                              >
+                                {isCopiedUpi ? (
+                                  <>
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                    <span className="text-emerald-600">Copied!</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>Copy ID</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                            <div className="font-mono font-bold text-slate-800 text-sm break-all">
+                              {feeSettings.upiId || "svec@upi"}
+                            </div>
+                            {feeSettings.upiPayeeName && (
+                              <div className="text-[11px] text-slate-500 mt-1">
+                                Payee: <span className="font-medium text-slate-700">{feeSettings.upiPayeeName}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right Column: Reference Number & Payment Screenshot Upload */}
+                        <div className="lg:col-span-7 flex flex-col justify-between space-y-4">
+                          {feeSettings.upiInstructions && (
+                            <div className="bg-indigo-50/70 border border-indigo-100 rounded-xl p-3.5 text-xs text-indigo-900 leading-relaxed">
+                              <p className="font-bold text-indigo-950 mb-1 flex items-center gap-1.5">
+                                <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                                Payment Instructions:
+                              </p>
+                              <p>{feeSettings.upiInstructions}</p>
+                            </div>
+                          )}
+
+                          {/* UPI UTR / Transaction ID */}
+                          <div className="space-y-1.5">
+                            <label htmlFor="upiTransactionIdInput" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                              12-Digit UPI UTR / Transaction Reference ID <span className="text-red-500">*</span>
+                            </label>
+                            <input
+                              type="text"
+                              id="upiTransactionIdInput"
+                              value={upiTransactionId}
+                              onChange={(e) => {
+                                setUpiTransactionId(e.target.value);
+                                if (errors.upiTransactionId) {
+                                  setErrors(prev => {
+                                    const copy = { ...prev };
+                                    delete copy.upiTransactionId;
+                                    return copy;
+                                  });
+                                }
+                              }}
+                              placeholder="e.g. 423456789012 or UPI Ref No."
+                              className={`w-full px-4 py-3 rounded-xl border text-sm font-mono transition-all outline-none bg-white focus:ring-4 focus:ring-indigo-100 ${
+                                errors.upiTransactionId
+                                  ? "border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                                  : "border-slate-200 focus:border-indigo-500"
+                              }`}
+                            />
+                            {errors.upiTransactionId ? (
+                              <p className="text-xs text-red-500 flex items-center gap-1 mt-1">
+                                <AlertCircle className="w-3.5 h-3.5" />
+                                {errors.upiTransactionId}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-slate-400">
+                                Found in your payment app's transaction receipt/history after successful transfer.
+                              </p>
+                            )}
+                          </div>
+
+                          {/* Screenshot Proof Upload */}
+                          <div className="space-y-1.5">
+                            <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                              Upload Payment Screenshot / Receipt {feeSettings.requirePaymentScreenshot !== false && <span className="text-red-500">*</span>}
+                            </label>
+
+                            {paymentProofBase64 ? (
+                              <div className="relative border border-emerald-200 bg-emerald-50/50 rounded-xl p-3 flex items-center justify-between">
+                                <div className="flex items-center gap-3 overflow-hidden">
+                                  <img
+                                    src={paymentProofBase64}
+                                    alt="Uploaded Payment Proof"
+                                    className="w-12 h-12 rounded-lg object-cover border border-emerald-200"
+                                  />
+                                  <div className="truncate">
+                                    <p className="text-xs font-bold text-emerald-900 truncate">
+                                      {paymentProofFileName || "payment_proof.png"}
+                                    </p>
+                                    <p className="text-[11px] text-emerald-600 flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      Screenshot attached successfully
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={handleRemoveProof}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                  title="Remove proof"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            ) : (
+                              <label className={`border-2 border-dashed rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all ${
+                                errors.paymentProof
+                                  ? "border-red-300 bg-red-50/30 hover:bg-red-50/50"
+                                  : "border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/20 bg-white"
+                              }`}>
+                                <UploadCloud className="w-7 h-7 text-indigo-500 mb-1" />
+                                <span className="text-xs font-bold text-slate-700">
+                                  Click or drag & drop payment screenshot
+                                </span>
+                                <span className="text-[11px] text-slate-400 mt-0.5">
+                                  PNG, JPG, or JPEG (Max 5MB)
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  onChange={handleProofUpload}
+                                  className="hidden"
+                                />
+                              </label>
+                            )}
+
+                            {errors.paymentProof && (
+                              <p className="text-xs text-red-500 flex items-center gap-1 mt-1">
+                                <AlertCircle className="w-3.5 h-3.5" />
+                                {errors.paymentProof}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 text-[11px] text-slate-500 bg-slate-100/70 p-2.5 rounded-xl">
+                            <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                            <span>Payment details will be verified by SVEC organizers upon submission.</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Online Gateway Info Flow */}
+                    {feeSettings.paymentMode === "gateway" && (
+                      <div className="bg-white border border-slate-200 rounded-xl p-5 text-center">
+                        <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3">
+                          <CreditCard className="w-6 h-6" />
+                        </div>
+                        <h5 className="text-sm font-bold text-slate-800">Online Gateway Checkout</h5>
+                        <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
+                          Clicking "Pay & Submit Registration" will open the Razorpay checkout where you can pay using UPI, NetBanking, Debit/Credit Card.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {errors.femaleRepresentation && (
-                  <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-xl p-4 flex gap-3 text-sm">
+                  <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-xl p-4 flex gap-3 text-sm mt-6">
                     <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                     <div>
                       <p className="font-bold">SIH Female Representation Mandate</p>
@@ -1455,7 +1815,7 @@ export default function RegistrationForm({
                 )}
 
                 {errors.submit && (
-                  <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 flex gap-3 text-sm">
+                  <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-4 flex gap-3 text-sm mt-6">
                     <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
                     <div>
                       <p className="font-semibold">Submission Error</p>
@@ -1514,6 +1874,18 @@ export default function RegistrationForm({
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
                     Submitting Team...
                   </>
+                ) : feeSettings?.feeEnabled ? (
+                  feeSettings.paymentMode === "gateway" ? (
+                    <>
+                      <CreditCard className="w-4.5 h-4.5" />
+                      Pay ₹{feeSettings.feeAmount} & Submit
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4.5 h-4.5" />
+                      Verify UPI & Submit Registration
+                    </>
+                  )
                 ) : (
                   <>
                     <CheckCircle className="w-4.5 h-4.5" />

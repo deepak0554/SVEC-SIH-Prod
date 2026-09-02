@@ -1,7 +1,9 @@
 /**
- * Helper to safely extract error message from API responses
+ * Helper to safely extract error message from API responses or exceptions
  * Handles:
  * - { success: false, error: { code: "...", message: "..." } }
+ * - { error: { code: "...", message: "..." } }
+ * - { code: "...", message: "..." }
  * - { error: "string" }
  * - { message: "string" }
  * - Error instance / string / unknown
@@ -10,6 +12,10 @@ export function getErrorMessage(error: any, fallback = "An unexpected error occu
   if (!error) return fallback;
 
   if (typeof error === "string") return error;
+
+  if (error instanceof Error && typeof error.message === "string" && error.message.trim().length > 0) {
+    return error.message;
+  }
 
   if (typeof error === "object") {
     // If error.error is an object with message
@@ -24,7 +30,12 @@ export function getErrorMessage(error: any, fallback = "An unexpected error occu
     if (typeof error.message === "string" && error.message.trim().length > 0) {
       return error.message;
     }
+    // If error has a code and message directly
+    if (typeof error.message === "string") {
+      return error.message;
+    }
   }
 
   return fallback;
 }
+

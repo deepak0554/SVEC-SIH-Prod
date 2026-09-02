@@ -221,7 +221,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
       if (res.ok && data.success) {
         callback(data.url);
       } else {
-        alert(data.error || "Failed to upload image.");
+        alert(getErrorMessage(data, "Failed to upload image."));
       }
     } catch (err) {
       alert("Network error while uploading image.");
@@ -263,7 +263,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setHomepage(data.content);
         setSuccess("Landing page primary details saved successfully!");
       } else {
-        setError(data.error || "Failed to update landing page details.");
+        setError(getErrorMessage(data, "Failed to update landing page details."));
       }
     } catch (err) {
       setError("Network error. Could not save homepage details.");
@@ -303,7 +303,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             : "Registration & Hackathon Timeline panel is now HIDDEN from the Landing Page."
         );
       } else {
-        setError(data.error || "Failed to update timeline visibility.");
+        setError(getErrorMessage(data, "Failed to update timeline visibility."));
       }
     } catch (err) {
       setError("Network error. Could not toggle timeline panel visibility.");
@@ -365,7 +365,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setEditingPatronId(null);
         setSuccess(editingPatronId ? "College Patron updated successfully!" : "College Patron added successfully!");
       } else {
-        setError(data.error || "Failed to save patron.");
+        setError(getErrorMessage(data, "Failed to save patron."));
       }
     } catch (err) {
       setError("Network error. Could not save patron.");
@@ -400,7 +400,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             setHomepage(data.content);
             setSuccess("College Patron removed.");
           } else {
-            setError(data.error || "Failed to delete patron.");
+            setError(getErrorMessage(data, "Failed to delete patron."));
           }
         } catch (err) {
           setError("Network error. Could not delete patron.");
@@ -463,7 +463,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setSpocImageBase64("");
         setSuccess(`SPOC Contact added to ${spocType === "student" ? "Students" : "College"} list!`);
       } else {
-        setError(data.error || "Failed to add SPOC.");
+        setError(getErrorMessage(data, "Failed to add SPOC."));
       }
     } catch (err) {
       setError("Network error. Could not add SPOC card.");
@@ -506,7 +506,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             setHomepage(data.content);
             setSuccess("SPOC profile removed successfully.");
           } else {
-            setError(data.error || "Failed to delete SPOC profile.");
+            setError(getErrorMessage(data, "Failed to delete SPOC profile."));
           }
         } catch (err) {
           setError("Network error. Could not delete SPOC profile.");
@@ -534,7 +534,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
     const data = await res.json();
     if (!res.ok || !data.success) {
-      throw new Error(data.error || `Failed to upload "${file.name}".`);
+      throw new Error(getErrorMessage(data, `Failed to upload "${file.name}".`));
     }
     return data.url;
   };
@@ -618,7 +618,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setPhotoBase64("");
         setSuccess("Gallery photo added successfully!");
       } else {
-        setError(data.error || "Failed to add gallery photo.");
+        setError(getErrorMessage(data, "Failed to add gallery photo."));
       }
     } catch (err) {
       setError("Network error. Could not add gallery photo.");
@@ -665,7 +665,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setPendingPhotos([]);
         setSuccess(`Successfully added ${newPhotos.length} photos to the gallery!`);
       } else {
-        setError(data.error || "Failed to add gallery photos.");
+        setError(getErrorMessage(data, "Failed to add gallery photos."));
       }
     } catch (err) {
       setError("Network error. Could not add gallery photos.");
@@ -700,7 +700,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             setHomepage(data.content);
             setSuccess("Gallery item removed successfully.");
           } else {
-            setError(data.error || "Failed to delete photo.");
+            setError(getErrorMessage(data, "Failed to delete photo."));
           }
         } catch (err) {
           setError("Network error. Could not delete gallery photo.");
@@ -771,7 +771,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         handleCancelEditPhoto();
         setSuccess("Gallery photo updated successfully!");
       } else {
-        setError(data.error || "Failed to update gallery photo.");
+        setError(getErrorMessage(data, "Failed to update gallery photo."));
       }
     } catch (err) {
       setError("Network error. Could not update gallery photo.");
@@ -822,7 +822,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setNewGroupNameInput("");
         setSuccess(`Gallery group renamed from "${oldName}" to "${newName}" successfully!`);
       } else {
-        setError(data.error || "Failed to rename gallery group.");
+        setError(getErrorMessage(data, "Failed to rename gallery group."));
       }
     } catch (err) {
       setError("Network error. Could not rename gallery group.");
@@ -864,7 +864,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             setHomepage(data.content);
             setSuccess(`Gallery group "${groupName}" and all of its photos were removed successfully.`);
           } else {
-            setError(data.error || "Failed to delete gallery group.");
+            setError(getErrorMessage(data, "Failed to delete gallery group."));
           }
         } catch (err) {
           setError("Network error. Could not delete gallery group.");
@@ -919,7 +919,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setPagePublished(true);
         setSuccess("Dynamic page saved successfully!");
       } else {
-        setError(data.error || "Failed to save dynamic page.");
+        setError(getErrorMessage(data, "Failed to save dynamic page."));
       }
     } catch (err) {
       setError("Network error. Could not save page.");
@@ -972,7 +972,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         }
         setSuccess("Guidelines & Rules updated successfully!");
       } else {
-        setError(data.error || "Failed to update Guidelines & Rules.");
+        setError(getErrorMessage(data, "Failed to update Guidelines & Rules."));
       }
     } catch (err) {
       setError("Network error. Could not save guidelines.");
@@ -1079,7 +1079,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
             }
             setSuccess("Custom page deleted successfully!");
           } else {
-            setError(data.error || "Failed to delete custom page.");
+            setError(getErrorMessage(data, "Failed to delete custom page."));
           }
         } catch (err) {
           setError("Network error. Could not delete custom page.");
@@ -1185,7 +1185,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setEditingMenu(data.menu.sort((a: MenuItem, b: MenuItem) => a.order - b.order));
         setSuccess("Front-end menu configuration saved and published successfully!");
       } else {
-        setError(data.error || "Failed to update menu configuration.");
+        setError(getErrorMessage(data, "Failed to update menu configuration."));
       }
     } catch (err) {
       setError("Network error. Could not update navigation menu.");
@@ -1220,7 +1220,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         setSettingsData(data.settings);
         setSuccess("Footer Credits Page configuration updated and published successfully!");
       } else {
-        setError(data.error || "Failed to update Footer Credits configuration.");
+        setError(getErrorMessage(data, "Failed to update Footer Credits configuration."));
       }
     } catch (err) {
       setError("Network error. Could not save Footer Credits configuration.");

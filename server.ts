@@ -100,6 +100,11 @@ app.use(express.json({ limit: "5mb" }));
 // Standardize all error responses to format: { success: false, error: { code, message, details }, message }
 app.use(standardizeResponseMiddleware);
 
+// Health check endpoint
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok" });
+});
+
 // Legacy fallback: Keep a helper pointing to saveBase64Securely
 function saveBase64File(
   base64Data: string,
@@ -472,6 +477,13 @@ function readSettings(): FeeConfig {
   return {
     feeEnabled: parsed.feeEnabled ?? false,
     feeAmount: parsed.feeAmount ?? 499,
+    paymentMode: parsed.paymentMode || (parsed.manualPaymentEnabled ? "manual_upi" : "manual_upi"),
+    manualPaymentEnabled: parsed.manualPaymentEnabled !== undefined ? parsed.manualPaymentEnabled : (parsed.paymentMode === "manual_upi" || !!parsed.upiQrCodeUrl || true),
+    upiQrCodeUrl: parsed.upiQrCodeUrl ?? "",
+    upiId: parsed.upiId ?? "svec@upi",
+    upiPayeeName: parsed.upiPayeeName ?? "Sri Vasavi Engineering College",
+    upiInstructions: parsed.upiInstructions ?? "Scan the UPI QR code using any UPI App (Google Pay, PhonePe, Paytm, BHIM). Complete the payment, enter your 12-digit UTR/Transaction ID and attach the payment screenshot below.",
+    requirePaymentScreenshot: parsed.requirePaymentScreenshot !== undefined ? parsed.requirePaymentScreenshot : true,
     razorpayKeyId: process.env.RAZORPAY_KEY_ID || parsed.razorpayKeyId || "",
     razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || parsed.razorpayKeySecret || "",
     jwtEnabled: parsed.jwtEnabled ?? false,
@@ -648,15 +660,17 @@ async function syncSettingsToExternalDB(settings: FeeConfig): Promise<{ success:
       const createTableSql = `
         CREATE TABLE IF NOT EXISTS app_settings (
           id VARCHAR(255) PRIMARY KEY,
-          settings_json TEXT
+          settings_json TEXT,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
+        ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
       `;
       await client.query(createTableSql);
 
       const insertSql = `
-        INSERT INTO app_settings (id, settings_json)
-        VALUES ('system_settings', $1)
-        ON CONFLICT (id) DO UPDATE SET settings_json = EXCLUDED.settings_json;
+        INSERT INTO app_settings (id, settings_json, updated_at)
+        VALUES ('system_settings', $1, NOW())
+        ON CONFLICT (id) DO UPDATE SET settings_json = EXCLUDED.settings_json, updated_at = NOW();
       `;
       await client.query(insertSql, [JSON.stringify(settings)]);
       await client.end();
@@ -1034,20 +1048,44 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
 }
 
 // Restore data from external PostgreSQL or MongoDB database on server boot or on-demand
-async function restoreDataFromExternalDB(): Promise<{ success: boolean; message: string; counts?: any }> {
-  const settings = readSettings();
-  const dbType = settings.dbType || (process.env.MONGODB_URI ? "mongodb" : (process.env.DATABASE_URL || process.env.PG_HOST ? "sql" : "none"));
+async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ success: boolean; message: string; counts?: any }> {
+  const savedSettings = readSettings();
+  const settings = { ...savedSettings, ...(overrideConfig || {}) };
+
+  if (settings.dbPassword && savedSettings.dbPassword) {
+    settings.dbPassword = resolveSecretUpdate(settings.dbPassword, savedSettings.dbPassword, process.env.DB_PASSWORD || process.env.PG_PASSWORD);
+  }
+
+  const rawDbType = (settings.dbType || "").toLowerCase();
+  const isMongoExplicit = rawDbType === "mongodb" || !!process.env.MONGODB_URI;
+  const isSqlExplicit = (rawDbType === "sql" || rawDbType === "postgres" || rawDbType === "postgresql") ||
+    !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_HOST);
+
+  const dbType = isMongoExplicit ? "mongodb" : (isSqlExplicit ? "sql" : "none");
+  const isExplicitlyRequested = !!overrideConfig;
+  const isDbActive = !!(settings.dbEnabled || process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.MONGODB_URI || process.env.PG_HOST);
   
-  if (!settings.dbEnabled && !process.env.DATABASE_URL && !process.env.MONGODB_URI && !process.env.PG_HOST) {
-    return { success: false, message: "No external database configured or enabled." };
+  if (!isExplicitlyRequested && !isDbActive) {
+    return { success: false, message: "No external database actively enabled. Operating on local storage adapter." };
   }
 
   if (dbType === "none") {
-    return { success: false, message: "Database type is set to none." };
+    return { success: false, message: "Database type is set to 'none' or not configured." };
   }
 
   try {
-    const counts = { registrations: 0, students: 0, metadata: 0 };
+    const counts = {
+      registrations: 0,
+      students: 0,
+      problemStatements: 0,
+      criteria: 0,
+      customPages: 0,
+      menuItems: 0,
+      liveUpdates: 0,
+      files: 0,
+      settingsRestored: false,
+      homepageRestored: false
+    };
 
     if (dbType === "mongodb") {
       const { MongoClient } = await import("mongodb");
@@ -1067,10 +1105,10 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
 
       const client = new MongoClient(mongoUrl);
       await client.connect();
-      const db = client.db(settings.dbName || "svec_sih");
+      const mongoDb = client.db(settings.dbName || "svec_sih");
 
       // 1. Restore Registrations
-      const regColl = db.collection(settings.dbCollectionOrTable || "registrations");
+      const regColl = mongoDb.collection(settings.dbCollectionOrTable || "registrations");
       const dbRegistrations = (await regColl.find({}).toArray()) as any[];
       if (dbRegistrations && dbRegistrations.length > 0) {
         const localRegs = readRegistrations();
@@ -1078,7 +1116,6 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
         for (const reg of dbRegistrations) {
           const { _id, ...cleanReg } = reg;
           if (cleanReg.id) {
-            // Restore PPT to disk if base64 exists and local file does not exist
             if (cleanReg.pptBase64 && (!cleanReg.pptFileUrl || !fs.existsSync(path.join(DATA_DIR, cleanReg.pptFileUrl.replace(/^\/api\//, ""))))) {
               const saved = saveBase64File(cleanReg.pptBase64, "ppts", cleanReg.pptFileName || `${cleanReg.teamName}_presentation.pptx`);
               if (saved) cleanReg.pptFileUrl = saved.url;
@@ -1089,11 +1126,10 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
         const mergedRegs = Array.from(localMap.values());
         fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(mergedRegs, null, 2), "utf-8");
         counts.registrations = mergedRegs.length;
-        console.log(`[External DB] Restored ${mergedRegs.length} registrations from MongoDB.`);
       }
 
       // 2. Restore Students
-      const studentColl = db.collection("students");
+      const studentColl = mongoDb.collection("students");
       const dbStudents = (await studentColl.find({}).toArray()) as any[];
       if (dbStudents && dbStudents.length > 0) {
         const localStudents = readStudents();
@@ -1107,65 +1143,202 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
         const mergedStudents = Array.from(studentMap.values());
         fs.writeFileSync(STUDENTS_FILE, JSON.stringify(mergedStudents, null, 2), "utf-8");
         counts.students = mergedStudents.length;
-        console.log(`[External DB] Restored ${mergedStudents.length} students from MongoDB.`);
       }
 
-      // 3. Restore Metadata (Problem statements, homepage, pages, criteria, menu)
-      const metaColl = db.collection("app_metadata");
+      // 3. Restore Metadata & structured collections
+      const psColl = mongoDb.collection("problem_statements");
+      const dbPs = await psColl.find({}).toArray();
+      if (dbPs && dbPs.length > 0) {
+        const cleanPs = dbPs.map(({ _id, ...rest }) => rest);
+        fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(cleanPs, null, 2), "utf-8");
+        counts.problemStatements = cleanPs.length;
+      }
+
+      const critColl = mongoDb.collection("evaluation_criteria");
+      const dbCrit = await critColl.find({}).toArray();
+      if (dbCrit && dbCrit.length > 0) {
+        const cleanCrit = dbCrit.map(({ _id, ...rest }) => rest);
+        fs.writeFileSync(CRITERIA_FILE, JSON.stringify(cleanCrit, null, 2), "utf-8");
+        counts.criteria = cleanCrit.length;
+      }
+
+      const pagesColl = mongoDb.collection("custom_pages");
+      const dbPages = await pagesColl.find({}).toArray();
+      if (dbPages && dbPages.length > 0) {
+        const cleanPages = dbPages.map(({ _id, ...rest }) => rest);
+        fs.writeFileSync(PAGES_FILE, JSON.stringify(cleanPages, null, 2), "utf-8");
+        counts.customPages = cleanPages.length;
+      }
+
+      const menuColl = mongoDb.collection("menu_items");
+      const dbMenu = await menuColl.find({}).toArray();
+      if (dbMenu && dbMenu.length > 0) {
+        const cleanMenu = dbMenu.map(({ _id, ...rest }) => rest);
+        fs.writeFileSync(MENU_FILE, JSON.stringify(cleanMenu, null, 2), "utf-8");
+        counts.menuItems = cleanMenu.length;
+      }
+
+      const updatesColl = mongoDb.collection("live_updates");
+      const dbUpdates = await updatesColl.find({}).toArray();
+      if (dbUpdates && dbUpdates.length > 0) {
+        const cleanUpdates = dbUpdates.map(({ _id, ...rest }) => rest);
+        fs.writeFileSync(UPDATES_FILE, JSON.stringify(cleanUpdates, null, 2), "utf-8");
+        counts.liveUpdates = cleanUpdates.length;
+      }
+
+      const hpColl = mongoDb.collection("homepage_content");
+      const dbHp = await hpColl.findOne({ id: "main" });
+      if (dbHp && (dbHp.content || dbHp.sihDetails)) {
+        const content = dbHp.content || dbHp;
+        const { _id, ...cleanHp } = content;
+        fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(cleanHp, null, 2), "utf-8");
+        counts.homepageRestored = true;
+      }
+
+      const metaColl = mongoDb.collection("app_metadata");
       const metaDocs = await metaColl.find({}).toArray();
       for (const doc of metaDocs) {
         const rawKey = doc.key || doc.id;
         const rawData = doc.data !== undefined ? doc.data : (doc.data_json !== undefined ? doc.data_json : doc.metadata_json);
         if (!rawKey || !rawData) continue;
         const data = typeof rawData === "string" ? JSON.parse(rawData) : rawData;
-        if (rawKey === "problem_statements" && Array.isArray(data)) {
+        if (rawKey === "problem_statements" && Array.isArray(data) && counts.problemStatements === 0) {
           fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
-          counts.metadata++;
-        } else if (rawKey === "homepage_content" && data?.sihDetails) {
+          counts.problemStatements = data.length;
+        } else if (rawKey === "homepage_content" && data?.sihDetails && !counts.homepageRestored) {
           fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(data, null, 2), "utf-8");
-          counts.metadata++;
-        } else if (rawKey === "custom_pages" && Array.isArray(data)) {
+          counts.homepageRestored = true;
+        } else if (rawKey === "custom_pages" && Array.isArray(data) && counts.customPages === 0) {
           fs.writeFileSync(PAGES_FILE, JSON.stringify(data, null, 2), "utf-8");
-          counts.metadata++;
-        } else if (rawKey === "evaluation_criteria" && Array.isArray(data)) {
+          counts.customPages = data.length;
+        } else if (rawKey === "evaluation_criteria" && Array.isArray(data) && counts.criteria === 0) {
           fs.writeFileSync(CRITERIA_FILE, JSON.stringify(data, null, 2), "utf-8");
-          counts.metadata++;
-        } else if (rawKey === "menu_items" && Array.isArray(data)) {
+          counts.criteria = data.length;
+        } else if (rawKey === "menu_items" && Array.isArray(data) && counts.menuItems === 0) {
           fs.writeFileSync(MENU_FILE, JSON.stringify(data, null, 2), "utf-8");
-          counts.metadata++;
+          counts.menuItems = data.length;
+        }
+      }
+
+      // Restore files from app_files collection
+      const filesColl = mongoDb.collection("app_files");
+      const dbFiles = await filesColl.find({}).toArray();
+      if (dbFiles && dbFiles.length > 0) {
+        for (const fileDoc of dbFiles) {
+          if (fileDoc.category && fileDoc.filename && fileDoc.data_base64) {
+            const dir = path.join(DATA_DIR, "uploads", fileDoc.category);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            const filePath = path.join(dir, fileDoc.filename);
+            if (!fs.existsSync(filePath)) {
+              const cleanBase64 = fileDoc.data_base64.replace(/^data:[^;]+;base64,/, "");
+              fs.writeFileSync(filePath, Buffer.from(cleanBase64, "base64"));
+              counts.files++;
+            }
+          }
         }
       }
 
       await client.close();
-      return { success: true, message: `Successfully restored data from MongoDB (${counts.registrations} registrations, ${counts.students} students).`, counts };
+      return { 
+        success: true, 
+        message: `Successfully restored data from MongoDB (${counts.registrations} registrations, ${counts.students} students, ${counts.problemStatements} problem statements, ${counts.files} files).`, 
+        counts 
+      };
 
     } else if (dbType === "sql") {
       const { default: pg } = await import("pg");
-      const clientConfig = process.env.DATABASE_URL 
-        ? { connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_URL.includes("localhost") ? undefined : { rejectUnauthorized: false } }
+      const connStr = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+      const clientConfig = connStr 
+        ? { connectionString: connStr, ssl: (connStr.includes("localhost") || connStr.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false } }
         : {
-            host: settings.dbHost,
-            port: settings.dbPort || 5432,
-            database: settings.dbName,
-            user: settings.dbUsername,
-            password: settings.dbPassword,
+            host: settings.dbHost || "localhost",
+            port: settings.dbPort ? Number(settings.dbPort) : 5432,
+            database: settings.dbName || "svec_sih",
+            user: settings.dbUsername || "postgres",
+            password: settings.dbPassword || "",
             ssl: (settings.dbHost?.includes("localhost") || settings.dbHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
           };
 
       const client = new pg.Client(clientConfig);
       await client.connect();
 
-      const tableName = settings.dbCollectionOrTable || "registrations";
-      
-      const tableCheck = await client.query(`
+      // Ensure base tables exist & migrate schema columns idempotently
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS registrations (
+          id VARCHAR(255) PRIMARY KEY,
+          registration_id VARCHAR(100),
+          team_name VARCHAR(255) NOT NULL,
+          lead_name VARCHAR(255) NOT NULL,
+          lead_department VARCHAR(100) NOT NULL,
+          lead_mobile VARCHAR(50) NOT NULL,
+          lead_gender VARCHAR(50),
+          lead_academic_year VARCHAR(50),
+          member1 VARCHAR(255),
+          member1_gender VARCHAR(50),
+          member1_email VARCHAR(255),
+          member1_phone VARCHAR(50),
+          member1_academic_year VARCHAR(50),
+          member2 VARCHAR(255),
+          member2_gender VARCHAR(50),
+          member2_email VARCHAR(255),
+          member2_phone VARCHAR(50),
+          member2_academic_year VARCHAR(50),
+          member3 VARCHAR(255),
+          member3_gender VARCHAR(50),
+          member3_email VARCHAR(255),
+          member3_phone VARCHAR(50),
+          member3_academic_year VARCHAR(50),
+          member4 VARCHAR(255),
+          member4_gender VARCHAR(50),
+          member4_email VARCHAR(255),
+          member4_phone VARCHAR(50),
+          member4_academic_year VARCHAR(50),
+          member5 VARCHAR(255),
+          member5_gender VARCHAR(50),
+          member5_email VARCHAR(255),
+          member5_phone VARCHAR(50),
+          member5_academic_year VARCHAR(50),
+          has_female_member BOOLEAN DEFAULT FALSE,
+          mentor_name VARCHAR(255),
+          problem_statement_id VARCHAR(255),
+          submitted_at VARCHAR(100),
+          student_email VARCHAR(255),
+          payment_status VARCHAR(50) DEFAULT 'free',
+          payment_id VARCHAR(255),
+          order_id VARCHAR(255),
+          amount_paid NUMERIC,
+          abstract TEXT,
+          implementation_steps TEXT,
+          ppt_file_name VARCHAR(255),
+          ppt_file_url TEXT,
+          ppt_base64 TEXT,
+          proposal_status VARCHAR(50) DEFAULT 'saved',
+          approval_status VARCHAR(50) DEFAULT 'pending',
+          approval_notes TEXT,
+          verified_at VARCHAR(100),
+          verified_by VARCHAR(255),
+          is_final_selected BOOLEAN DEFAULT FALSE,
+          selection_notes TEXT,
+          assigned_evaluator VARCHAR(255),
+          evaluator_scores TEXT,
+          evaluation_notes TEXT,
+          evaluation_status VARCHAR(50) DEFAULT 'pending',
+          total_score NUMERIC DEFAULT 0,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // 1. Restore Registrations from PostgreSQL
+      const regTableCheck = await client.query(`
         SELECT EXISTS (
           SELECT FROM information_schema.tables 
-          WHERE table_name = $1
+          WHERE table_name = 'registrations'
         );
-      `, [tableName]);
+      `);
 
-      if (tableCheck.rows[0]?.exists) {
-        const result = await client.query(`SELECT * FROM ${tableName}`);
+      if (regTableCheck.rows[0]?.exists) {
+        const result = await client.query(`SELECT * FROM registrations ORDER BY created_at DESC`);
         if (result.rows && result.rows.length > 0) {
           const localRegs = readRegistrations();
           const localMap = new Map(localRegs.map(r => [r.id, r]));
@@ -1235,10 +1408,11 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
               assignedEvaluator: row.assigned_evaluator,
               evaluatorScores,
               evaluationNotes: row.evaluation_notes,
-              evaluationStatus: row.evaluation_status || "pending"
+              evaluationStatus: row.evaluation_status || "pending",
+              totalScore: row.total_score ? Number(row.total_score) : 0
             };
 
-            if (mappedReg.pptBase64 && !mappedReg.pptFileUrl) {
+            if (mappedReg.pptBase64 && (!mappedReg.pptFileUrl || !fs.existsSync(path.join(DATA_DIR, mappedReg.pptFileUrl.replace(/^\/api\//, ""))))) {
               const saved = saveBase64File(mappedReg.pptBase64, "ppts", mappedReg.pptFileName || `${mappedReg.teamName}_presentation.pptx`);
               if (saved) mappedReg.pptFileUrl = saved.url;
             }
@@ -1248,11 +1422,93 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
           const mergedRegs = Array.from(localMap.values());
           fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(mergedRegs, null, 2), "utf-8");
           counts.registrations = mergedRegs.length;
-          console.log(`[External DB] Restored ${mergedRegs.length} registrations from PostgreSQL.`);
         }
       }
 
-      // Restore Students from PostgreSQL if students table exists
+      // If registrations table was empty, check normalized teams table fallback
+      if (counts.registrations === 0) {
+        try {
+          const teamsCheck = await client.query(`
+            SELECT EXISTS (
+              SELECT FROM information_schema.tables 
+              WHERE table_name = 'teams'
+            );
+          `);
+          if (teamsCheck.rows[0]?.exists) {
+            const teamsRes = await client.query(`SELECT * FROM teams ORDER BY created_at DESC`);
+            if (teamsRes.rows && teamsRes.rows.length > 0) {
+              const reconstructedRegs: Registration[] = [];
+              for (const t of teamsRes.rows) {
+                // Fetch members
+                const memRes = await client.query(`SELECT * FROM team_members WHERE team_id = $1 ORDER BY member_index ASC`, [t.id]);
+                // Fetch submission
+                const subRes = await client.query(`SELECT * FROM submissions WHERE team_id = $1 LIMIT 1`, [t.id]);
+                const sub = subRes.rows[0] || {};
+                
+                const regObj: any = {
+                  id: t.id,
+                  registrationId: t.registration_id,
+                  teamName: t.team_name,
+                  leadName: t.lead_name,
+                  leadDepartment: t.lead_department,
+                  leadMobile: t.lead_mobile,
+                  leadGender: t.lead_gender,
+                  leadAcademicYear: t.lead_academic_year,
+                  hasFemaleMember: !!t.has_female_member,
+                  mentorName: t.mentor_name,
+                  problemStatementId: t.problem_statement_id,
+                  submittedAt: t.submitted_at || sub.submitted_at,
+                  studentEmail: t.student_email,
+                  paymentStatus: t.payment_status || "free",
+                  paymentId: t.payment_id,
+                  orderId: t.order_id,
+                  amountPaid: t.amount_paid ? Number(t.amount_paid) : undefined,
+                  approvalStatus: t.approval_status || "pending",
+                  approvalNotes: t.approval_notes,
+                  verifiedAt: t.verified_at,
+                  verifiedBy: t.verified_by,
+                  isFinalSelected: !!t.is_final_selected,
+                  selectionNotes: t.selection_notes,
+                  assignedEvaluator: t.assigned_evaluator,
+                  evaluationStatus: t.evaluation_status || "pending",
+                  totalScore: t.total_score ? Number(t.total_score) : 0,
+                  abstract: sub.abstract,
+                  implementationSteps: sub.implementation_steps,
+                  pptFileName: sub.ppt_file_name,
+                  pptFileUrl: sub.ppt_file_url,
+                  pptBase64: sub.ppt_base64,
+                  proposalStatus: sub.proposal_status || "saved"
+                };
+
+                memRes.rows.forEach((m: any, idx: number) => {
+                  const mNum = idx + 1;
+                  regObj[`member${mNum}`] = m.name;
+                  regObj[`member${mNum}Gender`] = m.gender;
+                  regObj[`member${mNum}Email`] = m.email;
+                  regObj[`member${mNum}Phone`] = m.phone;
+                  regObj[`member${mNum}AcademicYear`] = m.academic_year;
+                });
+
+                if (regObj.pptBase64 && (!regObj.pptFileUrl || !fs.existsSync(path.join(DATA_DIR, regObj.pptFileUrl.replace(/^\/api\//, ""))))) {
+                  const saved = saveBase64File(regObj.pptBase64, "ppts", regObj.pptFileName || `${regObj.teamName}_presentation.pptx`);
+                  if (saved) regObj.pptFileUrl = saved.url;
+                }
+
+                reconstructedRegs.push(regObj as Registration);
+              }
+
+              if (reconstructedRegs.length > 0) {
+                fs.writeFileSync(REGISTRATIONS_FILE, JSON.stringify(reconstructedRegs, null, 2), "utf-8");
+                counts.registrations = reconstructedRegs.length;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("[External DB] Error fetching normalized teams:", e);
+        }
+      }
+
+      // 2. Restore Students from PostgreSQL
       try {
         const studentTableCheck = await client.query(`
           SELECT EXISTS (
@@ -1270,9 +1526,12 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
                 id: row.id,
                 email: row.email,
                 passwordHash: row.password_hash || row.password || "",
+                name: row.name || "",
                 gender: row.gender || "",
                 department: row.department || "",
                 mobile: row.mobile || "",
+                academicYear: row.academic_year || "",
+                rollNumber: row.roll_number || "",
                 createdAt: row.created_at || new Date().toISOString()
               };
               if (studentObj.email) {
@@ -1285,58 +1544,238 @@ async function restoreDataFromExternalDB(): Promise<{ success: boolean; message:
           }
         }
       } catch (e) {
-        console.warn("[External DB] Could not restore students table:", e);
+        console.warn("[External DB] Error checking students table:", e);
       }
 
-      // Restore Metadata from PostgreSQL if app_metadata exists
-      const metaCheck = await client.query(`
-        SELECT EXISTS (
-          SELECT FROM information_schema.tables 
-          WHERE table_name = 'app_metadata'
-        );
-      `);
-
-      if (metaCheck.rows[0]?.exists) {
-        const metaRes = await client.query(`SELECT * FROM app_metadata`);
-        for (const row of metaRes.rows) {
-          try {
-            const rawKey = row.key || row.id;
-            const rawJson = row.metadata_json || row.data_json || row.data;
-            if (!rawKey || !rawJson) continue;
-            const data = typeof rawJson === "string" ? JSON.parse(rawJson) : rawJson;
-            if (rawKey === "problem_statements" && Array.isArray(data)) {
-              fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
-              counts.metadata++;
-            } else if (rawKey === "homepage_content" && data?.sihDetails) {
-              fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(data, null, 2), "utf-8");
-              counts.metadata++;
-            } else if (rawKey === "custom_pages" && Array.isArray(data)) {
-              fs.writeFileSync(PAGES_FILE, JSON.stringify(data, null, 2), "utf-8");
-              counts.metadata++;
-            } else if (rawKey === "evaluation_criteria" && Array.isArray(data)) {
-              fs.writeFileSync(CRITERIA_FILE, JSON.stringify(data, null, 2), "utf-8");
-              counts.metadata++;
-            } else if (rawKey === "menu_items" && Array.isArray(data)) {
-              fs.writeFileSync(MENU_FILE, JSON.stringify(data, null, 2), "utf-8");
-              counts.metadata++;
-            } else if (rawKey === "students" && Array.isArray(data)) {
-              fs.writeFileSync(STUDENTS_FILE, JSON.stringify(data, null, 2), "utf-8");
-              counts.students = data.length;
-            }
-          } catch (e) {
-            console.error(`Error parsing metadata ${row.key || row.id}:`, e);
+      // 3. Restore Problem Statements
+      try {
+        const psCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'problem_statements'
+          );
+        `);
+        if (psCheck.rows[0]?.exists) {
+          const psRes = await client.query(`SELECT * FROM problem_statements`);
+          if (psRes.rows && psRes.rows.length > 0) {
+            const statements: ProblemStatement[] = psRes.rows.map(r => ({
+              id: r.id,
+              code: r.code,
+              title: r.title,
+              category: r.category,
+              organization: r.organization,
+              description: r.description || ""
+            }));
+            fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(statements, null, 2), "utf-8");
+            counts.problemStatements = statements.length;
           }
         }
-      }
+      } catch (e) {}
+
+      // 4. Restore Evaluation Criteria
+      try {
+        const critCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'evaluation_criteria'
+          );
+        `);
+        if (critCheck.rows[0]?.exists) {
+          const critRes = await client.query(`SELECT * FROM evaluation_criteria ORDER BY sort_order ASC`);
+          if (critRes.rows && critRes.rows.length > 0) {
+            const criteria: EvaluationCriterion[] = critRes.rows.map(r => ({
+              id: r.id,
+              name: r.name,
+              maxScore: r.max_score || 10,
+              description: r.description || ""
+            }));
+            fs.writeFileSync(CRITERIA_FILE, JSON.stringify(criteria, null, 2), "utf-8");
+            counts.criteria = criteria.length;
+          }
+        }
+      } catch (e) {}
+
+      // 5. Restore App Settings
+      try {
+        const settingsCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'app_settings'
+          );
+        `);
+        if (settingsCheck.rows[0]?.exists) {
+          const sRes = await client.query(`SELECT * FROM app_settings WHERE id = 'global_settings' OR id = 'main' LIMIT 1`);
+          if (sRes.rows && sRes.rows.length > 0) {
+            const row = sRes.rows[0];
+            const parsedConfig = typeof row.settings_json === "string" ? JSON.parse(row.settings_json) : (row.settings_json || {});
+            const merged = { ...readSettings(), ...parsedConfig };
+            fs.writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
+            counts.settingsRestored = true;
+          }
+        }
+      } catch (e) {}
+
+      // 6. Restore Homepage Content
+      try {
+        const hpCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'homepage_content'
+          );
+        `);
+        if (hpCheck.rows[0]?.exists) {
+          const hpRes = await client.query(`SELECT * FROM homepage_content WHERE id = 'main' LIMIT 1`);
+          if (hpRes.rows && hpRes.rows.length > 0) {
+            const row = hpRes.rows[0];
+            const parsedHp = typeof row.content_json === "string" ? JSON.parse(row.content_json) : (row.content_json || {});
+            if (parsedHp.sihDetails) {
+              fs.writeFileSync(HOMEPAGE_FILE, JSON.stringify(parsedHp, null, 2), "utf-8");
+              counts.homepageRestored = true;
+            }
+          }
+        }
+      } catch (e) {}
+
+      // 7. Restore Custom Pages
+      try {
+        const pageCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'custom_pages'
+          );
+        `);
+        if (pageCheck.rows[0]?.exists) {
+          const pRes = await client.query(`SELECT * FROM custom_pages`);
+          if (pRes.rows && pRes.rows.length > 0) {
+            const pages: CustomPage[] = pRes.rows.map(r => ({
+              id: r.id,
+              title: r.title,
+              slug: r.slug,
+              content: r.content,
+              published: r.published ?? true,
+              createdAt: r.created_at
+            }));
+            fs.writeFileSync(PAGES_FILE, JSON.stringify(pages, null, 2), "utf-8");
+            counts.customPages = pages.length;
+          }
+        }
+      } catch (e) {}
+
+      // 8. Restore Menu Items
+      try {
+        const menuCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'menu_items'
+          );
+        `);
+        if (menuCheck.rows[0]?.exists) {
+          const mRes = await client.query(`SELECT * FROM menu_items ORDER BY sort_order ASC`);
+          if (mRes.rows && mRes.rows.length > 0) {
+            const menuItems: MenuItem[] = mRes.rows.map(r => ({
+              id: r.id,
+              label: r.label,
+              type: r.type,
+              target: r.target,
+              order: r.sort_order
+            }));
+            fs.writeFileSync(MENU_FILE, JSON.stringify(menuItems, null, 2), "utf-8");
+            counts.menuItems = menuItems.length;
+          }
+        }
+      } catch (e) {}
+
+      // 9. Restore Live Updates
+      try {
+        const updatesCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'live_updates'
+          );
+        `);
+        if (updatesCheck.rows[0]?.exists) {
+          const uRes = await client.query(`SELECT * FROM live_updates ORDER BY created_at DESC`);
+          if (uRes.rows && uRes.rows.length > 0) {
+            const updates: LiveUpdate[] = uRes.rows.map(r => ({
+              id: r.id,
+              text: r.text,
+              isImportant: !!r.is_important,
+              createdAt: r.created_at
+            }));
+            fs.writeFileSync(UPDATES_FILE, JSON.stringify(updates, null, 2), "utf-8");
+            counts.liveUpdates = updates.length;
+          }
+        }
+      } catch (e) {}
+
+      // 10. Restore Admins
+      try {
+        const adminCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'admins'
+          );
+        `);
+        if (adminCheck.rows[0]?.exists) {
+          const aRes = await client.query(`SELECT * FROM admins`);
+          if (aRes.rows && aRes.rows.length > 0) {
+            const admins = aRes.rows.map(r => ({
+              username: r.username,
+              passwordHash: r.password_hash,
+              role: r.role,
+              department: r.department || ""
+            }));
+            db.writeLocalFile("admins.json", admins);
+          }
+        }
+      } catch (e) {}
+
+      // 11. Restore app_files & hydrate media/files to disk
+      try {
+        const filesCheck = await client.query(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_name = 'app_files'
+          );
+        `);
+        if (filesCheck.rows[0]?.exists) {
+          const fRes = await client.query(`SELECT category, filename, data_base64 FROM app_files`);
+          if (fRes.rows && fRes.rows.length > 0) {
+            for (const r of fRes.rows) {
+              if (r.category && r.filename && r.data_base64) {
+                const dir = path.join(DATA_DIR, "uploads", r.category);
+                if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+                const filePath = path.join(dir, r.filename);
+                if (!fs.existsSync(filePath)) {
+                  const cleanBase64 = r.data_base64.replace(/^data:[^;]+;base64,/, "");
+                  fs.writeFileSync(filePath, Buffer.from(cleanBase64, "base64"));
+                  counts.files++;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {}
 
       await client.end();
-      return { success: true, message: `Successfully restored data from PostgreSQL (${counts.registrations} registrations, ${counts.students} students).`, counts };
+
+      // Trigger db.syncAllFilesToDisk() to ensure all uploads are hydrated to disk
+      try {
+        const fileSyncRes = await db.syncAllFilesToDisk();
+        counts.files += fileSyncRes.restoredCount;
+      } catch (e) {}
+
+      return { 
+        success: true, 
+        message: `Successfully restored data from PostgreSQL (${counts.registrations} registrations, ${counts.students} students, ${counts.problemStatements} problem statements, ${counts.criteria} criteria, ${counts.files} files).`, 
+        counts 
+      };
     }
 
     return { success: false, message: "Unknown database type." };
   } catch (err: any) {
     console.error("[External DB Restore Error]:", err);
-    return { success: false, message: err.message };
+    return { success: false, message: `Restore error: ${err.message}` };
   }
 }
 
@@ -1692,15 +2131,16 @@ app.post(
       const rawCategory = (req.body.category as UploadCategory) || "documents";
       const validCategories: UploadCategory[] = [
         "ppts", "images", "documents", "sample_ppts", "abstracts",
-        "gallery", "homepage", "logos", "certificates", "media"
+        "gallery", "homepage", "logos", "certificates", "media",
+        "payment_proofs", "upi_qr"
       ];
       const validCategory: UploadCategory = validCategories.includes(rawCategory) ? rawCategory : "documents";
 
       // Role authorization: Only Admins/SPOC can upload site branding, certificate images, and official templates
-      if (["sample_ppts", "images", "gallery", "homepage", "logos", "certificates"].includes(validCategory)) {
+      if (["sample_ppts", "images", "gallery", "homepage", "logos", "certificates", "upi_qr"].includes(validCategory)) {
         const isAdmin = (req as any).isAdmin || (req as any).adminRole;
         if (!isAdmin) {
-          return res.status(403).json({ error: "Access Denied: Only administrators can upload images, gallery items and official template files." });
+          return res.status(403).json({ error: "Access Denied: Only administrators can upload images, gallery items, UPI QR codes and official template files." });
         }
       }
 
@@ -1858,6 +2298,114 @@ app.post(
   }
 );
 
+// 3B. Specialized Endpoint: Admin UPI QR Code Image Upload (Supports Multipart & Base64 JSON)
+app.post(
+  "/api/settings/upi-qr/upload",
+  authorize(["ADMIN"]),
+  upload.single("file"),
+  (req, res) => {
+    let savedFileUrl = "";
+    let saveFileObj: any = null;
+
+    if (req.file) {
+      const saveResult = validateAndSaveFile({
+        buffer: req.file.buffer,
+        clientOriginalName: req.file.originalname,
+        clientMimeType: req.file.mimetype,
+        category: "upi_qr"
+      });
+
+      if (!saveResult.success) {
+        return res.status(400).json({ error: saveResult.error });
+      }
+      savedFileUrl = saveResult.file.url;
+      saveFileObj = saveResult.file;
+    } else if (req.body && (req.body.fileBase64 || req.body.data || req.body.image)) {
+      const base64Str = req.body.fileBase64 || req.body.data || req.body.image;
+      const fileName = req.body.fileName || "upi_qr_code.png";
+      const saved = saveBase64Securely(base64Str, "upi_qr", fileName);
+      if (!saved) {
+        return res.status(400).json({ error: "Failed to process base64 QR code image. Please check file format." });
+      }
+      savedFileUrl = saved.url;
+      saveFileObj = saved;
+    } else {
+      return res.status(400).json({ error: "No image file attached. Please select a PNG, JPG, or WEBP QR code image." });
+    }
+
+    const settings = readSettings();
+    settings.upiQrCodeUrl = savedFileUrl;
+    settings.manualPaymentEnabled = true;
+    writeSettings(settings);
+
+    return res.json({
+      success: true,
+      message: "UPI QR code uploaded and configured successfully!",
+      url: savedFileUrl,
+      file: saveFileObj,
+      settings
+    });
+  }
+);
+
+// 3C. Specialized Multipart Endpoint: Student Payment Proof / Screenshot Upload
+app.post(
+  "/api/registrations/my/upload-payment-proof",
+  validateStudentJWT,
+  upload.single("file"),
+  (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No payment proof attached. Please attach a screenshot (PNG, JPG, WEBP) or PDF receipt." });
+    }
+
+    const studentEmail = (req as any).studentUser?.email?.trim().toLowerCase();
+    if (!studentEmail) {
+      return res.status(401).json({ error: "Unauthorized: Invalid student token." });
+    }
+
+    const registrations = readRegistrations();
+    const idx = registrations.findIndex(r => r.studentEmail?.trim().toLowerCase() === studentEmail);
+    if (idx === -1) {
+      return res.status(404).json({ error: "No team registration found for this student account." });
+    }
+
+    const current = registrations[idx];
+    const saveResult = validateAndSaveFile({
+      buffer: req.file.buffer,
+      clientOriginalName: req.file.originalname,
+      clientMimeType: req.file.mimetype,
+      category: "payment_proofs"
+    });
+
+    if (!saveResult.success) {
+      return res.status(400).json({ error: saveResult.error });
+    }
+
+    current.paymentProofUrl = saveResult.file.url;
+    current.paymentProofFileName = req.file.originalname;
+    current.paymentProofBase64 = undefined;
+    current.paymentStatus = "pending_verification";
+    if (req.body.upiTransactionId) {
+      current.upiTransactionId = req.body.upiTransactionId.trim();
+    }
+    current.paymentRemarks = undefined; // Clear previous rejection remarks on resubmit
+    registrations[idx] = current;
+    writeRegistrations(registrations);
+
+    // Sync to external DB in background
+    syncRegistrationToExternalDB(current).catch(err => {
+      console.error("Failed to sync registration after payment proof upload:", err);
+    });
+
+    return res.json({
+      success: true,
+      message: "Payment proof screenshot uploaded and submitted for SPOC verification!",
+      file: saveResult.file,
+      registration: current
+    });
+  }
+);
+
 // 4. Secure File Retrieval & Serving (Path Traversal Protected, MIME Verified & Auto-Hydrated from DB on Redeploy)
 app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res) => {
   const { category, filename } = req.params;
@@ -1871,7 +2419,9 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
     "homepage",
     "logos",
     "certificates",
-    "media"
+    "media",
+    "payment_proofs",
+    "upi_qr"
   ];
 
   if (!validCategories.includes(category as UploadCategory)) {
@@ -1900,19 +2450,39 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
   else if (ext === ".docx") contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   else if (ext === ".doc") contentType = "application/msword";
 
-  const isImage = ["images", "gallery", "homepage", "logos", "certificates"].includes(category) || [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext);
+  const isImage = ["images", "gallery", "homepage", "logos", "certificates", "upi_qr", "payment_proofs"].includes(category) || [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext);
 
-  // 1. If file is available on local disk, serve immediately
-  if (fs.existsSync(filePath)) {
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    if (isImage) {
-      res.setHeader("Content-Disposition", "inline");
-    } else {
-      res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
+  // 1. If file is available on local disk in any standard uploads location, serve immediately
+  const candidatePaths = [
+    path.join(targetDir, cleanFilename),
+    path.join(DATA_DIR, "uploads", category, cleanFilename),
+    path.join(DATA_DIR, "uploads", "images", cleanFilename),
+    path.join(DATA_DIR, "uploads", "documents", cleanFilename),
+    path.join(DATA_DIR, "uploads", "ppts", cleanFilename),
+    path.join(DATA_DIR, "uploads", "sample_ppts", cleanFilename),
+    path.join(DATA_DIR, "uploads", "upi_qr", cleanFilename),
+    path.join(DATA_DIR, "uploads", "payment_proofs", cleanFilename),
+    path.join(process.cwd(), "uploads", category, cleanFilename),
+    path.join(process.cwd(), "uploads", "images", cleanFilename),
+    path.join(process.cwd(), "uploads", "documents", cleanFilename),
+    path.join(process.cwd(), "uploads", "ppts", cleanFilename),
+    path.join(process.cwd(), "uploads", "sample_ppts", cleanFilename),
+    path.join(process.cwd(), "uploads", "upi_qr", cleanFilename),
+    path.join(process.cwd(), "uploads", "payment_proofs", cleanFilename)
+  ];
+
+  for (const p of candidatePaths) {
+    if (fs.existsSync(p)) {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      if (isImage) {
+        res.setHeader("Content-Disposition", "inline");
+      } else {
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
+      }
+      return res.sendFile(p);
     }
-    return res.sendFile(filePath);
   }
 
   // 2. On-demand restoration from persistent Database / Cloud Storage (Survives Container Redeploys)
@@ -1922,9 +2492,18 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
       const cleanBase64 = fileRecord.dataBase64.replace(/^data:[^;]+;base64,/, "");
       const buffer = Buffer.from(cleanBase64, "base64");
       if (buffer.length > 0) {
-        // Write back to ephemeral container disk for fast subsequent requests
-        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-        fs.writeFileSync(filePath, buffer);
+        // Write back to container disk in all upload paths for fast subsequent requests
+        const writeDirs = [
+          targetDir,
+          path.join(DATA_DIR, "uploads", category),
+          path.join(process.cwd(), "uploads", category)
+        ];
+        for (const wd of writeDirs) {
+          try {
+            if (!fs.existsSync(wd)) fs.mkdirSync(wd, { recursive: true });
+            fs.writeFileSync(path.join(wd, cleanFilename), buffer);
+          } catch (e) {}
+        }
 
         res.setHeader("X-Content-Type-Options", "nosniff");
         res.setHeader("Content-Type", fileRecord.mimeType || contentType);
@@ -2083,7 +2662,7 @@ app.get("/api/registrations/:id/ppt", validateParams(singleIdParamSchema), extra
 
 // Admin: Manual Database Restore Trigger
 app.post("/api/admin/restore-from-db", authorize(["ADMIN"]), async (req, res) => {
-  const result = await restoreDataFromExternalDB();
+  const result = await restoreDataFromExternalDB(req.body);
   if (result.success) {
     res.json(result);
   } else {
@@ -2272,11 +2851,18 @@ app.post("/api/auth/login", validateBody(studentLoginSchema), (req, res) => {
 });
 
 // Public Settings (safe, hides secret)
-app.get("/api/settings/public", (req, res) => {
-  const settings = readSettings();
+app.get("/api/settings/public", async (req, res) => {
+  const settings = await db.getSettings();
   res.json({
     feeEnabled: settings.feeEnabled,
     feeAmount: settings.feeAmount,
+    paymentMode: settings.paymentMode || (settings.manualPaymentEnabled ? "manual_upi" : "gateway"),
+    manualPaymentEnabled: settings.manualPaymentEnabled ?? (settings.paymentMode === "manual_upi" || !!settings.upiQrCodeUrl),
+    upiQrCodeUrl: settings.upiQrCodeUrl || "",
+    upiId: settings.upiId || "",
+    upiPayeeName: settings.upiPayeeName || "Sri Vasavi Engineering College",
+    upiInstructions: settings.upiInstructions || "",
+    requirePaymentScreenshot: settings.requirePaymentScreenshot !== undefined ? settings.requirePaymentScreenshot : true,
     razorpayKeyId: settings.razorpayKeyId,
     jwtEnabled: !!settings.jwtEnabled,
     portalTheme: settings.portalTheme || "light",
@@ -2333,8 +2919,8 @@ app.get("/api/settings/public", (req, res) => {
 });
 
 // Admin Settings (private, requires passcode, masks secret keys)
-app.get("/api/settings", authorize(["ADMIN"]), (req, res) => {
-  const settings = readSettings();
+app.get("/api/settings", authorize(["ADMIN"]), async (req, res) => {
+  const settings = await db.getSettings();
   res.json(sanitizeSettingsForAdmin(settings));
 });
 
@@ -2343,6 +2929,13 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
   const { 
     feeEnabled, 
     feeAmount, 
+    paymentMode,
+    manualPaymentEnabled,
+    upiQrCodeUrl,
+    upiId,
+    upiPayeeName,
+    upiInstructions,
+    requirePaymentScreenshot,
     razorpayKeyId, 
     razorpayKeySecret, 
     jwtEnabled,
@@ -2447,10 +3040,58 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
   const resolvedWhatsappToken = resolveSecretUpdate(whatsappAccessToken, currentSettings.whatsappAccessToken, process.env.WHATSAPP_ACCESS_TOKEN);
   const resolvedDbPassword = resolveSecretUpdate(dbPassword, currentSettings.dbPassword, process.env.DB_PASSWORD || process.env.PG_PASSWORD);
 
+  // Automatically extract and save base64 image strings to filesystem if provided directly in payload
+  let finalUpiQrCodeUrl = (upiQrCodeUrl || "").trim();
+  if (finalUpiQrCodeUrl.startsWith("data:image/")) {
+    const saved = saveBase64Securely(finalUpiQrCodeUrl, "upi_qr", "upi_qr_code.png");
+    if (saved) {
+      finalUpiQrCodeUrl = saved.url;
+    }
+  }
+
+  let finalLogoUrl = (logoUrl || "").trim();
+  if (finalLogoUrl.startsWith("data:image/")) {
+    const saved = saveBase64Securely(finalLogoUrl, "logos", "svec_logo.png");
+    if (saved) {
+      finalLogoUrl = saved.url;
+    }
+  }
+
+  let finalCertBgUrl = (certificateBgUrl || "").trim();
+  if (finalCertBgUrl.startsWith("data:image/")) {
+    const saved = saveBase64Securely(finalCertBgUrl, "certificates", "certificate_bg.png");
+    if (saved) {
+      finalCertBgUrl = saved.url;
+    }
+  }
+
+  let finalSignatureUrl = consentLetterSignatureUrl !== undefined ? (consentLetterSignatureUrl || "").trim() : currentSettings.consentLetterSignatureUrl;
+  if (finalSignatureUrl && finalSignatureUrl.startsWith("data:image/")) {
+    const saved = saveBase64Securely(finalSignatureUrl, "images", "signature.png");
+    if (saved) {
+      finalSignatureUrl = saved.url;
+    }
+  }
+
+  let finalStampUrl = consentLetterStampUrl !== undefined ? (consentLetterStampUrl || "").trim() : currentSettings.consentLetterStampUrl;
+  if (finalStampUrl && finalStampUrl.startsWith("data:image/")) {
+    const saved = saveBase64Securely(finalStampUrl, "images", "stamp.png");
+    if (saved) {
+      finalStampUrl = saved.url;
+    }
+  }
+
   const updated: FeeConfig = {
     ...currentSettings,
     feeEnabled: !!feeEnabled,
     feeAmount: Number(feeAmount) || 0,
+    paymentMode: (paymentMode || "manual_upi") as any,
+    manualPaymentEnabled: manualPaymentEnabled !== undefined ? !!manualPaymentEnabled : (paymentMode === "manual_upi"),
+    upiQrCodeUrl: finalUpiQrCodeUrl,
+    upiId: (upiId || "svec@upi").trim(),
+    upiPayeeName: (upiPayeeName || "Sri Vasavi Engineering College").trim(),
+    upiInstructions: (upiInstructions || "").trim(),
+    requirePaymentScreenshot: requirePaymentScreenshot !== undefined ? !!requirePaymentScreenshot : true,
     razorpayKeyId: (razorpayKeyId || "").trim(),
     razorpayKeySecret: resolvedRazorpaySecret,
     jwtEnabled: !!jwtEnabled,
@@ -2461,7 +3102,7 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     smtpPass: resolvedSmtpPass,
     smtpFrom: (smtpFrom || "").trim(),
     portalTheme: (portalTheme || "light").trim() as any,
-    logoUrl: (logoUrl || "").trim(),
+    logoUrl: finalLogoUrl,
     portalTitle: (portalTitle || "SVEC - SIH Internal Hackathon 2026").trim(),
     portalCaption: (portalCaption || "Sri Vasavi Engineering College").trim(),
     teamMembersCount: teamMembersCount !== undefined ? Number(teamMembersCount) : 5,
@@ -2515,7 +3156,7 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     certificateSignatory2Name: (certificateSignatory2Name || "").trim(),
     certificateSignatory2Title: (certificateSignatory2Title || "").trim(),
     certificateBgType: (certificateBgType || "classic") as any,
-    certificateBgUrl: (certificateBgUrl || "").trim(),
+    certificateBgUrl: finalCertBgUrl,
     certificateBorderColor: (certificateBorderColor || "#4f46e5").trim(),
     certificateDateText: (certificateDateText || "").trim(),
     creditsTitle: (creditsTitle || "Department of CSE").trim(),
@@ -2535,8 +3176,8 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     consentLetterPrincipalName: consentLetterPrincipalName !== undefined ? (consentLetterPrincipalName || "").trim() : currentSettings.consentLetterPrincipalName,
     consentLetterDesignation1: consentLetterDesignation1 !== undefined ? (consentLetterDesignation1 || "").trim() : currentSettings.consentLetterDesignation1,
     consentLetterDesignation2: consentLetterDesignation2 !== undefined ? (consentLetterDesignation2 || "").trim() : currentSettings.consentLetterDesignation2,
-    consentLetterSignatureUrl: consentLetterSignatureUrl !== undefined ? (consentLetterSignatureUrl || "").trim() : currentSettings.consentLetterSignatureUrl,
-    consentLetterStampUrl: consentLetterStampUrl !== undefined ? (consentLetterStampUrl || "").trim() : currentSettings.consentLetterStampUrl,
+    consentLetterSignatureUrl: finalSignatureUrl,
+    consentLetterStampUrl: finalStampUrl,
     consentLetterShowSignature: consentLetterShowSignature !== undefined ? !!consentLetterShowSignature : currentSettings.consentLetterShowSignature,
     consentLetterShowStamp: consentLetterShowStamp !== undefined ? !!consentLetterShowStamp : currentSettings.consentLetterShowStamp,
     consentLetterIncludeLetterhead: consentLetterIncludeLetterhead !== undefined ? !!consentLetterIncludeLetterhead : currentSettings.consentLetterIncludeLetterhead,
@@ -3018,18 +3659,29 @@ app.post("/api/admin/login", validateBody(adminLoginSchema), (req, res) => {
 
   try {
     const admins = getAdmins();
-    const adminIndex = admins.findIndex(
-      a => a.username.trim().toLowerCase() === username.trim().toLowerCase() && 
-           (a.role === role || normalizeRole(a.role) === normalizeRole(role))
-    );
+    const cleanUsername = username.trim().toLowerCase();
+
+    // 1. Try finding by matching username and role if provided
+    let adminIndex = -1;
+    if (role) {
+      adminIndex = admins.findIndex(
+        a => a.username.trim().toLowerCase() === cleanUsername && 
+             (a.role === role || normalizeRole(a.role) === normalizeRole(role))
+      );
+    }
+
+    // 2. Fallback: match by username alone if not found or role not specified
+    if (adminIndex === -1) {
+      adminIndex = admins.findIndex(a => a.username.trim().toLowerCase() === cleanUsername);
+    }
 
     if (adminIndex === -1) {
-      return res.status(401).json({ error: "Invalid username, password, or role selection." });
+      return res.status(401).json({ error: "Invalid username or account not found. Please check your credentials." });
     }
 
     const admin = admins[adminIndex];
     if (!verifyPassword(password, admin.passwordHash)) {
-      return res.status(401).json({ error: "Invalid username, password, or role selection." });
+      return res.status(401).json({ error: "Invalid password for user " + admin.username });
     }
 
     // Transparent upgrade of legacy SHA-256 hash to salted PBKDF2/SHA-256
@@ -3322,6 +3974,72 @@ app.delete("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), 
 
   writeStatements(filtered);
   res.json({ success: true, message: "Deleted successfully" });
+});
+
+// POST restore default problem statements (Admin)
+app.post("/api/problem-statements/restore-default", authorize(["ADMIN", "STUDENT_SPOC"]), async (req, res) => {
+  writeStatements(defaultStatements);
+  res.json({
+    success: true,
+    message: "Default problem statements restored and synchronized with database.",
+    statements: defaultStatements
+  });
+});
+
+// POST retrieve / refresh problem statements from database (Admin)
+app.post("/api/problem-statements/sync", authorize(["ADMIN", "STUDENT_SPOC"]), async (req, res) => {
+  try {
+    const dbStatements = await db.getProblemStatements();
+    if (dbStatements && dbStatements.length > 0) {
+      db.writeLocalFile("problem_statements.json", dbStatements);
+      return res.json({
+        success: true,
+        message: `Successfully retrieved ${dbStatements.length} problem statements from database.`,
+        statements: dbStatements
+      });
+    } else {
+      const current = readStatements();
+      await db.saveProblemStatements(current);
+      return res.json({
+        success: true,
+        message: `Synced ${current.length} problem statements to database.`,
+        statements: current
+      });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: "Failed to sync problem statements with database: " + err.message });
+  }
+});
+
+// GET public list of finalized/selected teams (Public view for Selected Teams)
+app.get("/api/registrations/selected", (req, res) => {
+  try {
+    const allRegistrations = readRegistrations();
+    const selected = allRegistrations
+      .filter(r => r.isFinalSelected === true || r.approvalStatus === "approved")
+      .map(r => ({
+        id: r.id,
+        registrationId: r.registrationId,
+        teamName: r.teamName,
+        leadName: r.leadName,
+        leadDepartment: r.leadDepartment,
+        leadAcademicYear: r.leadAcademicYear,
+        mentorName: r.mentorName,
+        problemStatementId: r.problemStatementId,
+        hasFemaleMember: r.hasFemaleMember,
+        member1: r.member1,
+        member2: r.member2,
+        member3: r.member3,
+        member4: r.member4,
+        member5: r.member5,
+        selectionNotes: r.selectionNotes || "",
+        submittedAt: r.submittedAt
+      }));
+    res.json(selected);
+  } catch (err) {
+    console.error("Error fetching selected teams:", err);
+    res.status(500).json({ error: "Failed to fetch selected teams" });
+  }
 });
 
 // GET registrations (Admin, Dept SPOC, Student SPOC, Evaluator, Faculty)
@@ -4043,29 +4761,59 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
   }
 
   // 2. Authoritative Payment Verification & Security
-  let paymentStatus: "free" | "paid" = "free";
+  let paymentStatus: "free" | "paid" | "pending" | "pending_verification" | "rejected" = "free";
+  let paymentMode: "gateway" | "manual_upi" | "free" = "free";
   let verifiedAmountPaid = 0;
+  let finalPaymentProofUrl = req.body.paymentProofUrl || "";
+
+  const isManualUpi =
+    settings.feeEnabled &&
+    (settings.paymentMode === "manual_upi" ||
+      settings.manualPaymentEnabled ||
+      req.body.paymentMode === "manual_upi" ||
+      !!req.body.paymentProofUrl ||
+      !!req.body.paymentProofBase64 ||
+      !!req.body.upiTransactionId ||
+      !settings.razorpayKeyId ||
+      settings.razorpayKeyId === "rzp_test_mock");
 
   if (settings.feeEnabled) {
-    if (!paymentId || !orderId) {
-      return res.status(400).json({ error: "Payment verification details (Order ID and Payment ID) are required." });
+    if (isManualUpi) {
+      paymentMode = "manual_upi";
+      paymentStatus = "pending_verification";
+      verifiedAmountPaid = settings.feeAmount || 0;
+
+      // Handle payment proof base64 upload if provided directly in payload
+      if (req.body.paymentProofBase64 && typeof req.body.paymentProofBase64 === "string" && req.body.paymentProofBase64.startsWith("data:")) {
+        const safeProofName = req.body.paymentProofFileName || `${teamName.trim().replace(/[^a-zA-Z0-9]/g, "_")}_payment_proof.png`;
+        const savedProof = saveBase64Securely(req.body.paymentProofBase64, "payment_proofs", safeProofName);
+        if (savedProof) {
+          finalPaymentProofUrl = savedProof.url;
+        }
+      }
+    } else {
+      // Gateway flow
+      paymentMode = "gateway";
+      if (!paymentId || !orderId) {
+        return res.status(400).json({ error: "Payment verification details (Order ID and Payment ID) are required." });
+      }
+
+      const payResult = await verifyAuthoritativePayment({
+        orderId,
+        paymentId,
+        signature,
+        teamName: teamName.trim(),
+        studentEmail: studentEmail?.trim(),
+        settings
+      });
+
+      if (!payResult.verified) {
+        return res.status(400).json({ error: payResult.error || "Payment verification failed." });
+      }
+
+      paymentStatus = "paid";
+      verifiedAmountPaid = payResult.amountPaid;
     }
-
-    const payResult = await verifyAuthoritativePayment({
-      orderId,
-      paymentId,
-      signature,
-      teamName: teamName.trim(),
-      studentEmail: studentEmail?.trim(),
-      settings
-    });
-
-    if (!payResult.verified) {
-      return res.status(400).json({ error: payResult.error || "Payment verification failed." });
-    }
-
-    paymentStatus = "paid";
-    verifiedAmountPaid = payResult.amountPaid;
   }
 
   // 3. Generate Registration ID (e.g. SIH-REG-1001)
@@ -4138,9 +4886,13 @@ app.post("/api/registrations", validateStudentJWT, validateBody(teamRegistration
     submittedAt: new Date().toISOString(),
     studentEmail: studentEmail?.trim() || undefined,
     paymentStatus,
-    paymentId,
-    orderId,
-    amountPaid: paymentStatus === "paid" ? verifiedAmountPaid : undefined,
+    paymentMode,
+    paymentId: paymentId || (isManualUpi ? `upi_${Date.now()}` : undefined),
+    orderId: orderId || (isManualUpi ? `upi_ord_${Date.now()}` : undefined),
+    amountPaid: paymentStatus === "paid" || paymentStatus === "pending_verification" ? verifiedAmountPaid : undefined,
+    paymentProofUrl: finalPaymentProofUrl || undefined,
+    paymentProofFileName: req.body.paymentProofFileName || undefined,
+    upiTransactionId: req.body.upiTransactionId?.trim() || undefined,
     approvalStatus: "pending",
     abstract: req.body.abstract?.trim() || undefined,
     implementationSteps: req.body.implementationSteps?.trim() || undefined,
@@ -4449,6 +5201,98 @@ app.put("/api/registrations/:id", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC
   res.json({ success: true, registration: updated });
 });
 
+// POST verify manual UPI payment (Admin / Dept SPOC / Student SPOC)
+app.post("/api/registrations/:id/verify-manual-payment", authorize(["ADMIN", "DEPT_SPOC", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
+  const { id } = req.params;
+  const { action, remarks } = req.body; // action: "approve" | "reject"
+
+  if (!action || !["approve", "reject"].includes(action)) {
+    return res.status(400).json({ error: "Action must be either 'approve' or 'reject'." });
+  }
+
+  const registrations = readRegistrations();
+  const idx = registrations.findIndex(r => r.id === id);
+  if (idx === -1) {
+    return res.status(404).json({ error: "Registration not found" });
+  }
+
+  const userRole = (req as any).userRole;
+  const adminDept = (req as any).adminDepartment;
+  if (userRole === "DEPT_SPOC" && adminDept && !isDepartmentMatch(registrations[idx].leadDepartment, adminDept)) {
+    return res.status(403).json({ error: `Access Denied: You are only permitted to verify teams in your department (${adminDept}).` });
+  }
+
+  const current = registrations[idx];
+  const settings = readSettings();
+  const verifierName = (req as any).adminUser?.name || (req as any).adminUser?.username || userRole;
+
+  if (action === "approve") {
+    current.paymentStatus = "paid";
+    current.amountPaid = settings.feeAmount || current.amountPaid || 0;
+    current.paymentVerifiedBy = verifierName;
+    current.paymentVerifiedAt = new Date().toISOString();
+    current.paymentRemarks = remarks || "UPI payment verified & approved.";
+  } else {
+    current.paymentStatus = "rejected";
+    current.paymentRemarks = remarks || "Payment proof could not be verified. Please re-upload a clear transaction screenshot or UTR number.";
+    current.paymentVerifiedBy = verifierName;
+    current.paymentVerifiedAt = new Date().toISOString();
+  }
+
+  registrations[idx] = current;
+  writeRegistrations(registrations);
+
+  // Sync to external DB in background
+  syncRegistrationToExternalDB(current).catch(err => {
+    console.error("Failed to sync verified registration to external DB in background:", err);
+  });
+
+  // Send status update notification email to team
+  if (current.studentEmail) {
+    const isApproved = action === "approve";
+    const statusSubject = isApproved
+      ? `Payment Verified & Registration Approved - Team ${current.teamName}`
+      : `Payment Verification Update - Action Required for Team ${current.teamName}`;
+
+    const statusHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff; color: #1e293b;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <span style="display: inline-block; background-color: ${isApproved ? '#dcfce7' : '#fee2e2'}; color: ${isApproved ? '#166534' : '#991b1b'}; padding: 6px 14px; border-radius: 9999px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
+            ${isApproved ? 'Payment Approved' : 'Payment Needs Revision'}
+          </span>
+          <h2 style="color: #4f46e5; margin-top: 12px; margin-bottom: 4px; font-size: 20px; font-weight: bold;">Smart India Hackathon 2026</h2>
+          <p style="font-size: 14px; color: #64748b; margin-top: 0;">SVEC Campus Hackathon</p>
+        </div>
+
+        <div style="background-color: #f8fafc; border: 1px solid #f1f5f9; padding: 18px; border-radius: 8px; margin: 20px 0;">
+          <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: bold; color: #0f172a;">Team: ${current.teamName} (${current.registrationId})</p>
+          <p style="margin: 0 0 8px 0; font-size: 13px; color: #475569;"><strong>Status:</strong> ${isApproved ? 'Verified & Approved' : 'Payment Proof Rejected'}</p>
+          <p style="margin: 0 0 8px 0; font-size: 13px; color: #475569;"><strong>Verified By:</strong> ${verifierName}</p>
+          ${remarks ? `<p style="margin: 0; font-size: 13px; color: #334155;"><strong>Coordinator Remarks:</strong> ${remarks}</p>` : ''}
+        </div>
+
+        <p style="font-size: 14px; color: #334155; line-height: 1.6;">
+          ${isApproved 
+            ? 'Your payment screenshot has been verified by the coordinator. Your team is officially registered for the hackathon.' 
+            : 'Your payment proof could not be verified. Please log into the Student Portal to check the remarks and upload a clear screenshot of your transaction.'}
+        </p>
+        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
+        <p style="font-size: 11px; color: #94a3b8; text-align: center; margin-bottom: 0;">SVEC Smart India Hackathon Portal</p>
+      </div>
+    `;
+
+    sendEmail(current.studentEmail, statusSubject, statusHtml).catch(err => {
+      console.error("Failed to dispatch payment status email:", err);
+    });
+  }
+
+  return res.json({
+    success: true,
+    message: action === "approve" ? "Manual payment verified and registration approved!" : "Payment marked as rejected.",
+    registration: current
+  });
+});
+
 // DELETE a registration (Super Admin SPOC & Dept SPOC for department teams)
 app.delete("/api/registrations/:id", authorize(["ADMIN", "DEPT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
   const { id } = req.params;
@@ -4474,8 +5318,9 @@ app.delete("/api/registrations/:id", authorize(["ADMIN", "DEPT_SPOC"]), validate
 // ------------------- LANDING PAGE & CUSTOM MENUS ENDPOINTS -------------------
 
 // 1. GET Homepage content (Public)
-app.get("/api/homepage", (req, res) => {
-  res.json(readHomepage());
+app.get("/api/homepage", async (req, res) => {
+  const content = await db.getHomepageContent();
+  res.json(content);
 });
 
 // 2. POST Save Homepage content (Admin SPOC only)
@@ -4486,8 +5331,9 @@ app.post("/api/homepage", authorize(["ADMIN"]), validateBody(homepageContentSche
 });
 
 // Live Updates Endpoints (Public & Admin)
-app.get("/api/updates", (req, res) => {
-  res.json(readUpdates());
+app.get("/api/updates", async (req, res) => {
+  const updates = await db.getLiveUpdates();
+  res.json(updates);
 });
 
 app.post("/api/updates", authorize(["ADMIN"]), validateBody(updatesArraySchema), (req, res) => {
@@ -4497,8 +5343,9 @@ app.post("/api/updates", authorize(["ADMIN"]), validateBody(updatesArraySchema),
 });
 
 // 3. GET Custom dynamic pages list (Public)
-app.get("/api/custom-pages", (req, res) => {
-  res.json(readCustomPages());
+app.get("/api/custom-pages", async (req, res) => {
+  const pages = await db.getCustomPages();
+  res.json(pages);
 });
 
 // 4. POST Save/Create/Update Custom dynamic page (Admin SPOC only)
@@ -4551,8 +5398,9 @@ app.delete("/api/custom-pages/:id", authorize(["ADMIN"]), validateParams(singleI
 });
 
 // 6. GET Navigation menu items (Public)
-app.get("/api/menu", (req, res) => {
-  res.json(readMenuItems());
+app.get("/api/menu", async (req, res) => {
+  const items = await db.getMenuItems();
+  res.json(items);
 });
 
 // 7. POST Save Navigation menu items configuration (Admin SPOC only)
@@ -4579,16 +5427,21 @@ async function startServer() {
   try {
     const settings = readSettings();
     await db.init(settings);
+    
+    // If DB is connected or configured, await full state restore during boot
+    if (db.isPostgres() || settings.dbEnabled || process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.MONGODB_URI || process.env.PG_HOST) {
+      try {
+        await restoreDataFromExternalDB();
+      } catch (err: any) {
+        console.warn("[Startup DB Restore Notice]:", err?.message || err);
+      }
+    }
+
     // Auto-restore and hydrate all persistent images, documents, and PPT presentations from database to disk
     await db.syncAllFilesToDisk();
   } catch (dbErr) {
     console.error("[Database Startup Initialization Error]:", dbErr);
   }
-
-  // Trigger background database restore/sync if external DB is configured
-  restoreDataFromExternalDB().catch(err => {
-    console.error("[Startup DB Restore Error]:", err);
-  });
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

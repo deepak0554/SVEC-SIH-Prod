@@ -1,6 +1,22 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Layers, ShieldCheck, HelpCircle, GraduationCap, LogOut, FileText, Menu, X, ChevronRight } from "lucide-react";
+import {
+  Layers,
+  ShieldCheck,
+  HelpCircle,
+  GraduationCap,
+  LogOut,
+  FileText,
+  Menu,
+  X,
+  ChevronRight,
+  User,
+  Sparkles,
+  BookOpen,
+  Trophy,
+  Lock,
+  ArrowRight
+} from "lucide-react";
 import { ProblemStatement, Registration, HomepageContent, CustomPage, MenuItem, LiveUpdate } from "./types";
 import RegistrationForm from "./components/RegistrationForm";
 import StudentAuth from "./components/StudentAuth";
@@ -8,20 +24,52 @@ import Receipt from "./components/Receipt";
 import AdminPanel from "./components/AdminPanel";
 import SvecLogo from "./components/SvecLogo";
 import LandingPage from "./components/LandingPage";
+import ProblemStatementsView from "./components/ProblemStatementsView";
+import SelectedTeamsView from "./components/SelectedTeamsView";
 import { api } from "./services/api";
 
+function parseInitialRoute(): string {
+  if (typeof window === "undefined") return "home";
+
+  // Check URL pathname
+  const path = window.location.pathname.toLowerCase();
+  if (path === "/admin" || path === "/admin/login") return "admin";
+  if (path === "/statements" || path === "/problem-statements") return "statements";
+  if (path === "/register" || path === "/register-team") return "register";
+  if (path === "/student-login" || path === "/student-portal" || path === "/login") return "student-portal";
+  if (path === "/selected-teams" || path === "/selected") return "selected-teams";
+  if (path === "/receipt" || path === "/my-registration") return "receipt";
+
+  // Check URL hash
+  const hash = window.location.hash.replace(/^#\/?/, "").toLowerCase();
+  if (hash === "admin" || hash === "admin/login") return "admin";
+  if (hash === "statements" || hash === "problem-statements") return "statements";
+  if (hash === "register" || hash === "register-team") return "register";
+  if (hash === "student-login" || hash === "student-portal" || hash === "login") return "student-portal";
+  if (hash === "selected-teams" || hash === "selected") return "selected-teams";
+  if (hash === "receipt" || hash === "my-registration") return "receipt";
+  if (hash) return hash;
+
+  // Check query params
+  const searchParams = new URLSearchParams(window.location.search);
+  const viewParam = searchParams.get("view") || searchParams.get("tab");
+  if (viewParam) return viewParam;
+
+  if (sessionStorage.getItem("svec_sih_admin_token")) {
+    return "admin";
+  }
+
+  return "home";
+}
+
 export default function App() {
-  const [view, setView] = useState<string>(() => {
-    if (sessionStorage.getItem("svec_sih_admin_token")) {
-      return "admin";
-    }
-    return "home";
-  });
+  const [view, setView] = useState<string>(parseInitialRoute);
   const [problemStatements, setProblemStatements] = useState<ProblemStatement[]>([]);
   const [latestRegistration, setLatestRegistration] = useState<Registration | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasExistingRegistration, setHasExistingRegistration] = useState<Registration | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [selectedProblemId, setSelectedProblemId] = useState<string | undefined>(undefined);
 
   // Dynamic layout states
   const [homepageData, setHomepageData] = useState<HomepageContent | null>(null);
@@ -38,10 +86,7 @@ export default function App() {
     creditsEnabled?: boolean;
   } | null>(null);
 
-  const [student, setStudent] = useState<{ id: string; email: string; token?: string } | null>(() => {
-    if (sessionStorage.getItem("svec_sih_admin_token")) {
-      return null;
-    }
+  const [student, setStudent] = useState<{ id: string; email: string; token?: string; gender?: string; department?: string; mobile?: string } | null>(() => {
     try {
       const saved = localStorage.getItem("svec_sih_student");
       return saved ? JSON.parse(saved) : null;
@@ -101,9 +146,6 @@ export default function App() {
       if (data && data.found && data.registration) {
         setHasExistingRegistration(data.registration);
         setLatestRegistration(data.registration);
-        if (!sessionStorage.getItem("svec_sih_admin_token")) {
-          setView("receipt");
-        }
       } else {
         setHasExistingRegistration(null);
       }
@@ -125,46 +167,86 @@ export default function App() {
     }
   }, [student?.email]);
 
+  // Sync route on popstate and hashchange
+  useEffect(() => {
+    const handleLocationChange = () => {
+      const target = parseInitialRoute();
+      setView(target);
+    };
+
+    window.addEventListener("popstate", handleLocationChange);
+    window.addEventListener("hashchange", handleLocationChange);
+
+    return () => {
+      window.removeEventListener("popstate", handleLocationChange);
+      window.removeEventListener("hashchange", handleLocationChange);
+    };
+  }, []);
+
   const handleRegistrationSuccess = (reg: Registration) => {
     setLatestRegistration(reg);
     setHasExistingRegistration(reg);
     setView("receipt");
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", "#receipt");
+    }
   };
 
   const handleResetForm = () => {
     setLatestRegistration(null);
     setView("register");
+    if (typeof window !== "undefined") {
+      window.history.pushState(null, "", "#register");
+    }
   };
+
+  // Helper to change view and sync URL
+  const navigateTo = useCallback((target: string) => {
+    setView(target);
+    setMobileMenuOpen(false);
+
+    if (typeof window !== "undefined") {
+      if (target === "home") {
+        window.history.pushState(null, "", "/");
+      } else {
+        window.history.pushState(null, "", `#${target}`);
+      }
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, []);
 
   // Safe fallback list of menu items if fetch hasn't completed or returned empty
   const getRenderMenuItems = (): MenuItem[] => {
-    if (student) {
-      if (hasExistingRegistration) {
-        return [
-          { id: "registration-tab", label: "My Registration", type: "system", target: "receipt", order: 1 }
-        ];
-      } else {
-        return [
-          { id: "registration-tab", label: "My Registration", type: "system", target: "register", order: 1 }
-        ];
-      }
-    }
-
-    const hasAdminToken = !!sessionStorage.getItem("svec_sih_admin_token");
-    if (view === "admin" || hasAdminToken) {
-      return [
-        { id: "admin-tab-header", label: "Admin Panel", type: "system", target: "admin", order: 1 }
-      ];
-    }
-
-    if (menuItems && menuItems.length > 0) {
-      return [...menuItems].sort((a, b) => a.order - b.order);
-    }
-    return [
-      { id: "1", label: "Home", type: "system", target: "home", order: 1 },
-      { id: "2", label: "Register", type: "system", target: "register", order: 2 },
-      { id: "3", label: "Admin login", type: "system", target: "admin", order: 3 }
+    const defaultList: MenuItem[] = [
+      { id: "m1", label: "Home", type: "system", target: "home", order: 0 },
+      { id: "m2", label: "Problem Statements", type: "system", target: "statements", order: 1 },
+      { id: "m3", label: "Register Team", type: "system", target: "register", order: 2 },
+      { id: "m4", label: "Student Login", type: "system", target: "student-portal", order: 3 },
+      { id: "m5", label: "Selected Teams", type: "system", target: "selected-teams", order: 4 },
+      { id: "m6", label: "FAQ & Contact", type: "system", target: "faq", order: 5 },
+      { id: "m7", label: "Admin Login", type: "system", target: "admin", order: 6 }
     ];
+
+    let itemsToProcess = defaultList;
+    if (menuItems && menuItems.length > 0) {
+      // Ensure default items exist if not present in custom items
+      const merged = [...menuItems];
+      defaultList.forEach((def) => {
+        if (!merged.some((m) => m.target === def.target)) {
+          merged.push(def);
+        }
+      });
+      itemsToProcess = merged;
+    }
+
+    // When a student is logged in, hide Admin Login menu item from the student's navigation
+    if (student) {
+      itemsToProcess = itemsToProcess.filter(
+        (m) => m.target !== "admin" && m.target !== "admin/login" && m.label.toLowerCase() !== "admin login"
+      );
+    }
+
+    return itemsToProcess.sort((a, b) => a.order - b.order);
   };
 
   // Parse Markdown formatting for custom pages
@@ -223,25 +305,6 @@ export default function App() {
     });
   };
 
-  // Helper to change view and close drawers
-  const navigateTo = (target: string) => {
-    if (student) {
-      // Allow only register or receipt view for logged in students
-      if (target === "receipt" || target === "register") {
-        setView(target);
-      } else {
-        const allowedTarget = hasExistingRegistration ? "receipt" : "register";
-        setView(allowedTarget);
-      }
-    } else if (view === "admin" || sessionStorage.getItem("svec_sih_admin_token")) {
-      setView("admin");
-    } else {
-      setView(target);
-    }
-    setMobileMenuOpen(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
   const isDark = publicSettings?.portalTheme === "dark" && view !== "admin";
 
   if (loading) {
@@ -286,12 +349,23 @@ export default function App() {
             </div>
           </div>
 
-          {/* Desktop Navigation Links */}
-          <nav className={`hidden lg:flex items-center gap-1.5 p-1 rounded-xl transition-colors duration-300 ${isDark ? "bg-slate-800/80 border border-slate-700/50" : "bg-slate-100/70 border border-slate-200/40"}`}>
+          {/* Desktop Navigation Links (strictly rendered in menu order) */}
+          <nav className={`hidden lg:flex items-center gap-1 p-1 rounded-xl transition-colors duration-300 ${isDark ? "bg-slate-800/80 border border-slate-700/50" : "bg-slate-100/70 border border-slate-200/40"}`}>
             {getRenderMenuItems().map((item) => {
-              // Map display labels nicely
               let isActive = view === item.target;
-              if (item.target === "register" && view === "receipt") {
+              if (item.target === "statements" && (view === "statements" || view === "problem-statements")) {
+                isActive = true;
+              }
+              if (item.target === "register" && (view === "register" || view === "receipt")) {
+                isActive = true;
+              }
+              if (item.target === "student-portal" && (view === "student-portal" || view === "student-login")) {
+                isActive = true;
+              }
+              if (item.target === "selected-teams" && (view === "selected-teams" || view === "selected")) {
+                isActive = true;
+              }
+              if (item.target === "admin" && (view === "admin" || view === "admin/login")) {
                 isActive = true;
               }
 
@@ -299,7 +373,7 @@ export default function App() {
                 <button
                   key={item.id}
                   onClick={() => navigateTo(item.target)}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                     isActive
                       ? (isDark ? "bg-indigo-600 text-white shadow-sm" : "bg-white text-indigo-600 shadow-sm")
                       : (isDark ? "text-slate-400 hover:text-white" : "text-slate-600 hover:text-slate-950")
@@ -312,50 +386,44 @@ export default function App() {
             })}
           </nav>
 
-          {/* Right Controls Area (Student state, Mobile toggler) */}
+          {/* Right Controls Area (Student state, Registration quick link, Admin, Mobile toggle) */}
           <div className="flex items-center gap-2">
-            {student && (
-              <div className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors duration-300 ${
-                isDark 
-                  ? "bg-slate-800/60 border border-slate-700 text-slate-300" 
-                  : "bg-slate-50 border border-slate-200/80 text-slate-600"
-              }`}>
-                <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                <span>Student: <span className={`font-mono ${isDark ? "text-indigo-300" : "text-slate-800"}`}>{student.email}</span></span>
+            {student ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigateTo("receipt")}
+                  className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+                    view === "receipt"
+                      ? "bg-indigo-600 text-white border-indigo-600"
+                      : isDark
+                        ? "bg-slate-800 border-slate-700 text-indigo-300 hover:bg-slate-750"
+                        : "bg-indigo-50 border-indigo-100 text-indigo-700 hover:bg-indigo-100/70"
+                  }`}
+                  id="header-view-registration-btn"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>My Team</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("svec_sih_student");
+                    setStudent(null);
+                    navigateTo("home");
+                  }}
+                  className={`text-xs font-bold flex items-center gap-1 px-2.5 py-1.5 rounded-xl transition-all cursor-pointer border ${
+                    isDark
+                      ? "text-slate-400 hover:text-red-400 hover:bg-red-950/20 border-transparent hover:border-red-950"
+                      : "text-slate-600 hover:text-red-600 hover:bg-red-50/50 border-transparent hover:border-red-100"
+                  }`}
+                  title="Logout Student Session"
+                  id="header-logout-btn"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span className="hidden md:inline">Logout</span>
+                </button>
               </div>
-            )}
-            {student && hasExistingRegistration && view !== "receipt" && (
-              <button
-                onClick={() => navigateTo("receipt")}
-                className={`text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer border ${
-                  isDark
-                    ? "text-indigo-400 hover:text-indigo-350 hover:bg-indigo-950/40 border-indigo-900/60"
-                    : "text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50/50 border-indigo-100 hover:border-indigo-200"
-                }`}
-                id="header-view-registration-btn"
-              >
-                <FileText className="w-4 h-4 text-indigo-600" />
-                <span className="hidden sm:inline">My Registration</span>
-              </button>
-            )}
-            {student && (
-              <button
-                onClick={() => {
-                  localStorage.removeItem("svec_sih_student");
-                  setStudent(null);
-                  setView("home");
-                }}
-                className={`text-xs font-bold flex items-center gap-1.5 px-3 py-2 rounded-xl transition-all cursor-pointer border ${
-                  isDark
-                    ? "text-slate-400 hover:text-red-400 hover:bg-red-950/20 border-transparent hover:border-red-950"
-                    : "text-slate-600 hover:text-red-600 hover:bg-red-50/50 border-transparent hover:border-red-100"
-                }`}
-                id="header-logout-btn"
-              >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline">Logout</span>
-              </button>
-            )}
+            ) : null}
 
             {/* Mobile Hamburger toggle */}
             <button
@@ -382,13 +450,15 @@ export default function App() {
                 : "bg-white border-b border-slate-200"
             }`}
           >
-            <div className="p-4 space-y-2">
-              <span className="text-[9px] font-black tracking-widest text-slate-400 block uppercase mb-1">Navigation links</span>
+            <div className="p-4 space-y-1.5">
+              <span className="text-[9px] font-black tracking-widest text-slate-400 block uppercase mb-1">
+                Navigation Menu
+              </span>
               {getRenderMenuItems().map((item) => (
                 <button
                   key={item.id}
                   onClick={() => navigateTo(item.target)}
-                  className={`w-full text-left px-4 py-3 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer transition-colors ${
+                  className={`w-full text-left px-4 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between cursor-pointer transition-colors ${
                     view === item.target
                       ? (isDark ? "bg-indigo-950/60 text-indigo-300" : "bg-indigo-50 text-indigo-700")
                       : (isDark ? "text-slate-300 hover:bg-slate-800" : "text-slate-600 hover:bg-slate-50")
@@ -400,10 +470,20 @@ export default function App() {
               ))}
 
               {student && (
-                <div className={`pt-3 border-t ${isDark ? "border-slate-800" : "border-slate-100"}`}>
-                  <div className={`px-4 py-2 rounded-xl text-[10px] font-semibold truncate ${isDark ? "bg-slate-800 text-slate-400" : "bg-slate-50 text-slate-500"}`}>
-                    Vetted: <span className="font-mono text-slate-300">{student.email}</span>
+                <div className={`pt-3 mt-2 border-t flex items-center justify-between ${isDark ? "border-slate-800" : "border-slate-100"}`}>
+                  <div className="text-[11px] font-semibold text-slate-400 truncate max-w-[200px]">
+                    Logged in: <span className="font-mono text-indigo-400">{student.email}</span>
                   </div>
+                  <button
+                    onClick={() => {
+                      localStorage.removeItem("svec_sih_student");
+                      setStudent(null);
+                      navigateTo("home");
+                    }}
+                    className="text-xs font-bold text-red-500 hover:underline cursor-pointer"
+                  >
+                    Logout
+                  </button>
                 </div>
               )}
             </div>
@@ -434,7 +514,27 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* 2. REGISTRATION FORM (STUDENTS) */}
+          {/* 2. PROBLEM STATEMENTS VIEW (in super admin uploaded order) */}
+          {(view === "statements" || view === "problem-statements") && (
+            <motion.div
+              key="statements-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ProblemStatementsView
+                problemStatements={problemStatements}
+                onNavigateToRegister={(psId) => {
+                  if (psId) setSelectedProblemId(psId);
+                  navigateTo("register");
+                }}
+                isDark={isDark}
+              />
+            </motion.div>
+          )}
+
+          {/* 3. DIRECT REGISTRATION FORM (STUDENTS) */}
           {view === "register" && (
             <motion.div
               key="register-view"
@@ -450,18 +550,136 @@ export default function App() {
                   onSuccess={handleRegistrationSuccess}
                 />
               ) : (
-                <StudentAuth 
+                <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+                  {/* Top Notice */}
+                  <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    isDark ? "bg-slate-900 border-slate-800 text-slate-300" : "bg-indigo-50/70 border-indigo-100 text-indigo-900"
+                  }`}>
+                    <div className="flex items-center gap-2.5">
+                      <GraduationCap className="w-5 h-5 text-indigo-600 dark:text-indigo-400 shrink-0" />
+                      <div>
+                        <h3 className="text-xs font-bold uppercase tracking-wider">Direct Team Registration</h3>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">
+                          Sign in with your student email or create a new account to complete and submit your team registration.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <StudentAuth
+                    isDark={isDark}
+                    onAuthSuccess={(s) => {
+                      localStorage.setItem("svec_sih_student", JSON.stringify(s));
+                      setStudent(s);
+                      fetchMyRegistration(s.email);
+                    }}
+                  />
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {/* 4. STUDENT LOGIN VIEW */}
+          {(view === "student-portal" || view === "student-login") && (
+            <motion.div
+              key="student-portal-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="max-w-3xl mx-auto px-4 py-8 space-y-6"
+            >
+              {student ? (
+                <div className={`rounded-3xl border p-8 shadow-sm space-y-6 text-center ${
+                  isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-800"
+                }`}>
+                  <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto">
+                    <GraduationCap className="w-8 h-8" />
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60 px-3 py-1 rounded-full border border-emerald-200 dark:border-emerald-800">
+                      Logged in Student
+                    </span>
+                    <h2 className="text-2xl font-black font-display mt-2">{student.email}</h2>
+                    {student.department && (
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold">
+                        Department: {student.department}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pt-4 flex flex-wrap justify-center gap-3">
+                    {hasExistingRegistration ? (
+                      <button
+                        onClick={() => navigateTo("receipt")}
+                        className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-2"
+                      >
+                        <FileText className="w-4 h-4" />
+                        View My Team Registration
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => navigateTo("register")}
+                        className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-xs cursor-pointer flex items-center gap-2"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        Register a Team
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => navigateTo("statements")}
+                      className={`px-5 py-2.5 rounded-xl border text-xs font-bold cursor-pointer ${
+                        isDark ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                      }`}
+                    >
+                      Browse Problem Statements
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        localStorage.removeItem("svec_sih_student");
+                        setStudent(null);
+                        navigateTo("home");
+                      }}
+                      className="px-5 py-2.5 rounded-xl border border-red-200 dark:border-red-900/60 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 text-xs font-bold cursor-pointer"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <StudentAuth
                   isDark={isDark}
                   onAuthSuccess={(s) => {
                     localStorage.setItem("svec_sih_student", JSON.stringify(s));
                     setStudent(s);
-                  }} 
+                    fetchMyRegistration(s.email);
+                  }}
                 />
               )}
             </motion.div>
           )}
 
-          {/* 3. RECEIPT SCREEN */}
+          {/* 5. SELECTED TEAMS VIEW (show only selected or coming soon) */}
+          {(view === "selected-teams" || view === "selected") && (
+            <motion.div
+              key="selected-teams-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <SelectedTeamsView
+                problemStatements={problemStatements}
+                onNavigateToStatements={() => navigateTo("statements")}
+                onNavigateToRegister={() => navigateTo("register")}
+                isDark={isDark}
+              />
+            </motion.div>
+          )}
+
+          {/* 6. RECEIPT SCREEN */}
           {view === "receipt" && latestRegistration && (
             <motion.div
               key="receipt-view"
@@ -482,7 +700,7 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* 4. ADMIN DASHBOARD */}
+          {/* 7. ADMIN DASHBOARD & LOGIN ROUTE */}
           {view === "admin" && (
             <motion.div
               key="admin-view"
@@ -493,13 +711,13 @@ export default function App() {
             >
               <AdminPanel
                 problemStatements={problemStatements}
-                onBackToPortal={() => setView("home")}
+                onBackToPortal={() => navigateTo("home")}
                 onRefreshStatements={fetchAllInitialData}
               />
             </motion.div>
           )}
 
-          {/* 5. CUSTOM MARKDOWN PAGE RENDERER */}
+          {/* 8. CUSTOM DYNAMIC PAGE RENDERER */}
           {currentCustomPage && (
             <motion.div
               key={`custom-page-${currentCustomPage.slug}`}
@@ -520,7 +738,76 @@ export default function App() {
             </motion.div>
           )}
 
-          {/* 6. CREDITS PAGE RENDERER */}
+          {/* 9. FAQ VIEW */}
+          {view === "faq" && (
+            <motion.div
+              key="faq-view"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.2 }}
+              className="max-w-4xl mx-auto px-4 py-8 space-y-6"
+            >
+              <div className={`rounded-3xl border p-6 md:p-10 shadow-sm space-y-6 ${
+                isDark ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-800"
+              }`}>
+                <div className="space-y-2 border-b pb-4">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 dark:bg-indigo-950/60 px-3 py-1 rounded-full border border-indigo-100 dark:border-indigo-900">
+                    Frequently Asked Questions
+                  </span>
+                  <h1 className="text-2xl sm:text-3xl font-black font-display">
+                    SIH 2026 Help & Support
+                  </h1>
+                </div>
+
+                <div className="space-y-4 text-xs sm:text-sm">
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-150 dark:border-slate-700/60 space-y-1">
+                    <h3 className="font-bold text-indigo-600 dark:text-indigo-400">
+                      Q1: How many members are required in a team?
+                    </h3>
+                    <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                      Each team must consist of 6 student members (1 Team Lead + 5 Team Members) and 1 designated Faculty Mentor. Smart India Hackathon guidelines mandate at least one female member in every team.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-150 dark:border-slate-700/60 space-y-1">
+                    <h3 className="font-bold text-indigo-600 dark:text-indigo-400">
+                      Q2: Can team members be from different departments?
+                    </h3>
+                    <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                      Yes, interdisciplinary teams (e.g. CSE + ECE + MECH) are welcomed and encouraged for multidisciplinary problem statements.
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-150 dark:border-slate-700/60 space-y-1">
+                    <h3 className="font-bold text-indigo-600 dark:text-indigo-400">
+                      Q3: How are final teams selected for SIH 2026?
+                    </h3>
+                    <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
+                      All registered teams submit their Idea PPT deck. Department SPOCs and Evaluators grade each submission. The Institutional SPOC / Super Admin finalizes the nominated teams, which appear under the "Selected Teams" tab.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-4 flex justify-between items-center border-t border-slate-100 dark:border-slate-800">
+                  <button
+                    onClick={() => navigateTo("home")}
+                    className="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 cursor-pointer"
+                  >
+                    Back to Home
+                  </button>
+                  <button
+                    onClick={() => navigateTo("register")}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold cursor-pointer"
+                  >
+                    Register Team Now
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* 10. CREDITS PAGE RENDERER */}
           {view === "credits" && (
             <motion.div
               key="credits-view"

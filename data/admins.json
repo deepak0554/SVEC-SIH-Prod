@@ -2,11 +2,31 @@
   {
     "username": "Deepak0554",
     "passwordHash": "9c7de601e801b9e0cc6e4aa5ff65f965:dfc168be68ac18b50fecee883e8c77895501284a84d17b5f21a2d13b7179b0e7f62efa10d4a039fda0dd6e3f0ebad219fd3a17364d7f865f8810bf43bcee7090",
-    "role": "SPOC"
+    "role": "SPOC",
+    "department": ""
+  },
+  {
+    "username": "admin",
+    "passwordHash": "9c7de601e801b9e0cc6e4aa5ff65f965:dfc168be68ac18b50fecee883e8c77895501284a84d17b5f21a2d13b7179b0e7f62efa10d4a039fda0dd6e3f0ebad219fd3a17364d7f865f8810bf43bcee7090",
+    "role": "SPOC",
+    "department": ""
+  },
+  {
+    "username": "spoc",
+    "passwordHash": "9c7de601e801b9e0cc6e4aa5ff65f965:dfc168be68ac18b50fecee883e8c77895501284a84d17b5f21a2d13b7179b0e7f62efa10d4a039fda0dd6e3f0ebad219fd3a17364d7f865f8810bf43bcee7090",
+    "role": "SPOC",
+    "department": ""
   },
   {
     "username": "studentspoc",
     "passwordHash": "5bae4df1554eb8087b884f50132f05dfa357e6a1e1927ff5b1a0a76d258fd3b0",
-    "role": "Student SPOC"
+    "role": "Student SPOC",
+    "department": ""
+  },
+  {
+    "username": "Test",
+    "passwordHash": "507b3473098fea1b84c5e42737713ded:26618a86f6d42e79cbbe64181d980b50874b904febbf835c9026b15874772c0ce27b73abddc2ab525a2d943b284d7a89e6d858dcf7c7af330fe16520635115bd",
+    "role": "Evaluator",
+    "department": ""
   }
 ]

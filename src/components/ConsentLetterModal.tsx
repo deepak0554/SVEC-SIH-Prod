@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { Printer, X, FileText, Info, Download, FileCode, CheckCircle2, Sliders, Upload, RotateCcw, Image as ImageIcon, Lock, Save, Sparkles, AlertCircle } from "lucide-react";
 import { Registration } from "../types";
 import SvecLogo from "./SvecLogo";
+import { getErrorMessage } from "../utils/error";
 
 // Default realistic cursive signature vector for Dr. Ch. Rambabu in fountain pen blue ink
 const DEFAULT_SIGNATURE_SVG = `data:image/svg+xml;utf8,${encodeURIComponent(`
@@ -531,7 +532,7 @@ export default function ConsentLetterModal({
         });
         if (!res.ok) {
           const errData = await res.json();
-          throw new Error(errData.error || "Failed to save global template");
+          throw new Error(getErrorMessage(errData, "Failed to save global template"));
         }
       }
 

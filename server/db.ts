@@ -151,12 +151,28 @@ class DatabaseManager {
   public async init(config?: Partial<FeeConfig>): Promise<{ success: boolean; message: string; dbType: string }> {
     try {
       const connStr = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-      const pgHost = config?.dbHost || process.env.PG_HOST;
-      const isSqlConfigured = !!(connStr || pgHost || (config?.dbEnabled && config?.dbType === "sql"));
+      const envPgHost = process.env.PG_HOST;
+      const dbTypeNormalized = (config?.dbType || "").toLowerCase();
+      const isSqlExplicitlyEnabled = !!(
+        config?.dbEnabled && 
+        (dbTypeNormalized === "sql" || dbTypeNormalized === "postgres" || dbTypeNormalized === "postgresql") &&
+        (config?.dbHost || envPgHost)
+      );
+      const isSqlConfigured = !!(
+        connStr || 
+        envPgHost || 
+        isSqlExplicitlyEnabled
+      );
 
       if (isSqlConfigured) {
         const { default: pg } = await import("pg");
         
+        let initialHost = (isSqlExplicitlyEnabled ? config?.dbHost : undefined) || envPgHost || "localhost";
+        let initialPort = config?.dbPort ? Number(config.dbPort) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : 5432);
+        let initialUser = config?.dbUsername || process.env.PG_USER || "postgres";
+        let initialPass = config?.dbPassword || process.env.PG_PASSWORD || "";
+        let initialDb = config?.dbName || process.env.PG_DATABASE || "postgres";
+
         let poolConfig: any;
         if (connStr) {
           poolConfig = {
@@ -168,15 +184,15 @@ class DatabaseManager {
           };
         } else {
           poolConfig = {
-            host: pgHost || "localhost",
-            port: config?.dbPort ? Number(config.dbPort) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : 5432),
-            database: config?.dbName || process.env.PG_DATABASE || "svec_sih",
-            user: config?.dbUsername || process.env.PG_USER || "postgres",
-            password: config?.dbPassword || process.env.PG_PASSWORD || "",
+            host: initialHost,
+            port: initialPort,
+            database: initialDb,
+            user: initialUser,
+            password: initialPass,
             max: 20,
             idleTimeoutMillis: 30000,
             connectionTimeoutMillis: 5000,
-            ssl: (pgHost?.includes("localhost") || pgHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
+            ssl: (initialHost?.includes("localhost") || initialHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
           };
         }
 
@@ -184,12 +200,74 @@ class DatabaseManager {
           try { await this.pgPool.end(); } catch (e) {}
         }
 
-        this.pgPool = new pg.Pool(poolConfig);
-        
-        // Test connection
-        const client = await this.pgPool.connect();
-        client.release();
+        let connectedClient: any = null;
+        let activePool = new pg.Pool(poolConfig);
 
+        try {
+          connectedClient = await activePool.connect();
+        } catch (initialErr: any) {
+          await activePool.end();
+
+          // Intelligent Supabase IPv4 Pooler Auto-Resolution if direct IPv6 connection failed
+          const isSupabaseDirect = initialHost && (/db\.([a-z0-9_-]+)\.supabase\.co/i.test(initialHost) || initialHost.includes("supabase"));
+          const isNetworkError = initialErr.code === "ECONNREFUSED" || initialErr.code === "ENETUNREACH" || initialErr.code === "ETIMEDOUT" || (initialErr.message && initialErr.message.includes("ECONNREFUSED"));
+
+          if (isSupabaseDirect && isNetworkError) {
+            const match = initialHost.match(/db\.([a-z0-9_-]+)\.supabase\.co/i);
+            const projectRef = match ? match[1] : "";
+            const tenantUser = projectRef ? (initialUser.includes(".") ? initialUser : `postgres.${projectRef}`) : initialUser;
+            const knownRegions = ["ap-southeast-1", "ap-south-1", "us-east-1", "eu-central-1", "ap-southeast-2", "us-west-1"];
+
+            let resolvedPooler = false;
+            let lastPoolerError = "";
+
+            for (const region of knownRegions) {
+              const poolerHost = `aws-0-${region}.pooler.supabase.com`;
+              for (const poolerPort of [6543, 5432]) {
+                const testConfig = {
+                  host: poolerHost,
+                  port: poolerPort,
+                  database: initialDb || "postgres",
+                  user: tenantUser,
+                  password: initialPass,
+                  max: 20,
+                  idleTimeoutMillis: 30000,
+                  connectionTimeoutMillis: 4000,
+                  ssl: { rejectUnauthorized: false }
+                };
+
+                const candidatePool = new pg.Pool(testConfig);
+                try {
+                  connectedClient = await candidatePool.connect();
+                  activePool = candidatePool;
+                  resolvedPooler = true;
+                  console.log(`✅ [Database] Auto-connected to Supabase IPv4 Pooler (${poolerHost}:${poolerPort})`);
+                  break;
+                } catch (candidateErr: any) {
+                  await candidatePool.end();
+                  lastPoolerError = candidateErr.message;
+                  if (candidateErr.message && candidateErr.message.includes("password authentication failed")) {
+                    throw new Error(`Connected to Supabase IPv4 Pooler (${poolerHost}:${poolerPort}), but password authentication failed for user '${tenantUser}'. Please verify your Supabase database password in Admin Settings.`);
+                  }
+                }
+              }
+              if (resolvedPooler) break;
+            }
+
+            if (!resolvedPooler) {
+              throw new Error(`Direct connection to Supabase host failed (IPv6 unreachable in container). Please use the Supabase IPv4 Connection Pooler: Host: aws-0-[region].pooler.supabase.com (e.g. aws-0-ap-southeast-1.pooler.supabase.com), Port: 6543, Username: postgres.${projectRef || "[project-id]"}. (${lastPoolerError || initialErr.message})`);
+            }
+          } else {
+            throw initialErr;
+          }
+        }
+
+        if (connectedClient) {
+          connectedClient.release();
+        }
+
+        this.pgPool = activePool;
+        
         // Run tables creation and migrations
         await this.createPostgresTables();
         
@@ -198,11 +276,23 @@ class DatabaseManager {
 
         this.isPostgresActive = true;
         this.isInitialized = true;
+
+        // Synchronize and hydrate full database state (settings, designs, pages, announcements, files) to local cache
+        try {
+          await this.syncDatabaseStateToLocalDisk();
+        } catch (syncErr: any) {
+          console.warn("[Database State Sync Notice]:", syncErr.message);
+        }
+
         console.log("✅ [Database] PostgreSQL is active as the Single Source of Truth.");
         return { success: true, message: "PostgreSQL connected and schema verified.", dbType: "sql" };
       }
 
       // Local storage fallback for dev/testing when no PostgreSQL credentials exist
+      if (this.pgPool) {
+        try { await this.pgPool.end(); } catch (e) {}
+        this.pgPool = null;
+      }
       this.isPostgresActive = false;
       this.isInitialized = true;
       if (IS_VERCEL) {
@@ -212,8 +302,13 @@ class DatabaseManager {
       }
       return { success: true, message: "Operating on local storage adapter.", dbType: "local" };
     } catch (err: any) {
-      console.error("❌ [Database Init Error]:", err.message);
+      console.warn("⚠️ [Database Init Notice]:", err.message);
+      if (this.pgPool) {
+        try { await this.pgPool.end(); } catch (e) {}
+        this.pgPool = null;
+      }
       this.isPostgresActive = false;
+      this.isInitialized = true;
       return { success: false, message: `Database initialization failed: ${err.message}`, dbType: "local" };
     }
   }
@@ -610,6 +705,35 @@ class DatabaseManager {
 
     for (const t of tables) {
       await safeExecute(t.query, `Create table ${t.label}`);
+    }
+
+    // Proactive schema column migrations to ensure existing tables have all modern columns
+    const columnMigrations = [
+      `ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`,
+      `ALTER TABLE homepage_content ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`,
+      `ALTER TABLE admins ADD COLUMN IF NOT EXISTS department VARCHAR(100) DEFAULT '';`,
+      `ALTER TABLE admins ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS assigned_evaluator VARCHAR(255);`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS evaluation_status VARCHAR(50) DEFAULT 'pending';`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS total_score NUMERIC DEFAULT 0;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS ppt_base64 TEXT;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS ppt_file_url TEXT;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS ppt_file_name VARCHAR(255);`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS abstract TEXT;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS implementation_steps TEXT;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS is_final_selected BOOLEAN DEFAULT FALSE;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS selection_notes TEXT;`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS verified_at VARCHAR(100);`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS verified_by VARCHAR(255);`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'pending';`,
+      `ALTER TABLE registrations ADD COLUMN IF NOT EXISTS approval_notes TEXT;`,
+      `ALTER TABLE students ADD COLUMN IF NOT EXISTS password_hash TEXT;`,
+      `ALTER TABLE students ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`
+    ];
+
+    for (const migration of columnMigrations) {
+      await safeExecute(migration, "Migrate schema columns");
     }
 
     // Normalized Indexes & Foreign Keys
@@ -1272,27 +1396,50 @@ class DatabaseManager {
   }
 
   public async saveStudent(student: Student): Promise<boolean> {
+    const cleanEmail = (student.email || "").toLowerCase().trim();
+    if (!cleanEmail) return false;
+
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
           INSERT INTO students (id, email, password_hash, gender, department, mobile, created_at)
           VALUES ($1, $2, $3, $4, $5, $6, $7)
-          ON CONFLICT (id) DO UPDATE SET
-            email = EXCLUDED.email,
-            password_hash = EXCLUDED.password_hash,
-            gender = EXCLUDED.gender,
-            department = EXCLUDED.department,
-            mobile = EXCLUDED.mobile;
-        `, [student.id, student.email.toLowerCase(), student.passwordHash || "", student.gender || "", student.department || "", student.mobile || "", student.createdAt]);
+          ON CONFLICT (email) DO UPDATE SET
+            password_hash = CASE WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash ELSE students.password_hash END,
+            gender = COALESCE(NULLIF(EXCLUDED.gender, ''), students.gender),
+            department = COALESCE(NULLIF(EXCLUDED.department, ''), students.department),
+            mobile = COALESCE(NULLIF(EXCLUDED.mobile, ''), students.mobile),
+            updated_at = NOW();
+        `, [
+          student.id || `student-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
+          cleanEmail,
+          student.passwordHash || "",
+          student.gender || "",
+          student.department || "",
+          student.mobile || "",
+          student.createdAt || new Date().toISOString()
+        ]);
+
+        if (student.passwordHash) {
+          await this.pgPool.query(`
+            INSERT INTO users (id, email, password_hash, role, name, mobile, created_at)
+            VALUES ($1, $2, $3, 'student', $4, $5, NOW())
+            ON CONFLICT (email) DO UPDATE SET
+              password_hash = EXCLUDED.password_hash,
+              mobile = COALESCE(NULLIF(EXCLUDED.mobile, ''), users.mobile),
+              updated_at = NOW();
+          `, [student.id, cleanEmail, student.passwordHash, cleanEmail.split("@")[0], student.mobile || ""]).catch(() => {});
+        }
+
         return true;
-      } catch (err) {
-        console.error("[PostgreSQL Save Error] saveStudent:", err);
+      } catch (err: any) {
+        console.error("[PostgreSQL Save Error] saveStudent:", err.message || err);
       }
     }
     const local = this.readLocalFile<Student[]>("students.json", []);
-    const idx = local.findIndex(s => s.id === student.id || s.email.toLowerCase() === student.email.toLowerCase());
-    if (idx >= 0) local[idx] = student;
-    else local.push(student);
+    const idx = local.findIndex(s => (student.id && s.id === student.id) || (cleanEmail && s.email.toLowerCase().trim() === cleanEmail));
+    if (idx >= 0) local[idx] = { ...local[idx], ...student, email: cleanEmail };
+    else local.push({ ...student, email: cleanEmail });
     this.writeLocalFile("students.json", local);
     return true;
   }
@@ -1701,7 +1848,23 @@ class DatabaseManager {
             updated_at = NOW();
         `, [JSON.stringify(settings)]);
         return true;
-      } catch (err) {
+      } catch (err: any) {
+        // Self-heal if updated_at column is missing on legacy table
+        if (err && (err.message?.includes("updated_at") || err.code === "42703")) {
+          try {
+            await this.pgPool.query(`ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+            await this.pgPool.query(`
+              INSERT INTO app_settings (id, settings_json, updated_at)
+              VALUES ('main', $1, NOW())
+              ON CONFLICT (id) DO UPDATE SET
+                settings_json = EXCLUDED.settings_json,
+                updated_at = NOW();
+            `, [JSON.stringify(settings)]);
+            return true;
+          } catch (retryErr) {
+            console.error("[PostgreSQL Retry Save Error] saveSettings:", retryErr);
+          }
+        }
         console.error("[PostgreSQL Save Error] saveSettings:", err);
       }
     }
@@ -1736,7 +1899,22 @@ class DatabaseManager {
             updated_at = NOW();
         `, [JSON.stringify(content)]);
         return true;
-      } catch (err) {
+      } catch (err: any) {
+        if (err && (err.message?.includes("updated_at") || err.code === "42703")) {
+          try {
+            await this.pgPool.query(`ALTER TABLE homepage_content ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;`);
+            await this.pgPool.query(`
+              INSERT INTO homepage_content (id, content_json, updated_at)
+              VALUES ('main', $1, NOW())
+              ON CONFLICT (id) DO UPDATE SET
+                content_json = EXCLUDED.content_json,
+                updated_at = NOW();
+            `, [JSON.stringify(content)]);
+            return true;
+          } catch (retryErr) {
+            console.error("[PostgreSQL Retry Save Error] saveHomepageContent:", retryErr);
+          }
+        }
         console.error("[PostgreSQL Save Error] saveHomepageContent:", err);
       }
     }
@@ -2024,7 +2202,12 @@ class DatabaseManager {
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`
-          SELECT * FROM app_files WHERE (id = $1) OR (category = $2 AND filename = $3) LIMIT 1
+          SELECT * FROM app_files 
+          WHERE (id = $1) 
+             OR (category = $2 AND filename = $3) 
+             OR (filename = $3)
+             OR (id LIKE '%' || $3)
+          ORDER BY updated_at DESC LIMIT 1
         `, [id, category, filename]);
         if (res.rows && res.rows.length > 0) {
           const r = res.rows[0];
@@ -2048,9 +2231,9 @@ class DatabaseManager {
     if (record) {
       return record;
     }
-    // Search by filename in case id key format differs
+    // Search by filename in case id key format differs or category is flexible
     for (const key in localStore) {
-      if (localStore[key]?.filename === filename && (!category || localStore[key]?.category === category)) {
+      if (localStore[key]?.filename === filename || key.endsWith(`/${filename}`) || localStore[key]?.originalName === filename) {
         return localStore[key];
       }
     }
@@ -2062,13 +2245,16 @@ class DatabaseManager {
     const id = `${category}/${filename}`;
     if (this.isPostgresActive && this.pgPool) {
       try {
-        await this.pgPool.query(`DELETE FROM app_files WHERE id = $1 OR (category = $2 AND filename = $3)`, [id, category, filename]);
+        await this.pgPool.query(`DELETE FROM app_files WHERE id = $1 OR (category = $2 AND filename = $3) OR filename = $3`, [id, category, filename]);
       } catch (err) {
         console.error("[PostgreSQL Delete Error] deleteFileRecord:", err);
       }
     }
     const localStore = this.readLocalFile<Record<string, any>>("files_store.json", {});
     delete localStore[id];
+    for (const k in localStore) {
+      if (localStore[k]?.filename === filename) delete localStore[k];
+    }
     this.writeLocalFile("files_store.json", localStore);
     return true;
   }
@@ -2077,6 +2263,8 @@ class DatabaseManager {
     let restoredCount = 0;
     try {
       const uploadsDir = path.join(DATA_DIR, "uploads");
+      const rootUploadsDir = path.join(process.cwd(), "uploads");
+      
       const categoryDirMap: Record<string, string> = {
         ppts: path.join(uploadsDir, "ppts"),
         images: path.join(uploadsDir, "images"),
@@ -2087,25 +2275,29 @@ class DatabaseManager {
         homepage: path.join(uploadsDir, "images"),
         logos: path.join(uploadsDir, "images"),
         certificates: path.join(uploadsDir, "images"),
-        media: path.join(uploadsDir, "documents")
+        media: path.join(uploadsDir, "documents"),
+        payment_proofs: path.join(uploadsDir, "payment_proofs"),
+        upi_qr: path.join(uploadsDir, "upi_qr")
       };
 
       // 1. Gather all file records from PostgreSQL
       const filesToRestore: Array<{
         category: string;
         filename: string;
+        originalName?: string;
         mimeType: string;
         dataBase64: string;
       }> = [];
 
       if (this.isPostgresActive && this.pgPool) {
         try {
-          const res = await this.pgPool.query(`SELECT category, filename, mime_type, data_base64 FROM app_files`);
+          const res = await this.pgPool.query(`SELECT category, filename, original_name, mime_type, data_base64 FROM app_files`);
           if (res.rows && res.rows.length > 0) {
             for (const r of res.rows) {
               filesToRestore.push({
                 category: r.category,
                 filename: r.filename,
+                originalName: r.original_name,
                 mimeType: r.mime_type,
                 dataBase64: r.data_base64
               });
@@ -2121,32 +2313,57 @@ class DatabaseManager {
       for (const key in localStore) {
         const item = localStore[key];
         if (item && item.filename && item.dataBase64) {
-          if (!filesToRestore.some(f => f.filename === item.filename && f.category === item.category)) {
+          if (!filesToRestore.some(f => f.filename === item.filename)) {
             filesToRestore.push(item);
           }
         }
       }
 
-      // 2. Write missing files onto disk
+      // 2. Write missing files onto disk in all relevant upload directories
       for (const item of filesToRestore) {
         try {
-          const dir = categoryDirMap[item.category] || path.join(uploadsDir, item.category);
-          if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+          const cat = item.category || "images";
+          const targetDir = categoryDirMap[cat] || path.join(uploadsDir, cat);
+          const directCatDir = path.join(uploadsDir, cat);
+          const rootCatDir = path.join(rootUploadsDir, cat);
+
+          const dirsToEnsure = [targetDir, directCatDir, rootCatDir];
+          for (const d of dirsToEnsure) {
+            if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true });
           }
-          const targetPath = path.join(dir, item.filename);
-          if (!fs.existsSync(targetPath)) {
-            const cleanBase64 = item.dataBase64.replace(/^data:[^;]+;base64,/, "");
-            const buffer = Buffer.from(cleanBase64, "base64");
-            if (buffer.length > 0) {
-              fs.writeFileSync(targetPath, buffer);
-              restoredCount++;
+
+          const cleanBase64 = item.dataBase64.replace(/^data:[^;]+;base64,/, "");
+          const buffer = Buffer.from(cleanBase64, "base64");
+          if (buffer.length > 0) {
+            let written = false;
+            for (const d of dirsToEnsure) {
+              const targetPath = path.join(d, item.filename);
+              if (!fs.existsSync(targetPath)) {
+                fs.writeFileSync(targetPath, buffer);
+                written = true;
+              }
+            }
+            if (written) restoredCount++;
+
+            // Ensure cached in files_store.json
+            const id = `${cat}/${item.filename}`;
+            if (!localStore[id]) {
+              localStore[id] = {
+                id,
+                category: cat,
+                filename: item.filename,
+                originalName: item.originalName || item.filename,
+                mimeType: item.mimeType || "application/octet-stream",
+                size: buffer.length,
+                dataBase64: item.dataBase64
+              };
             }
           }
         } catch (fileErr) {
           console.error(`[Storage Hydration] Error restoring ${item.category}/${item.filename}:`, fileErr);
         }
       }
+      this.writeLocalFile("files_store.json", localStore);
 
       // 3. Hydrate from registrations pptBase64
       const registrations = await this.getRegistrations();
@@ -2183,7 +2400,7 @@ class DatabaseManager {
         }
       }
 
-      // 4. Hydrate from settings samplePptFileBase64
+      // 4. Hydrate from settings samplePptFileBase64 & manualUpiQrBase64
       const settings = await this.getSettings();
       if (settings.samplePptFileBase64) {
         try {
@@ -2217,6 +2434,139 @@ class DatabaseManager {
       console.error("[Storage Hydration Global Error]:", err);
     }
     return { restoredCount };
+  }
+
+  /**
+   * Synchronizes all state from PostgreSQL into local JSON disk cache
+   * so that local reads and file backups never revert across restarts.
+   */
+  public async syncDatabaseStateToLocalDisk(): Promise<void> {
+    if (!this.isPostgresActive || !this.pgPool) return;
+
+    try {
+      // 1. Settings
+      const sRes = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'main' OR id = 'global_settings' LIMIT 1`);
+      if (sRes.rows.length > 0 && sRes.rows[0].settings_json) {
+        const parsed = JSON.parse(sRes.rows[0].settings_json);
+        const existing = this.readLocalFile<FeeConfig>("settings.json", {} as any);
+        this.writeLocalFile("settings.json", { ...existing, ...parsed });
+      }
+
+      // 2. Homepage
+      const hpRes = await this.pgPool.query(`SELECT content_json FROM homepage_content WHERE id = 'main' LIMIT 1`);
+      if (hpRes.rows.length > 0 && hpRes.rows[0].content_json) {
+        const parsedHp = JSON.parse(hpRes.rows[0].content_json);
+        if (parsedHp.sihDetails) {
+          this.writeLocalFile("homepage_content.json", parsedHp);
+        }
+      }
+
+      // 3. Custom Pages
+      const cpRes = await this.pgPool.query(`SELECT * FROM custom_pages ORDER BY created_at ASC`);
+      if (cpRes.rows.length > 0) {
+        const pages: CustomPage[] = cpRes.rows.map(r => ({
+          id: r.id,
+          slug: r.slug,
+          title: r.title,
+          content: r.content,
+          published: r.published !== false,
+          createdAt: r.created_at
+        }));
+        this.writeLocalFile("custom_pages.json", pages);
+      }
+
+      // 4. Menu Items
+      const mRes = await this.pgPool.query(`SELECT * FROM menu_items ORDER BY sort_order ASC`);
+      if (mRes.rows.length > 0) {
+        const items: MenuItem[] = mRes.rows.map(r => ({
+          id: r.id,
+          label: r.label,
+          type: r.type as any,
+          target: r.target,
+          order: r.sort_order
+        }));
+        this.writeLocalFile("menu_items.json", items);
+      }
+
+      // 5. Live Updates
+      const uRes = await this.pgPool.query(`SELECT * FROM live_updates ORDER BY created_at DESC`);
+      if (uRes.rows.length > 0) {
+        const updates: LiveUpdate[] = uRes.rows.map(r => ({
+          id: r.id,
+          text: r.text,
+          isImportant: !!r.is_important,
+          createdAt: r.created_at
+        }));
+        this.writeLocalFile("updates.json", updates);
+      }
+
+      // 6. Problem Statements
+      const psRes = await this.pgPool.query(`SELECT * FROM problem_statements`);
+      if (psRes.rows.length > 0) {
+        const statements: ProblemStatement[] = psRes.rows.map(r => ({
+          id: r.id,
+          code: r.code,
+          title: r.title,
+          category: r.category,
+          organization: r.organization,
+          description: r.description || ""
+        }));
+        this.writeLocalFile("problem_statements.json", statements);
+      }
+
+      // 7. Evaluation Criteria
+      const critRes = await this.pgPool.query(`SELECT * FROM evaluation_criteria ORDER BY sort_order ASC`);
+      if (critRes.rows.length > 0) {
+        const criteria: EvaluationCriterion[] = critRes.rows.map(r => ({
+          id: r.id,
+          name: r.name,
+          maxScore: r.max_score || 10,
+          description: r.description || ""
+        }));
+        this.writeLocalFile("evaluation_criteria.json", criteria);
+      }
+
+      // 8. Registrations / Teams
+      const regRes = await this.pgPool.query(`SELECT * FROM registrations ORDER BY created_at DESC`);
+      if (regRes.rows.length > 0) {
+        const regs = regRes.rows.map(r => this.mapSqlRowToRegistration(r));
+        this.writeLocalFile("registrations.json", regs);
+      }
+
+      // 9. Students
+      const studRes = await this.pgPool.query(`SELECT * FROM students`);
+      if (studRes.rows.length > 0) {
+        const students: Student[] = studRes.rows.map(r => ({
+          id: r.id,
+          email: r.email,
+          passwordHash: r.password_hash || r.password || "",
+          name: r.name || "",
+          gender: r.gender || "",
+          department: r.department || "",
+          mobile: r.mobile || "",
+          academicYear: r.academic_year || "",
+          rollNumber: r.roll_number || "",
+          createdAt: r.created_at || new Date().toISOString()
+        }));
+        this.writeLocalFile("students.json", students);
+      }
+
+      // 10. Admins
+      const admRes = await this.pgPool.query(`SELECT * FROM admins`);
+      if (admRes.rows.length > 0) {
+        const admins = admRes.rows.map(r => ({
+          username: r.username,
+          passwordHash: r.password_hash,
+          role: r.role,
+          department: r.department || ""
+        }));
+        this.writeLocalFile("admins.json", admins);
+      }
+
+      console.log("✅ [Database State Sync] Local disk cache successfully updated with latest PostgreSQL state.");
+    } catch (err: any) {
+      console.warn("[Database State Sync Warning]:", err.message);
+    }
   }
 
   // ===================== HELPERS =====================

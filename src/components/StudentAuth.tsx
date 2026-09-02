@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion } from "motion/react";
-import { Mail, Lock, LogIn, UserPlus, AlertCircle, CheckCircle2, GraduationCap, Phone, User, BookOpen } from "lucide-react";
+import { Mail, Lock, LogIn, UserPlus, AlertCircle, CheckCircle2, GraduationCap, Phone, User, BookOpen, QrCode, CreditCard, Sparkles } from "lucide-react";
 import { api, ApiError } from "../services/api";
 
 interface StudentAuthProps {
@@ -18,10 +18,21 @@ export default function StudentAuth({ onAuthSuccess, isDark = false }: StudentAu
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [settings, setSettings] = useState<{
+    feeEnabled?: boolean;
+    feeAmount?: number;
+    paymentMode?: "gateway" | "manual_upi" | "both" | "free";
+    upiId?: string;
+  } | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    fetch("/api/settings/public")
+      .then(res => res.json())
+      .then(data => setSettings(data))
+      .catch(() => {});
+
     return () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current);
@@ -115,6 +126,32 @@ export default function StudentAuth({ onAuthSuccess, isDark = false }: StudentAu
               : "Register your student email and create a password before initiating team registration"
             }
           </p>
+
+          {/* Event Registration Fee & Mode Notice */}
+          {settings && settings.feeEnabled && (
+            <div className={`mt-4 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold border ${
+              isDark 
+                ? "bg-indigo-950/40 border-indigo-800/60 text-indigo-300" 
+                : "bg-indigo-50 border-indigo-200 text-indigo-700"
+            }`}>
+              {settings.paymentMode === "manual_upi" ? (
+                <>
+                  <QrCode className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Team Fee: ₹{settings.feeAmount} • UPI QR Code Scan</span>
+                </>
+              ) : settings.paymentMode === "gateway" ? (
+                <>
+                  <CreditCard className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Team Fee: ₹{settings.feeAmount} • Online Payment</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Team Fee: ₹{settings.feeAmount} • UPI / Online Gateway</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         {error && (

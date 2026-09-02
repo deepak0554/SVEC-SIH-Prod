@@ -6,6 +6,7 @@ import {
   AlertCircle, Heading1, Heading2, Heading3, ChevronDown, Upload, Maximize2, Minimize2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { getErrorMessage } from "../utils/error";
 
 interface HtmlRichEditorProps {
   value: string;
@@ -139,7 +140,7 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
       if (res.ok && data.success) {
         setImageUrl(data.url);
       } else {
-        alert(data.error || "Failed to upload image.");
+        alert(getErrorMessage(data, "Failed to upload image."));
       }
     } catch (err) {
       alert("Network error while uploading image.");
