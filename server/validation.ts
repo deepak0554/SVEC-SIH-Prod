@@ -59,7 +59,7 @@ export const departmentSchema = z
   .min(2, "Department must be at least 2 characters")
   .max(60, "Department must not exceed 60 characters");
 
-export const genderSchema = z.enum(["Male", "Female", "Other"]);
+export const genderSchema = z.enum(["Male", "Female"]);
 
 export const academicYearSchema = z
   .string()
@@ -175,7 +175,7 @@ export const memberItemSchema = z.object({
   name: z.string().trim().max(100).optional().or(z.literal("")),
   email: optionalEmailSchema,
   mobile: optionalMobileSchema,
-  gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  gender: z.enum(["Male", "Female"]).optional().or(z.literal("")),
   department: z.string().trim().max(60).optional().or(z.literal("")),
   academicYear: z.string().trim().max(30).optional().or(z.literal("")),
   rollNumber: rollNumberSchema
@@ -192,7 +192,7 @@ export const teamRegistrationSchema = z.object({
   
   // Members 1 to 5
   member1: z.string().trim().max(100).optional().or(z.literal("")),
-  member1Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member1Gender: genderSchema.optional().or(z.literal("")),
   member1Email: optionalEmailSchema,
   member1Mobile: optionalMobileSchema,
   member1Phone: optionalMobileSchema,
@@ -201,7 +201,7 @@ export const teamRegistrationSchema = z.object({
   member1RollNumber: rollNumberSchema,
 
   member2: z.string().trim().max(100).optional().or(z.literal("")),
-  member2Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member2Gender: genderSchema.optional().or(z.literal("")),
   member2Email: optionalEmailSchema,
   member2Mobile: optionalMobileSchema,
   member2Phone: optionalMobileSchema,
@@ -210,7 +210,7 @@ export const teamRegistrationSchema = z.object({
   member2RollNumber: rollNumberSchema,
 
   member3: z.string().trim().max(100).optional().or(z.literal("")),
-  member3Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member3Gender: genderSchema.optional().or(z.literal("")),
   member3Email: optionalEmailSchema,
   member3Mobile: optionalMobileSchema,
   member3Phone: optionalMobileSchema,
@@ -219,7 +219,7 @@ export const teamRegistrationSchema = z.object({
   member3RollNumber: rollNumberSchema,
 
   member4: z.string().trim().max(100).optional().or(z.literal("")),
-  member4Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member4Gender: genderSchema.optional().or(z.literal("")),
   member4Email: optionalEmailSchema,
   member4Mobile: optionalMobileSchema,
   member4Phone: optionalMobileSchema,
@@ -228,7 +228,7 @@ export const teamRegistrationSchema = z.object({
   member4RollNumber: rollNumberSchema,
 
   member5: z.string().trim().max(100).optional().or(z.literal("")),
-  member5Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member5Gender: genderSchema.optional().or(z.literal("")),
   member5Email: optionalEmailSchema,
   member5Mobile: optionalMobileSchema,
   member5Phone: optionalMobileSchema,
@@ -270,7 +270,7 @@ export const updateTeamRosterSchema = z.object({
   leadRollNumber: rollNumberSchema,
 
   member1: z.string().trim().max(100).optional().or(z.literal("")),
-  member1Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member1Gender: genderSchema.optional().or(z.literal("")),
   member1Email: optionalEmailSchema,
   member1Mobile: optionalMobileSchema,
   member1Phone: optionalMobileSchema,
@@ -279,7 +279,7 @@ export const updateTeamRosterSchema = z.object({
   member1RollNumber: rollNumberSchema,
 
   member2: z.string().trim().max(100).optional().or(z.literal("")),
-  member2Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member2Gender: genderSchema.optional().or(z.literal("")),
   member2Email: optionalEmailSchema,
   member2Mobile: optionalMobileSchema,
   member2Phone: optionalMobileSchema,
@@ -288,7 +288,7 @@ export const updateTeamRosterSchema = z.object({
   member2RollNumber: rollNumberSchema,
 
   member3: z.string().trim().max(100).optional().or(z.literal("")),
-  member3Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member3Gender: genderSchema.optional().or(z.literal("")),
   member3Email: optionalEmailSchema,
   member3Mobile: optionalMobileSchema,
   member3Phone: optionalMobileSchema,
@@ -297,7 +297,7 @@ export const updateTeamRosterSchema = z.object({
   member3RollNumber: rollNumberSchema,
 
   member4: z.string().trim().max(100).optional().or(z.literal("")),
-  member4Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member4Gender: genderSchema.optional().or(z.literal("")),
   member4Email: optionalEmailSchema,
   member4Mobile: optionalMobileSchema,
   member4Phone: optionalMobileSchema,
@@ -306,7 +306,7 @@ export const updateTeamRosterSchema = z.object({
   member4RollNumber: rollNumberSchema,
 
   member5: z.string().trim().max(100).optional().or(z.literal("")),
-  member5Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member5Gender: genderSchema.optional().or(z.literal("")),
   member5Email: optionalEmailSchema,
   member5Mobile: optionalMobileSchema,
   member5Phone: optionalMobileSchema,
@@ -413,7 +413,7 @@ export const updateRegistrationAdminSchema = z.object({
   leadRollNumber: rollNumberSchema,
 
   member1: z.string().trim().max(100).optional().or(z.literal("")),
-  member1Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member1Gender: genderSchema.optional().or(z.literal("")),
   member1Email: optionalEmailSchema,
   member1Mobile: optionalMobileSchema,
   member1Phone: optionalMobileSchema,
@@ -422,7 +422,7 @@ export const updateRegistrationAdminSchema = z.object({
   member1RollNumber: rollNumberSchema,
 
   member2: z.string().trim().max(100).optional().or(z.literal("")),
-  member2Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member2Gender: genderSchema.optional().or(z.literal("")),
   member2Email: optionalEmailSchema,
   member2Mobile: optionalMobileSchema,
   member2Phone: optionalMobileSchema,
@@ -431,7 +431,7 @@ export const updateRegistrationAdminSchema = z.object({
   member2RollNumber: rollNumberSchema,
 
   member3: z.string().trim().max(100).optional().or(z.literal("")),
-  member3Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member3Gender: genderSchema.optional().or(z.literal("")),
   member3Email: optionalEmailSchema,
   member3Mobile: optionalMobileSchema,
   member3Phone: optionalMobileSchema,
@@ -440,7 +440,7 @@ export const updateRegistrationAdminSchema = z.object({
   member3RollNumber: rollNumberSchema,
 
   member4: z.string().trim().max(100).optional().or(z.literal("")),
-  member4Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member4Gender: genderSchema.optional().or(z.literal("")),
   member4Email: optionalEmailSchema,
   member4Mobile: optionalMobileSchema,
   member4Phone: optionalMobileSchema,
@@ -449,7 +449,7 @@ export const updateRegistrationAdminSchema = z.object({
   member4RollNumber: rollNumberSchema,
 
   member5: z.string().trim().max(100).optional().or(z.literal("")),
-  member5Gender: z.enum(["Male", "Female", "Other"]).optional().or(z.literal("")),
+  member5Gender: genderSchema.optional().or(z.literal("")),
   member5Email: optionalEmailSchema,
   member5Mobile: optionalMobileSchema,
   member5Phone: optionalMobileSchema,

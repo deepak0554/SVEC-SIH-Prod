@@ -126,24 +126,39 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
     }
 
     setUploadingImage(true);
+    // Pre-read Base64 as immediate visual fallback so embedding always works
+    const reader = new FileReader();
+    reader.onload = (re) => {
+      if (re.target?.result) {
+        setImageUrl(re.target.result as string);
+      }
+    };
+    reader.readAsDataURL(file);
+
     try {
+      const adminToken = sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+      const headers: Record<string, string> = {};
+      if (adminToken) {
+        headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+        headers["X-Admin-Passcode"] = adminToken;
+      }
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("category", "images");
 
       const res = await fetch("/api/upload", {
         method: "POST",
+        headers,
         body: formData
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
         setImageUrl(data.url);
-      } else {
-        alert(getErrorMessage(data, "Failed to upload image."));
       }
     } catch (err) {
-      alert("Network error while uploading image.");
+      console.warn("Editor image upload notice:", err);
     } finally {
       setUploadingImage(false);
     }

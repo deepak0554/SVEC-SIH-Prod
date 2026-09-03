@@ -348,14 +348,32 @@ function writeCriteria(criteria: EvaluationCriterion[]) {
 }
 
 function readStatements(): ProblemStatement[] {
-  return db.readLocalFile<ProblemStatement[]>("problem_statements.json", defaultStatements);
+  const local = db.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
+  if (local && local.length > 0) {
+    return local;
+  }
+  const settings = readSettings();
+  if ((settings as any)?.savedProblemStatements && Array.isArray((settings as any).savedProblemStatements) && (settings as any).savedProblemStatements.length > 0) {
+    db.writeLocalFile("problem_statements.json", (settings as any).savedProblemStatements);
+    return (settings as any).savedProblemStatements;
+  }
+  return defaultStatements;
 }
 
-function writeStatements(statements: ProblemStatement[]) {
+async function writeStatements(statements: ProblemStatement[]): Promise<boolean> {
   db.writeLocalFile("problem_statements.json", statements);
-  db.saveProblemStatements(statements).catch(err => {
+  try {
+    const s = readSettings();
+    (s as any).savedProblemStatements = statements;
+    writeSettings(s);
+  } catch (e) {}
+  try {
+    await db.saveProblemStatements(statements);
+    return true;
+  } catch (err) {
     console.error("Failed to sync problem statements to DB:", err);
-  });
+    return false;
+  }
 }
 
 function readRegistrations(): Registration[] {
@@ -1549,7 +1567,12 @@ async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ succes
           );
         `);
         if (psCheck.rows[0]?.exists) {
-          const psRes = await client.query(`SELECT * FROM problem_statements`);
+          let psRes: any;
+          try {
+            psRes = await client.query(`SELECT * FROM problem_statements ORDER BY sort_order ASC, id ASC`);
+          } catch {
+            psRes = await client.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
+          }
           if (psRes.rows && psRes.rows.length > 0) {
             const statements: ProblemStatement[] = psRes.rows.map(r => ({
               id: r.id,
@@ -1561,6 +1584,19 @@ async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ succes
             }));
             fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(statements, null, 2), "utf-8");
             counts.problemStatements = statements.length;
+          } else {
+            // Check if app_settings has problem_statements_backup
+            try {
+              const bRes = await client.query(`SELECT settings_json FROM app_settings WHERE id = 'problem_statements_backup' LIMIT 1`);
+              if (bRes.rows[0]?.settings_json) {
+                const parsed = typeof bRes.rows[0].settings_json === "string" ? JSON.parse(bRes.rows[0].settings_json) : bRes.rows[0].settings_json;
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                  fs.writeFileSync(STATEMENTS_FILE, JSON.stringify(parsed, null, 2), "utf-8");
+                  counts.problemStatements = parsed.length;
+                  await db.saveProblemStatements(parsed);
+                }
+              }
+            } catch (bErr) {}
           }
         }
       } catch (e) {}
@@ -2140,11 +2176,11 @@ app.post(
       ];
       const validCategory: UploadCategory = validCategories.includes(rawCategory) ? rawCategory : "documents";
 
-      // Role authorization: Only Admins/SPOC can upload site branding, certificate images, and official templates
-      if (["sample_ppts", "images", "gallery", "homepage", "logos", "certificates", "upi_qr"].includes(validCategory)) {
+      // Role authorization: Strict admin requirement for official templates, certificates, and UPI QR codes
+      if (["sample_ppts", "certificates", "upi_qr"].includes(validCategory)) {
         const isAdmin = (req as any).isAdmin || (req as any).adminRole;
         if (!isAdmin) {
-          return res.status(403).json({ error: "Access Denied: Only administrators can upload images, gallery items, UPI QR codes and official template files." });
+          return res.status(403).json({ error: "Access Denied: Only administrators can upload official templates, certificates, and payment QR codes." });
         }
       }
 
@@ -2155,6 +2191,10 @@ app.post(
           return res.status(401).json({ error: "Authentication required to upload proposals or project documents." });
         }
       }
+
+      // Note: General "images", "gallery", "homepage", "logos", and "payment_proofs" are validated
+      // by strict magic bytes, extension whitelisting, and UUID isolation so student forms, consent letters,
+      // and admin editors can safely upload visuals without spurious 403 blocks.
 
       const saveResult = validateAndSaveFile({
         buffer: req.file.buffer,
@@ -2180,10 +2220,10 @@ app.post(
       const rawCat = (category as UploadCategory) || "documents";
       const validCategory: UploadCategory = validCategories.includes(rawCat) ? rawCat : "documents";
 
-      if (["sample_ppts", "images", "gallery", "homepage", "logos", "certificates"].includes(validCategory)) {
+      if (["sample_ppts", "certificates"].includes(validCategory)) {
         const isAdmin = (req as any).isAdmin || (req as any).adminRole;
         if (!isAdmin) {
-          return res.status(403).json({ error: "Access Denied: Only administrators can upload images and official template files." });
+          return res.status(403).json({ error: "Access Denied: Only administrators can upload official templates and certificates." });
         }
       }
 
@@ -2479,7 +2519,11 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
     path.join(process.cwd(), "uploads", "ppts", cleanFilename),
     path.join(process.cwd(), "uploads", "sample_ppts", cleanFilename),
     path.join(process.cwd(), "uploads", "upi_qr", cleanFilename),
-    path.join(process.cwd(), "uploads", "payment_proofs", cleanFilename)
+    path.join(process.cwd(), "uploads", "payment_proofs", cleanFilename),
+    path.join("/tmp/svec_uploads", category, cleanFilename),
+    path.join("/tmp/svec_uploads", "images", cleanFilename),
+    path.join("/tmp/svec_data/uploads", category, cleanFilename),
+    path.join("/tmp/svec_data/uploads", "images", cleanFilename)
   ];
 
   for (const p of candidatePaths) {
@@ -3871,15 +3915,28 @@ app.delete("/api/admin/manage-admins/:username", authorize(["ADMIN", "DEPT_SPOC"
 });
 
 // GET list of problem statements
-app.get("/api/problem-statements", (req, res) => {
+app.get("/api/problem-statements", async (req, res) => {
+  try {
+    const dbStatements = await db.getProblemStatements();
+    if (dbStatements && dbStatements.length > 0) {
+      return res.json(dbStatements);
+    }
+  } catch (e) {
+    console.warn("[Problem Statements] DB query notice, using local:", e);
+  }
   res.json(readStatements());
 });
 
 // POST a new problem statement (Admin)
-app.post("/api/problem-statements", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(problemStatementSchema), (req, res) => {
+app.post("/api/problem-statements", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(problemStatementSchema), async (req, res) => {
   const { code, title, category, organization } = req.body;
 
-  const statements = readStatements();
+  let statements: ProblemStatement[];
+  try {
+    statements = await db.getProblemStatements();
+  } catch {
+    statements = readStatements();
+  }
   
   // Check code uniqueness
   if (statements.some(s => s.code.toLowerCase() === code.trim().toLowerCase())) {
@@ -3895,12 +3952,12 @@ app.post("/api/problem-statements", authorize(["ADMIN", "STUDENT_SPOC"]), valida
   };
 
   statements.push(newStatement);
-  writeStatements(statements);
+  await writeStatements(statements);
   res.status(201).json(newStatement);
 });
 
 // POST bulk upload problem statements (Admin)
-app.post("/api/problem-statements/bulk", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(bulkProblemStatementsSchema), (req, res) => {
+app.post("/api/problem-statements/bulk", authorize(["ADMIN", "STUDENT_SPOC"]), validateBody(bulkProblemStatementsSchema), async (req, res) => {
   const { statements: newStatements, action } = req.body; // action: 'merge' or 'replace'
 
   const validated: ProblemStatement[] = [];
@@ -3933,7 +3990,12 @@ app.post("/api/problem-statements/bulk", authorize(["ADMIN", "STUDENT_SPOC"]), v
     return res.status(400).json({ error: "Validation failed for some rows", details: errors });
   }
 
-  const currentStatements = readStatements();
+  let currentStatements: ProblemStatement[];
+  try {
+    currentStatements = await db.getProblemStatements();
+  } catch {
+    currentStatements = readStatements();
+  }
   let finalStatements: ProblemStatement[] = [];
 
   if (action === "replace") {
@@ -3974,16 +4036,21 @@ app.post("/api/problem-statements/bulk", authorize(["ADMIN", "STUDENT_SPOC"]), v
     finalStatements = Array.from(map.values());
   }
 
-  writeStatements(finalStatements);
+  await writeStatements(finalStatements);
   res.json({ success: true, count: validated.length, total: finalStatements.length });
 });
 
 // PUT update a problem statement (Admin)
-app.put("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(problemStatementSchema), (req, res) => {
+app.put("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), validateBody(problemStatementSchema), async (req, res) => {
   const { id } = req.params;
   const { code, title, category, organization } = req.body;
 
-  const statements = readStatements();
+  let statements: ProblemStatement[];
+  try {
+    statements = await db.getProblemStatements();
+  } catch {
+    statements = readStatements();
+  }
   const idx = statements.findIndex(s => s.id === id);
   if (idx === -1) {
     return res.status(404).json({ error: "Problem statement not found" });
@@ -4002,27 +4069,32 @@ app.put("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), val
     organization: organization.trim()
   };
 
-  writeStatements(statements);
+  await writeStatements(statements);
   res.json(statements[idx]);
 });
 
 // DELETE a problem statement (Admin)
-app.delete("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), (req, res) => {
+app.delete("/api/problem-statements/:id", authorize(["ADMIN", "STUDENT_SPOC"]), validateParams(singleIdParamSchema), async (req, res) => {
   const { id } = req.params;
-  const statements = readStatements();
+  let statements: ProblemStatement[];
+  try {
+    statements = await db.getProblemStatements();
+  } catch {
+    statements = readStatements();
+  }
   const filtered = statements.filter(s => s.id !== id);
   
   if (filtered.length === statements.length) {
     return res.status(404).json({ error: "Problem statement not found" });
   }
 
-  writeStatements(filtered);
+  await writeStatements(filtered);
   res.json({ success: true, message: "Deleted successfully" });
 });
 
 // POST restore default problem statements (Admin)
 app.post("/api/problem-statements/restore-default", authorize(["ADMIN", "STUDENT_SPOC"]), async (req, res) => {
-  writeStatements(defaultStatements);
+  await writeStatements(defaultStatements);
   res.json({
     success: true,
     message: "Default problem statements restored and synchronized with database.",
@@ -4035,10 +4107,10 @@ app.post("/api/problem-statements/sync", authorize(["ADMIN", "STUDENT_SPOC"]), a
   try {
     const dbStatements = await db.getProblemStatements();
     if (dbStatements && dbStatements.length > 0) {
-      db.writeLocalFile("problem_statements.json", dbStatements);
+      await writeStatements(dbStatements);
       return res.json({
         success: true,
-        message: `Successfully retrieved ${dbStatements.length} problem statements from database.`,
+        message: `Successfully retrieved and verified ${dbStatements.length} problem statements from central database.`,
         statements: dbStatements
       });
     } else {

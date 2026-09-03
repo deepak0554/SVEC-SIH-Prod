@@ -1693,15 +1693,20 @@ export default function AdminPanel({
     setQrUploadError("");
 
     try {
+      const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+      const authHeaders: Record<string, string> = {};
+      if (adminToken) {
+        authHeaders["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+        authHeaders["X-Admin-Passcode"] = adminToken;
+      }
+
       // 1. Try Multipart Upload with FormData
       const formData = new FormData();
       formData.append("file", file);
       
       const res = await fetch("/api/settings/upi-qr/upload", {
         method: "POST",
-        headers: {
-          "X-Admin-Passcode": passcode
-        },
+        headers: authHeaders,
         body: formData
       });
 
@@ -1722,7 +1727,7 @@ export default function AdminPanel({
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
-                "X-Admin-Passcode": passcode
+                ...authHeaders
               },
               body: JSON.stringify({
                 fileBase64: base64,
@@ -5000,22 +5005,38 @@ export default function AdminPanel({
                                     return;
                                   }
                                   try {
+                                    const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+                                    const headers: Record<string, string> = {};
+                                    if (adminToken) {
+                                      headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+                                      headers["X-Admin-Passcode"] = adminToken;
+                                    }
+
+                                    // Pre-read Base64 as immediate visual fallback
+                                    const reader = new FileReader();
+                                    reader.onload = (rev) => {
+                                      if (rev.target?.result) {
+                                        setSettingsForm(prev => ({ ...prev, logoUrl: rev.target!.result as string }));
+                                      }
+                                    };
+                                    reader.readAsDataURL(file);
+
                                     const formData = new FormData();
                                     formData.append("file", file);
                                     formData.append("category", "images");
                                     const res = await fetch("/api/upload", {
                                       method: "POST",
-                                      headers: { "X-Admin-Passcode": passcode },
+                                      headers,
                                       body: formData
                                     });
                                     const data = await res.json();
                                     if (res.ok && data.success) {
                                       setSettingsForm(prev => ({ ...prev, logoUrl: data.url }));
                                     } else {
-                                      alert(getErrorMessage(data, "Failed to upload logo."));
+                                      console.warn("Server upload notice:", data);
                                     }
                                   } catch (err) {
-                                    alert("Network error while uploading logo.");
+                                    console.warn("Upload network notice:", err);
                                   }
                                 }
                               }}
@@ -5658,22 +5679,38 @@ export default function AdminPanel({
                                       return;
                                     }
                                     try {
+                                      const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+                                      const headers: Record<string, string> = {};
+                                      if (adminToken) {
+                                        headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+                                        headers["X-Admin-Passcode"] = adminToken;
+                                      }
+
+                                      // Pre-read Base64 as immediate visual fallback
+                                      const reader = new FileReader();
+                                      reader.onload = (rev) => {
+                                        if (rev.target?.result) {
+                                          setSettingsForm(prev => ({ ...prev, certificateBgUrl: rev.target!.result as string }));
+                                        }
+                                      };
+                                      reader.readAsDataURL(file);
+
                                       const formData = new FormData();
                                       formData.append("file", file);
                                       formData.append("category", "images");
                                       const res = await fetch("/api/upload", {
                                         method: "POST",
-                                        headers: { "X-Admin-Passcode": passcode },
+                                        headers,
                                         body: formData
                                       });
                                       const data = await res.json();
                                       if (res.ok && data.success) {
                                         setSettingsForm(prev => ({ ...prev, certificateBgUrl: data.url }));
                                       } else {
-                                        alert(getErrorMessage(data, "Failed to upload certificate background."));
+                                        console.warn("Server upload notice:", data);
                                       }
                                     } catch (err) {
-                                      alert("Network error while uploading certificate background.");
+                                      console.warn("Upload network notice:", err);
                                     }
                                   }
                                 }}

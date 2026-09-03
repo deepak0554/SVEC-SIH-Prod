@@ -477,6 +477,107 @@ Add to cron (`sudo crontab -e`) to run every night at 2:00 AM:
 
 ---
 
+## 13. Troubleshooting Image & File Uploads on Linux
+
+If image uploads (logos, gallery, homepage banners, UPI QR, or student PPTs) fail when hosted on Linux, follow these diagnostic steps:
+
+### Diagnostic Step: Check the Error in Browser DevTools
+1. Press `F12` in your browser and go to the **Network** tab.
+2. Attempt to upload the image and click on the failed `/api/upload` request:
+   - **HTTP 413 (Payload Too Large)**: Nginx body size limit is blocking the upload.
+   - **HTTP 500 (Internal Server Error)**: Linux directory permissions (`EACCES: permission denied`) or Nginx temp buffer directory permissions.
+   - **HTTP 403 (Forbidden)**: Admin passcode or authentication header was stripped or missing.
+   - **HTTP 400 (Bad Request)**: Unsupported image format (e.g., `.svg`, `.heic`) or magic byte signature mismatch.
+
+---
+
+### Fix 1: Fix Linux Filesystem Permissions (`data/` Directory)
+When running Node.js under a non-root user (e.g., `deploy`, `ubuntu`), the process needs write permissions to the `./data` folder:
+
+```bash
+# Navigate to your project directory
+cd /var/www/sih-portal
+
+# Create the uploads subdirectories if they don't exist yet
+mkdir -p data/uploads/{images,documents,ppts,sample_ppts}
+
+# Grant ownership to your app service user (e.g., deploy or ubuntu)
+sudo chown -R $USER:$USER data
+sudo chmod -R 775 data
+```
+
+If your app runs as a dedicated `deploy` user:
+```bash
+sudo chown -R deploy:deploy /var/www/sih-portal/data
+sudo chmod -R 775 /var/www/sih-portal/data
+```
+
+---
+
+### Fix 2: Increase Nginx `client_max_body_size`
+By default, Nginx limits file uploads to **1MB**, rejecting most phone photos and documents with `413 Request Entity Too Large`:
+
+1. Edit your Nginx configuration:
+   ```bash
+   sudo nano /etc/nginx/sites-available/sih-portal
+   ```
+2. Ensure `client_max_body_size 50M;` is present inside the `server { ... }` block:
+   ```nginx
+   server {
+       listen 443 ssl http2;
+       server_name hackathon.yourdomain.edu;
+
+       # Allow file uploads up to 50MB
+       client_max_body_size 50M;
+
+       # ... rest of configuration ...
+   }
+   ```
+3. Test and reload Nginx:
+   ```bash
+   sudo nginx -t && sudo systemctl reload nginx
+   ```
+
+---
+
+### Fix 3: Fix Nginx Temporary Buffer Permissions
+When uploading files, Nginx buffers multipart chunks into `/var/lib/nginx/body/`. If this directory has incorrect permissions, Nginx logs `open() "/var/lib/nginx/body/..." failed (13: Permission denied)`:
+
+```bash
+sudo chown -R www-data:www-data /var/lib/nginx
+sudo chmod -R 700 /var/lib/nginx
+```
+*(On CentOS / RHEL / AlmaLinux, replace `www-data` with `nginx`)*.
+
+---
+
+### Fix 4: Verify Working Directory in PM2 or Systemd
+The application stores uploads relative to the working directory (`./data/uploads`). If PM2 or systemd is started without setting the working directory, Node tries to write to the wrong folder:
+
+- **For PM2**:
+  ```bash
+  pm2 delete sih-portal 2>/dev/null
+  pm2 start dist/server.cjs --name "sih-portal" --cwd "/var/www/sih-portal"
+  pm2 save
+  ```
+- **For Systemd (`/etc/systemd/system/sih-portal.service`)**:
+  Ensure the unit file has:
+  ```ini
+  WorkingDirectory=/var/www/sih-portal
+  ```
+
+---
+
+### Fix 5: Check Allowed File Formats
+The portal uses strict magic-byte security inspection to prevent malware:
+- **Allowed Image Formats**: `.png`, `.jpg`, `.jpeg`, `.webp`, `.gif` (up to 5MB).
+- **Prohibited Formats**:
+  - `.svg` is banned to prevent Stored Cross-Site Scripting (XSS) attacks.
+  - `.heic` / `.heif` (Apple iPhone camera format) must be converted to standard `.jpg` or `.png` before uploading.
+  - Renamed files (e.g. changing `file.txt` to `file.jpg`) will fail the magic byte check.
+
+---
+
 ## Summary Checklist for Non-Docker Production
 
 - [x] Node.js 20 LTS installed

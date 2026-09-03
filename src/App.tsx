@@ -108,7 +108,29 @@ export default function App() {
       ]);
 
       if (psRes.status === "fulfilled" && psRes.value) {
-        setProblemStatements(psRes.value);
+        if (Array.isArray(psRes.value) && psRes.value.length > 0) {
+          setProblemStatements(psRes.value);
+          try {
+            localStorage.setItem("svec_problem_statements_backup", JSON.stringify(psRes.value));
+          } catch (e) {}
+        } else {
+          // Fallback to local browser cache if server returned empty
+          try {
+            const cached = localStorage.getItem("svec_problem_statements_backup");
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setProblemStatements(parsed);
+              } else {
+                setProblemStatements(psRes.value);
+              }
+            } else {
+              setProblemStatements(psRes.value);
+            }
+          } catch (e) {
+            setProblemStatements(psRes.value);
+          }
+        }
       }
 
       if (homeRes.status === "fulfilled" && homeRes.value) {

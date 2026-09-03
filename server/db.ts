@@ -664,7 +664,9 @@ class DatabaseManager {
           code VARCHAR(100) NOT NULL,
           title TEXT NOT NULL,
           category VARCHAR(50) NOT NULL,
-          organization VARCHAR(255) NOT NULL,
+          organization TEXT NOT NULL,
+          description TEXT DEFAULT '',
+          sort_order INT DEFAULT 0,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );`
       },
@@ -1282,8 +1284,10 @@ class DatabaseManager {
       try {
         await this.pgPool.query(`ALTER TABLE problem_statements ALTER COLUMN title TYPE TEXT;`);
         await this.pgPool.query(`ALTER TABLE problem_statements ALTER COLUMN organization TYPE TEXT;`);
+        await this.pgPool.query(`ALTER TABLE problem_statements ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';`);
+        await this.pgPool.query(`ALTER TABLE problem_statements ADD COLUMN IF NOT EXISTS sort_order INT DEFAULT 0;`);
       } catch (colErr: any) {
-        // Safe if already TEXT
+        // Safe if already TEXT or columns already exist
       }
     } catch (err: any) {
       console.warn("[DB Migration Notice]:", err.message);
@@ -1295,25 +1299,50 @@ class DatabaseManager {
     if (!this.pgPool) return;
 
     try {
-      // 1. Problem Statements
+      // 1. Problem Statements (Resilient: never overwrite customized statements with defaults)
       const psRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM problem_statements`);
       if (parseInt(psRes.rows[0].count, 10) === 0) {
-        for (const ps of defaultStatements) {
+        const localStatements = this.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
+        const localSettings = this.readLocalFile<any>("settings.json", {});
+        const candidateStatements = (localStatements && localStatements.length > 0)
+          ? localStatements
+          : ((localSettings?.savedProblemStatements && Array.isArray(localSettings.savedProblemStatements) && localSettings.savedProblemStatements.length > 0)
+              ? localSettings.savedProblemStatements
+              : defaultStatements);
+
+        for (let i = 0; i < candidateStatements.length; i++) {
+          const ps = candidateStatements[i];
           await this.pgPool.query(
-            `INSERT INTO problem_statements (id, code, title, category, organization) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-            [ps.id, ps.code, ps.title, ps.category, ps.organization]
+            `INSERT INTO problem_statements (id, code, title, category, organization, description, sort_order) 
+             VALUES ($1, $2, $3, $4, $5, $6, $7) 
+             ON CONFLICT (id) DO UPDATE SET 
+               code = EXCLUDED.code, 
+               title = EXCLUDED.title, 
+               category = EXCLUDED.category, 
+               organization = EXCLUDED.organization,
+               description = EXCLUDED.description,
+               sort_order = EXCLUDED.sort_order`,
+            [ps.id || `ps_${i + 1}`, ps.code, ps.title, ps.category, ps.organization, (ps as any).description || "", i]
           );
         }
       }
 
-      // 2. Evaluation Criteria
+      // 2. Evaluation Criteria (Resilient: preserve customized criteria)
       const critRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM evaluation_criteria`);
       if (parseInt(critRes.rows[0].count, 10) === 0) {
-        for (let i = 0; i < defaultCriteria.length; i++) {
-          const c = defaultCriteria[i];
+        const localCriteria = this.readLocalFile<EvaluationCriterion[]>("evaluation_criteria.json", []);
+        const candidateCriteria = (localCriteria && localCriteria.length > 0) ? localCriteria : defaultCriteria;
+        for (let i = 0; i < candidateCriteria.length; i++) {
+          const c = candidateCriteria[i];
           await this.pgPool.query(
-            `INSERT INTO evaluation_criteria (id, name, max_score, description, sort_order) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-            [c.id, c.name, c.maxScore, c.description || "", i]
+            `INSERT INTO evaluation_criteria (id, name, max_score, description, sort_order) 
+             VALUES ($1, $2, $3, $4, $5) 
+             ON CONFLICT (id) DO UPDATE SET 
+               name = EXCLUDED.name, 
+               max_score = EXCLUDED.max_score, 
+               description = EXCLUDED.description, 
+               sort_order = EXCLUDED.sort_order`,
+            [c.id, c.name, c.maxScore || 10, c.description || "", i]
           );
         }
       }
@@ -2260,7 +2289,9 @@ class DatabaseManager {
         const coll = this.mongoDb.collection("problem_statements");
         const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
         if (docs && docs.length > 0) {
-          return docs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
+          const statements = docs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
+          this.writeLocalFile("problem_statements.json", statements);
+          return statements;
         }
       } catch (err) {
         console.error("[MongoDB Query Error] getProblemStatements:", err);
@@ -2268,21 +2299,38 @@ class DatabaseManager {
     }
     if (this.isPostgresActive && this.pgPool) {
       try {
-        const res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
+        let res: any;
+        try {
+          res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY sort_order ASC, id ASC`);
+        } catch {
+          res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
+        }
         if (res.rows && res.rows.length > 0) {
-          return res.rows.map(r => ({
+          const statements: ProblemStatement[] = res.rows.map((r: any) => ({
             id: r.id,
             code: r.code,
             title: r.title,
             category: r.category as any,
-            organization: r.organization
+            organization: r.organization,
+            description: r.description || ""
           }));
+          this.writeLocalFile("problem_statements.json", statements);
+          return statements;
         }
       } catch (err) {
         console.error("[PostgreSQL Query Error] getProblemStatements:", err);
       }
     }
-    return this.readLocalFile<ProblemStatement[]>("problem_statements.json", defaultStatements);
+    const local = this.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
+    if (local && local.length > 0) {
+      return local;
+    }
+    const settings = this.readLocalFile<any>("settings.json", {});
+    if (settings?.savedProblemStatements && Array.isArray(settings.savedProblemStatements) && settings.savedProblemStatements.length > 0) {
+      this.writeLocalFile("problem_statements.json", settings.savedProblemStatements);
+      return settings.savedProblemStatements;
+    }
+    return defaultStatements;
   }
 
   public async saveProblemStatements(statements: ProblemStatement[]): Promise<boolean> {
@@ -2293,25 +2341,49 @@ class DatabaseManager {
         if (statements.length > 0) {
           await coll.insertMany(statements.map((ps, idx) => ({ ...ps, sortOrder: idx })));
         }
+        const metaColl = this.mongoDb.collection("app_metadata");
+        await metaColl.updateOne(
+          { key: "problem_statements" },
+          { $set: { key: "problem_statements", data: statements, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        ).catch(() => {});
       } catch (err) {
         console.error("[MongoDB Save Error] saveProblemStatements:", err);
       }
     }
     if (this.isPostgresActive && this.pgPool) {
+      const client = await this.pgPool.connect();
       try {
-        await this.pgPool.query(`DELETE FROM problem_statements`);
-        for (const ps of statements) {
-          await this.pgPool.query(`
-            INSERT INTO problem_statements (id, code, title, category, organization)
-            VALUES ($1, $2, $3, $4, $5)
-          `, [ps.id, ps.code, ps.title, ps.category, ps.organization]);
+        await client.query("BEGIN");
+        await client.query(`DELETE FROM problem_statements`);
+        for (let i = 0; i < statements.length; i++) {
+          const ps = statements[i];
+          await client.query(`
+            INSERT INTO problem_statements (id, code, title, category, organization, description, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+          `, [ps.id || `ps_${i + 1}`, ps.code, ps.title, ps.category, ps.organization, (ps as any).description || "", i]);
         }
-        return true;
+        await client.query(`
+          INSERT INTO app_settings (id, settings_json, updated_at)
+          VALUES ('problem_statements_backup', $1, CURRENT_TIMESTAMP)
+          ON CONFLICT (id) DO UPDATE SET settings_json = EXCLUDED.settings_json, updated_at = CURRENT_TIMESTAMP;
+        `, [JSON.stringify(statements)]).catch(() => {});
+        await client.query("COMMIT");
       } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
         console.error("[PostgreSQL Save Error] saveProblemStatements:", err);
+        throw err;
+      } finally {
+        client.release();
       }
     }
+    // Redundant backup to local file and settings.json so redeployment restarts never lose items
     this.writeLocalFile("problem_statements.json", statements);
+    try {
+      const currentSettings = this.readLocalFile<any>("settings.json", {});
+      currentSettings.savedProblemStatements = statements;
+      this.writeLocalFile("settings.json", currentSettings);
+    } catch (e) {}
     return true;
   }
 
@@ -2360,21 +2432,32 @@ class DatabaseManager {
       }
     }
     if (this.isPostgresActive && this.pgPool) {
+      const client = await this.pgPool.connect();
       try {
-        await this.pgPool.query(`DELETE FROM evaluation_criteria`);
+        await client.query("BEGIN");
+        await client.query(`DELETE FROM evaluation_criteria`);
         for (let i = 0; i < criteria.length; i++) {
           const c = criteria[i];
-          await this.pgPool.query(`
+          await client.query(`
             INSERT INTO evaluation_criteria (id, name, max_score, description, sort_order)
             VALUES ($1, $2, $3, $4, $5)
           `, [c.id, c.name, c.maxScore || 10, c.description || "", i]);
         }
-        return true;
+        await client.query("COMMIT");
       } catch (err) {
+        await client.query("ROLLBACK").catch(() => {});
         console.error("[PostgreSQL Save Error] saveEvaluationCriteria:", err);
+        throw err;
+      } finally {
+        client.release();
       }
     }
     this.writeLocalFile("evaluation_criteria.json", criteria);
+    try {
+      const currentSettings = this.readLocalFile<any>("settings.json", {});
+      currentSettings.savedEvaluationCriteria = criteria;
+      this.writeLocalFile("settings.json", currentSettings);
+    } catch (e) {}
     return true;
   }
 
@@ -3322,6 +3405,12 @@ class DatabaseManager {
         if (psDocs && psDocs.length > 0) {
           const statements: ProblemStatement[] = psDocs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
           this.writeLocalFile("problem_statements.json", statements);
+        } else {
+          // If empty in MongoDB, seed from local or settings backup so redeployment never wipes
+          const localStatements = this.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
+          if (localStatements && localStatements.length > 0) {
+            await this.saveProblemStatements(localStatements);
+          }
         }
 
         // 7. Evaluation Criteria from MongoDB
@@ -3446,17 +3535,46 @@ class DatabaseManager {
       }
 
       // 6. Problem Statements
-      const psRes = await this.pgPool.query(`SELECT * FROM problem_statements`);
-      if (psRes.rows.length > 0) {
-        const statements: ProblemStatement[] = psRes.rows.map(r => ({
-          id: r.id,
-          code: r.code,
-          title: r.title,
-          category: r.category,
-          organization: r.organization,
-          description: r.description || ""
-        }));
-        this.writeLocalFile("problem_statements.json", statements);
+      try {
+        let psRes: any;
+        try {
+          psRes = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY sort_order ASC, id ASC`);
+        } catch {
+          psRes = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
+        }
+        if (psRes.rows.length > 0) {
+          const statements: ProblemStatement[] = psRes.rows.map((r: any) => ({
+            id: r.id,
+            code: r.code,
+            title: r.title,
+            category: r.category,
+            organization: r.organization,
+            description: r.description || ""
+          }));
+          this.writeLocalFile("problem_statements.json", statements);
+        } else {
+          // If problem_statements table is empty, attempt restore from app_settings backup or local file
+          let restoredFromBackup = false;
+          try {
+            const bRes = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'problem_statements_backup' LIMIT 1`);
+            if (bRes.rows.length > 0 && bRes.rows[0].settings_json) {
+              const parsedBackup = typeof bRes.rows[0].settings_json === "string" ? JSON.parse(bRes.rows[0].settings_json) : bRes.rows[0].settings_json;
+              if (Array.isArray(parsedBackup) && parsedBackup.length > 0) {
+                await this.saveProblemStatements(parsedBackup);
+                restoredFromBackup = true;
+              }
+            }
+          } catch (bErr) {}
+
+          if (!restoredFromBackup) {
+            const localStatements = this.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
+            if (localStatements && localStatements.length > 0) {
+              await this.saveProblemStatements(localStatements);
+            }
+          }
+        }
+      } catch (psErr: any) {
+        console.warn("[PostgreSQL Sync] Problem statements notice:", psErr.message);
       }
 
       // 7. Evaluation Criteria

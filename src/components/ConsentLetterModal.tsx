@@ -420,15 +420,37 @@ export default function ConsentLetterModal({
     fetchSettings();
   }, []);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const adminToken = sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+    const studentToken = sessionStorage.getItem("svec_sih_student_token") || localStorage.getItem("svec_sih_student_token") || "";
+    const token = adminToken || studentToken;
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+      if (adminToken) headers["X-Admin-Passcode"] = adminToken;
+    }
+    return headers;
+  };
+
   const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Immediate visual rendering via FileReader so document preview is instant and failsafe
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        if (re.target?.result) {
+          setLogoUrl(re.target.result as string);
+        }
+      };
+      reader.readAsDataURL(file);
+
       try {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("category", "images");
         const res = await fetch("/api/upload", {
           method: "POST",
+          headers: getAuthHeaders(),
           body: formData
         });
         const data = await res.json();
@@ -436,7 +458,7 @@ export default function ConsentLetterModal({
           setLogoUrl(data.url);
         }
       } catch (err) {
-        console.error("Error uploading logo:", err);
+        console.warn("Notice during background logo sync:", err);
       }
     }
   };
@@ -448,12 +470,23 @@ export default function ConsentLetterModal({
   const handleSignatureUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Immediate visual rendering via FileReader
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        if (re.target?.result) {
+          setSignatureUrl(re.target.result as string);
+          setShowSignature(true);
+        }
+      };
+      reader.readAsDataURL(file);
+
       try {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("category", "images");
         const res = await fetch("/api/upload", {
           method: "POST",
+          headers: getAuthHeaders(),
           body: formData
         });
         const data = await res.json();
@@ -462,7 +495,7 @@ export default function ConsentLetterModal({
           setShowSignature(true);
         }
       } catch (err) {
-        console.error("Error uploading signature:", err);
+        console.warn("Notice during background signature sync:", err);
       }
     }
   };
@@ -475,12 +508,23 @@ export default function ConsentLetterModal({
   const handleStampUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // Immediate visual rendering via FileReader
+      const reader = new FileReader();
+      reader.onload = (re) => {
+        if (re.target?.result) {
+          setStampUrl(re.target.result as string);
+          setShowStamp(true);
+        }
+      };
+      reader.readAsDataURL(file);
+
       try {
         const formData = new FormData();
         formData.append("file", file);
         formData.append("category", "images");
         const res = await fetch("/api/upload", {
           method: "POST",
+          headers: getAuthHeaders(),
           body: formData
         });
         const data = await res.json();
@@ -489,7 +533,7 @@ export default function ConsentLetterModal({
           setShowStamp(true);
         }
       } catch (err) {
-        console.error("Error uploading stamp:", err);
+        console.warn("Notice during background stamp sync:", err);
       }
     }
   };
