@@ -751,6 +751,11 @@ export default function AdminPanel({
   const [settingsSuccess, setSettingsSuccess] = useState("");
   const [samplePptUploading, setSamplePptUploading] = useState(false);
   const [samplePptUploadStatus, setSamplePptUploadStatus] = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoUploadStatus, setLogoUploadStatus] = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
+  const [logoPreviewFallback, setLogoPreviewFallback] = useState<string>("");
+  const [certBgUploading, setCertBgUploading] = useState(false);
+  const [certBgUploadStatus, setCertBgUploadStatus] = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
 
   // DB test state
   const [dbTesting, setDbTesting] = useState(false);
@@ -4981,63 +4986,106 @@ export default function AdminPanel({
                       Portal Custom Brand Logo (Backend upload)
                     </label>
                     <div className="flex flex-col sm:flex-row items-center gap-4">
-                      <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-center overflow-hidden shrink-0">
-                        {settingsForm.logoUrl ? (
-                          <img src={settingsForm.logoUrl} className="w-full h-full object-contain p-1" alt="Custom Logo Preview" referrerPolicy="no-referrer" />
+                      <div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-xs flex items-center justify-center overflow-hidden shrink-0 relative">
+                        {logoUploading ? (
+                          <div className="flex flex-col items-center justify-center gap-1 p-1 text-center">
+                            <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+                            <span className="text-[9px] font-semibold text-slate-500">Uploading...</span>
+                          </div>
+                        ) : settingsForm.logoUrl ? (
+                          <img
+                            src={settingsForm.logoUrl}
+                            className="w-full h-full object-contain p-1"
+                            alt="Custom Logo Preview"
+                            referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              if (logoPreviewFallback && e.currentTarget.src !== logoPreviewFallback) {
+                                e.currentTarget.src = logoPreviewFallback;
+                              }
+                            }}
+                          />
                         ) : (
                           <div className="text-[10px] text-slate-400 text-center font-bold px-1">SVEC Logo</div>
                         )}
                       </div>
                       <div className="flex-1 w-full space-y-2 text-left">
                         <div className="flex flex-wrap gap-2">
-                          <label className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[11px] px-3 py-2 rounded-xl cursor-pointer transition-all shadow-xs flex items-center gap-1">
-                            <Image className="w-3.5 h-3.5 text-indigo-500" />
-                            <span>Upload New Custom Logo</span>
+                          <label className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[11px] px-3 py-2 rounded-xl cursor-pointer transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50">
+                            {logoUploading ? (
+                              <Loader2 className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
+                            ) : (
+                              <Image className="w-3.5 h-3.5 text-indigo-500" />
+                            )}
+                            <span>{logoUploading ? "Uploading Logo..." : "Upload New Custom Logo"}</span>
                             <input
                               type="file"
-                              accept="image/*"
+                              accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif,.png,.jpg,.jpeg,.webp,.svg,.gif"
                               className="hidden"
+                              disabled={logoUploading}
                               onChange={async (e) => {
                                 const file = e.target.files?.[0];
-                                if (file) {
-                                  if (file.size > 5 * 1024 * 1024) {
-                                    alert("Logo file must be less than 5MB.");
-                                    return;
+                                if (!file) return;
+
+                                if (file.size > 5 * 1024 * 1024) {
+                                  setLogoUploadStatus({
+                                    type: "error",
+                                    message: `Logo file exceeds 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`
+                                  });
+                                  return;
+                                }
+
+                                setLogoUploading(true);
+                                setLogoUploadStatus({ type: "", message: "" });
+
+                                // Immediate visual rendering via FileReader so the user sees their logo immediately
+                                const reader = new FileReader();
+                                reader.onload = (rev) => {
+                                  if (rev.target?.result) {
+                                    const base64 = rev.target.result as string;
+                                    setLogoPreviewFallback(base64);
+                                    setSettingsForm(prev => ({ ...prev, logoUrl: base64 }));
                                   }
-                                  try {
-                                    const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
-                                    const headers: Record<string, string> = {};
-                                    if (adminToken) {
-                                      headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
-                                      headers["X-Admin-Passcode"] = adminToken;
-                                    }
+                                };
+                                reader.readAsDataURL(file);
 
-                                    // Pre-read Base64 as immediate visual fallback
-                                    const reader = new FileReader();
-                                    reader.onload = (rev) => {
-                                      if (rev.target?.result) {
-                                        setSettingsForm(prev => ({ ...prev, logoUrl: rev.target!.result as string }));
-                                      }
-                                    };
-                                    reader.readAsDataURL(file);
+                                try {
+                                  const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+                                  const headers: Record<string, string> = {};
+                                  if (adminToken) {
+                                    headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+                                    headers["X-Admin-Passcode"] = adminToken;
+                                  }
 
-                                    const formData = new FormData();
-                                    formData.append("file", file);
-                                    formData.append("category", "images");
-                                    const res = await fetch("/api/upload", {
-                                      method: "POST",
-                                      headers,
-                                      body: formData
+                                  const formData = new FormData();
+                                  formData.append("file", file);
+                                  formData.append("category", "images");
+
+                                  const res = await fetch("/api/upload", {
+                                    method: "POST",
+                                    headers,
+                                    body: formData
+                                  });
+                                  const data = await res.json();
+                                  if (res.ok && data.success && data.url) {
+                                    setSettingsForm(prev => ({ ...prev, logoUrl: data.url }));
+                                    setLogoUploadStatus({
+                                      type: "success",
+                                      message: "Logo uploaded successfully! Click 'Save All Settings' to apply."
                                     });
-                                    const data = await res.json();
-                                    if (res.ok && data.success) {
-                                      setSettingsForm(prev => ({ ...prev, logoUrl: data.url }));
-                                    } else {
-                                      console.warn("Server upload notice:", data);
-                                    }
-                                  } catch (err) {
-                                    console.warn("Upload network notice:", err);
+                                  } else {
+                                    const errMsg = data.error?.message || data.error || data.message || "Failed to upload logo.";
+                                    setLogoUploadStatus({
+                                      type: "error",
+                                      message: `Server upload notice: ${errMsg}`
+                                    });
                                   }
+                                } catch (err: any) {
+                                  setLogoUploadStatus({
+                                    type: "error",
+                                    message: `Network notice: ${err?.message || "Could not reach server"}`
+                                  });
+                                } finally {
+                                  setLogoUploading(false);
                                 }
                               }}
                             />
@@ -5045,15 +5093,27 @@ export default function AdminPanel({
                           {settingsForm.logoUrl && (
                             <button
                               type="button"
-                              onClick={() => setSettingsForm(prev => ({ ...prev, logoUrl: "" }))}
+                              onClick={() => {
+                                setSettingsForm(prev => ({ ...prev, logoUrl: "" }));
+                                setLogoPreviewFallback("");
+                                setLogoUploadStatus({ type: "", message: "" });
+                              }}
                               className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-100 font-bold text-[11px] px-3 py-2 rounded-xl cursor-pointer transition-all flex items-center gap-1"
                             >
                               Reset to Default SVEC SVG Logo
                             </button>
                           )}
                         </div>
+
+                        {logoUploadStatus.message && (
+                          <p className={`text-[11px] font-medium ${logoUploadStatus.type === "error" ? "text-rose-600" : "text-emerald-600"}`}>
+                            {logoUploadStatus.type === "error" ? "⚠️ " : "✅ "}
+                            {logoUploadStatus.message}
+                          </p>
+                        )}
+
                         <p className="text-[9px] text-slate-400 font-medium">
-                          Supports PNG, JPG, WEBP, or SVG. Automatically optimized as a base64 asset on save.
+                          Supports PNG, JPG, WEBP, or SVG. Stored in high resolution and optimized on save.
                         </p>
                       </div>
                     </div>
@@ -5663,55 +5723,80 @@ export default function AdminPanel({
                           <label className="text-xs font-bold text-slate-700 block mb-2">
                             Custom Certificate Background Image (Overlay)
                           </label>
-                          <div className="flex items-center gap-4">
+                          <div className="flex flex-wrap items-center gap-4">
                             <label className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-2 rounded-xl border border-indigo-100 transition-all duration-150 cursor-pointer flex items-center gap-2">
-                              <Upload className="w-4 h-4" />
-                              Upload BG Image
+                              {certBgUploading ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Upload className="w-4 h-4" />
+                              )}
+                              <span>{certBgUploading ? "Uploading..." : "Upload BG Image"}</span>
                               <input
                                 type="file"
-                                accept="image/*"
+                                accept="image/png,image/jpeg,image/webp,image/svg+xml,.png,.jpg,.jpeg,.webp,.svg"
                                 className="hidden"
+                                disabled={certBgUploading}
                                 onChange={async (e) => {
                                   const file = e.target.files?.[0];
-                                  if (file) {
-                                    if (file.size > 5 * 1024 * 1024) {
-                                      alert("Background image must be less than 5MB.");
-                                      return;
+                                  if (!file) return;
+
+                                  if (file.size > 5 * 1024 * 1024) {
+                                    setCertBgUploadStatus({
+                                      type: "error",
+                                      message: `Background image exceeds 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`
+                                    });
+                                    return;
+                                  }
+
+                                  setCertBgUploading(true);
+                                  setCertBgUploadStatus({ type: "", message: "" });
+
+                                  // Pre-read Base64 as immediate visual fallback
+                                  const reader = new FileReader();
+                                  reader.onload = (rev) => {
+                                    if (rev.target?.result) {
+                                      setSettingsForm(prev => ({ ...prev, certificateBgUrl: rev.target!.result as string }));
                                     }
-                                    try {
-                                      const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
-                                      const headers: Record<string, string> = {};
-                                      if (adminToken) {
-                                        headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
-                                        headers["X-Admin-Passcode"] = adminToken;
-                                      }
+                                  };
+                                  reader.readAsDataURL(file);
 
-                                      // Pre-read Base64 as immediate visual fallback
-                                      const reader = new FileReader();
-                                      reader.onload = (rev) => {
-                                        if (rev.target?.result) {
-                                          setSettingsForm(prev => ({ ...prev, certificateBgUrl: rev.target!.result as string }));
-                                        }
-                                      };
-                                      reader.readAsDataURL(file);
+                                  try {
+                                    const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+                                    const headers: Record<string, string> = {};
+                                    if (adminToken) {
+                                      headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+                                      headers["X-Admin-Passcode"] = adminToken;
+                                    }
 
-                                      const formData = new FormData();
-                                      formData.append("file", file);
-                                      formData.append("category", "images");
-                                      const res = await fetch("/api/upload", {
-                                        method: "POST",
-                                        headers,
-                                        body: formData
+                                    const formData = new FormData();
+                                    formData.append("file", file);
+                                    formData.append("category", "images");
+                                    const res = await fetch("/api/upload", {
+                                      method: "POST",
+                                      headers,
+                                      body: formData
+                                    });
+                                    const data = await res.json();
+                                    if (res.ok && data.success && data.url) {
+                                      setSettingsForm(prev => ({ ...prev, certificateBgUrl: data.url }));
+                                      setCertBgUploadStatus({
+                                        type: "success",
+                                        message: "Background image uploaded! Click 'Save All Settings' below to apply."
                                       });
-                                      const data = await res.json();
-                                      if (res.ok && data.success) {
-                                        setSettingsForm(prev => ({ ...prev, certificateBgUrl: data.url }));
-                                      } else {
-                                        console.warn("Server upload notice:", data);
-                                      }
-                                    } catch (err) {
-                                      console.warn("Upload network notice:", err);
+                                    } else {
+                                      const msg = data.error?.message || data.error || data.message || "Upload notice.";
+                                      setCertBgUploadStatus({
+                                        type: "error",
+                                        message: `Server upload notice: ${msg}`
+                                      });
                                     }
+                                  } catch (err: any) {
+                                    setCertBgUploadStatus({
+                                      type: "error",
+                                      message: `Upload network notice: ${err?.message || "Failed to reach server"}`
+                                    });
+                                  } finally {
+                                    setCertBgUploading(false);
                                   }
                                 }}
                               />
@@ -5726,7 +5811,10 @@ export default function AdminPanel({
                                 />
                                 <button
                                   type="button"
-                                  onClick={() => setSettingsForm(prev => ({ ...prev, certificateBgUrl: "" }))}
+                                  onClick={() => {
+                                    setSettingsForm(prev => ({ ...prev, certificateBgUrl: "" }));
+                                    setCertBgUploadStatus({ type: "", message: "" });
+                                  }}
                                   className="text-red-600 hover:text-red-700 text-xs font-bold transition-all"
                                 >
                                   Remove Image
@@ -5734,6 +5822,12 @@ export default function AdminPanel({
                               </div>
                             )}
                           </div>
+                          {certBgUploadStatus.message && (
+                            <p className={`text-[11px] font-medium mt-1.5 ${certBgUploadStatus.type === "error" ? "text-rose-600" : "text-emerald-600"}`}>
+                              {certBgUploadStatus.type === "error" ? "⚠️ " : "✅ "}
+                              {certBgUploadStatus.message}
+                            </p>
+                          )}
                           <p className="text-[9px] text-slate-400 mt-2">
                             For optimal results, use a high-resolution landscape template (approx. 1123 x 794 px). Supports PNG, JPG or WEBP.
                           </p>

@@ -588,3 +588,105 @@ The portal uses strict magic-byte security inspection to prevent malware:
 - [x] HTTPS SSL enabled with Let's Encrypt / Certbot
 - [x] Firewall (UFW) active with ports 22, 80, 443 allowed
 - [x] Nightly cron backup enabled for `/var/www/sih-portal/data`
+
+---
+
+## Hosting on Windows Server 2025
+
+This application is fully optimized for **Windows Server 2025** (x64) with native OS temporary directory fallbacks, cross-platform build scripts, and multi-tier storage engines.
+
+### Step 1: Install Node.js LTS on Windows Server 2025
+1. Open PowerShell as Administrator.
+2. Install Node.js LTS using `winget` or direct MSI installer:
+   ```powershell
+   winget install OpenJS.NodeJS.LTS
+   ```
+3. Verify installation:
+   ```powershell
+   node -v
+   npm -v
+   ```
+
+### Step 2: Prepare Application Directory & Environment
+1. Extract or clone the application into a production directory (e.g. `C:\inetpub\sih-portal` or `C:\Apps\sih-portal`):
+   ```powershell
+   cd C:\Apps\sih-portal
+   npm install --production=false
+   npm run build
+   ```
+2. Create your production `.env` file in `C:\Apps\sih-portal\.env`:
+   ```env
+   PORT=3000
+   NODE_ENV=production
+   ADMIN_PASSCODE=YourStrongAdminPasscode2026!
+   JWT_SECRET=YourGenerated64CharRandomJwtSecretKeyHere
+   DATA_DIR=C:\Apps\sih-portal\data
+   ```
+3. Grant NTFS write permissions to the application folder for your service account or `NETWORK SERVICE` / `IIS_IUSRS`:
+   ```powershell
+   # Grant full control over data & upload directory
+   icacls "C:\Apps\sih-portal\data" /grant "NETWORK SERVICE":(OI)(CI)F /T
+   ```
+
+### Step 3: Run as a Background Windows Service
+
+#### Option A: Using NSSM (Recommended for Windows Server 2025)
+NSSM (Non-Sucking Service Manager) runs the app as a true native Windows Service that auto-starts on boot and automatically restarts if the process stops.
+1. Download NSSM (or install via `winget install NSSM`).
+2. Run in PowerShell (Admin):
+   ```powershell
+   nssm install SIHPortal "C:\Program Files\nodejs\node.exe" "C:\Apps\sih-portal\dist\server.cjs"
+   nssm set SIHPortal AppDirectory "C:\Apps\sih-portal"
+   nssm set SIHPortal AppEnvironmentExtra NODE_ENV=production PORT=3000
+   nssm set SIHPortal AppStdout "C:\Apps\sih-portal\data\service_output.log"
+   nssm set SIHPortal AppStderr "C:\Apps\sih-portal\data\service_error.log"
+   nssm set SIHPortal Start SERVICE_AUTO_START
+   nssm start SIHPortal
+   ```
+
+#### Option B: Using PM2 on Windows
+```powershell
+npm install -g pm2 pm2-windows-service
+pm2-service-install -n SIHPortal
+pm2 start dist/server.cjs --name "sih-portal" --cwd "C:\Apps\sih-portal"
+pm2 save
+```
+
+### Step 4: Open Windows Defender Firewall Port
+Allow incoming web traffic on port 3000 (or 80/443 if binding directly):
+```powershell
+New-NetFirewallRule -DisplayName "SIH Hackathon Portal (Port 3000)" `
+  -Direction Inbound `
+  -LocalPort 3000 `
+  -Protocol TCP `
+  -Action Allow
+```
+
+### Step 5: (Optional) Reverse Proxy with IIS or Caddy on Windows Server 2025
+If you are using **Internet Information Services (IIS)** on Windows Server 2025:
+1. In Server Manager, install **Web Server (IIS)**.
+2. Install **URL Rewrite** and **Application Request Routing (ARR)** modules.
+3. In IIS Manager, click Server Node -> **Application Request Routing Cache** -> **Server Proxy Settings** -> Check **Enable proxy**.
+4. In your Site root `C:\inetpub\wwwroot\web.config`, add the reverse proxy rule forwarding traffic to `http://localhost:3000`:
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <configuration>
+     <system.webServer>
+       <security>
+         <requestFiltering>
+           <!-- Allow up to 50MB uploads -->
+           <requestLimits maxAllowedContentLength="52428800" />
+         </requestFiltering>
+       </security>
+       <rewrite>
+         <rules>
+           <rule name="ReverseProxyToNode" stopProcessing="true">
+             <match url="(.*)" />
+             <action type="Rewrite" url="http://127.0.0.1:3000/{R:1}" />
+           </rule>
+         </rules>
+       </rewrite>
+     </system.webServer>
+   </configuration>
+   ```
+5. Bind your domain and install your SSL/TLS Certificate via IIS Manager (or use Let's Encrypt via `win-acme`).

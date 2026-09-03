@@ -1,12 +1,13 @@
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import crypto from "crypto";
 import { Request, Response, NextFunction } from "express";
 import { objectStorage } from "./objectStorage";
 import { db } from "./db";
 
-// Storage root directory configuration with Linux permission auto-detection & resilient fallbacks
+// Storage root directory configuration with cross-platform (Windows Server 2025 & Linux) permission auto-detection
 const IS_VERCEL = !!process.env.VERCEL;
 
 export function resolveSafeDataDir(): string {
@@ -29,15 +30,16 @@ export function resolveSafeDataDir(): string {
     if (!fs.existsSync(preferred)) {
       fs.mkdirSync(preferred, { recursive: true });
     }
-    // Test write permission on Linux
+    // Test write permission across Windows Server 2025 / Linux
     const testPath = path.join(preferred, `.write_check_${Date.now()}`);
     fs.writeFileSync(testPath, "ok");
     fs.unlinkSync(testPath);
     return preferred;
   } catch (err: any) {
     console.warn(`[Storage Warning] Host filesystem permissions prevent writing to '${preferred}': ${err.message}.`);
-    console.warn(`[Storage Fallback] Automatically falling back to '/tmp/svec_data' where Linux grants universal write permissions.`);
-    const fallbackDir = "/tmp/svec_data";
+    // OS-native temporary directory (e.g. C:\Users\...\AppData\Local\Temp on Windows Server 2025 or /tmp on Linux)
+    const fallbackDir = path.join(os.tmpdir(), "svec_data");
+    console.warn(`[Storage Fallback] Automatically falling back to '${fallbackDir}' with native OS write permissions.`);
     try {
       if (!fs.existsSync(fallbackDir)) {
         fs.mkdirSync(fallbackDir, { recursive: true });
@@ -168,7 +170,7 @@ const DOCUMENT_TYPES: AllowedFileType[] = [
   }
 ];
 
-// Images: PNG, JPG, JPEG, WEBP, GIF
+// Images: PNG, JPG, JPEG, WEBP, GIF, SVG
 const IMAGE_TYPES: AllowedFileType[] = [
   {
     extension: ".png",
@@ -194,6 +196,11 @@ const IMAGE_TYPES: AllowedFileType[] = [
     extension: ".gif",
     mimeTypes: ["image/gif"],
     maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".svg",
+    mimeTypes: ["image/svg+xml", "text/xml", "application/xml", "image/svg"],
+    maxSize: 5 * 1024 * 1024 // 5MB
   }
 ];
 
@@ -202,7 +209,7 @@ const BANNED_EXTENSIONS = new Set([
   ".exe", ".dll", ".so", ".sh", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".mjs", ".cjs",
   ".ts", ".tsx", ".jsx", ".php", ".phtml", ".php3", ".php4", ".php5", ".php7", ".phps",
   ".py", ".pyc", ".rb", ".pl", ".cgi", ".jar", ".war", ".asp", ".aspx", ".jsp", ".jspx",
-  ".htm", ".html", ".xhtml", ".shtml", ".svg", ".xml", ".scr", ".bin", ".msi", ".apk",
+  ".htm", ".html", ".xhtml", ".shtml", ".xml", ".scr", ".bin", ".msi", ".apk",
   ".com", ".hta", ".wsf", ".scf", ".reg", ".inf", ".cpl", ".iso", ".img"
 ]);
 
@@ -262,6 +269,25 @@ export function validateMagicBytes(buffer: Buffer, extension: string): boolean {
     const riff = buffer.subarray(0, 4).toString("ascii");
     const webp = buffer.subarray(8, 12).toString("ascii");
     return riff === "RIFF" && webp === "WEBP";
+  }
+
+  // SVG signature: XML / SVG elements with security sanity check against stored XSS
+  if (ext === ".svg") {
+    if (buffer.length < 8) return false;
+    const sample = buffer.subarray(0, 4096).toString("utf8").trim().toLowerCase();
+    if (!sample.includes("<svg") && !sample.includes("<?xml")) return false;
+
+    // Security check: strictly prohibit executable script tags, javascript: protocols, or inline event handlers
+    const fullText = buffer.toString("utf8").toLowerCase();
+    if (
+      fullText.includes("<script") ||
+      fullText.includes("javascript:") ||
+      fullText.includes("data:text/html") ||
+      /on\w+\s*=/i.test(fullText)
+    ) {
+      return false;
+    }
+    return true;
   }
 
   // PPTX / PPT / ODP (Presentations): OpenXML ZIP archive, OLE Compound Binary, or PDF format
@@ -507,12 +533,14 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
   const mimeType = clientMimeType || matchedType.mimeTypes[0];
   const sanitizedOriginal = sanitizeClientFilename(clientOriginalName) + matchedType.extension;
 
-  // Multi-tier disk write strategy to survive Linux permission quirks
+  // Multi-tier disk write strategy to survive Windows Server 2025 and Linux permission quirks
   let writtenSuccessfully = false;
   const candidateWritePaths = [
     targetPath,
     path.join(DATA_DIR, "uploads", category, secureFilename),
     path.join(process.cwd(), "uploads", category, secureFilename),
+    path.join(os.tmpdir(), "svec_uploads", category, secureFilename),
+    path.join(os.tmpdir(), "svec_data", "uploads", category, secureFilename),
     path.join("/tmp/svec_uploads", category, secureFilename),
     path.join("/tmp/svec_data/uploads", category, secureFilename)
   ];
@@ -605,6 +633,7 @@ export function saveBase64Securely(
         else if (detectedMime.includes("jpeg") || detectedMime.includes("jpg")) ext = ".jpg";
         else if (detectedMime.includes("webp")) ext = ".webp";
         else if (detectedMime.includes("gif")) ext = ".gif";
+        else if (detectedMime.includes("svg")) ext = ".svg";
       }
     }
 

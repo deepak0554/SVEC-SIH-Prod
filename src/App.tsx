@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense, lazy } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Layers,
@@ -18,15 +18,26 @@ import {
   ArrowRight
 } from "lucide-react";
 import { ProblemStatement, Registration, HomepageContent, CustomPage, MenuItem, LiveUpdate } from "./types";
-import RegistrationForm from "./components/RegistrationForm";
-import StudentAuth from "./components/StudentAuth";
-import Receipt from "./components/Receipt";
-import AdminPanel from "./components/AdminPanel";
 import SvecLogo from "./components/SvecLogo";
 import LandingPage from "./components/LandingPage";
-import ProblemStatementsView from "./components/ProblemStatementsView";
-import SelectedTeamsView from "./components/SelectedTeamsView";
 import { api } from "./services/api";
+
+// Lazy-loaded route subviews for optimized initial bundle loading speed
+const RegistrationForm = lazy(() => import("./components/RegistrationForm"));
+const StudentAuth = lazy(() => import("./components/StudentAuth"));
+const Receipt = lazy(() => import("./components/Receipt"));
+const AdminPanel = lazy(() => import("./components/AdminPanel"));
+const ProblemStatementsView = lazy(() => import("./components/ProblemStatementsView"));
+const SelectedTeamsView = lazy(() => import("./components/SelectedTeamsView"));
+
+function SubviewLoader() {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-[300px] py-16 space-y-3">
+      <div className="w-9 h-9 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+      <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase">Loading module...</span>
+    </div>
+  );
+}
 
 function parseInitialRoute(): string {
   if (typeof window === "undefined") return "home";
@@ -64,17 +75,45 @@ function parseInitialRoute(): string {
 
 export default function App() {
   const [view, setView] = useState<string>(parseInitialRoute);
-  const [problemStatements, setProblemStatements] = useState<ProblemStatement[]>([]);
+  const [problemStatements, setProblemStatements] = useState<ProblemStatement[]>(() => {
+    try {
+      const saved = localStorage.getItem("svec_problem_statements_backup");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [latestRegistration, setLatestRegistration] = useState<Registration | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasExistingRegistration, setHasExistingRegistration] = useState<Registration | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedProblemId, setSelectedProblemId] = useState<string | undefined>(undefined);
 
-  // Dynamic layout states
-  const [homepageData, setHomepageData] = useState<HomepageContent | null>(null);
-  const [customPages, setCustomPages] = useState<CustomPage[]>([]);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  // Dynamic layout states - hydrated from cache for instant 0ms First Contentful Paint
+  const [homepageData, setHomepageData] = useState<HomepageContent | null>(() => {
+    try {
+      const saved = localStorage.getItem("svec_homepage_backup");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [customPages, setCustomPages] = useState<CustomPage[]>(() => {
+    try {
+      const saved = localStorage.getItem("svec_custom_pages_backup");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(() => {
+    try {
+      const saved = localStorage.getItem("svec_menu_backup");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [updates, setUpdates] = useState<LiveUpdate[]>([]);
   const [publicSettings, setPublicSettings] = useState<{
     portalTheme?: "light" | "dark";
@@ -84,7 +123,14 @@ export default function App() {
     creditsTitle?: string;
     creditsContent?: string;
     creditsEnabled?: boolean;
-  } | null>(null);
+  } | null>(() => {
+    try {
+      const saved = localStorage.getItem("svec_settings_backup");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   const [student, setStudent] = useState<{ id: string; email: string; token?: string; gender?: string; department?: string; mobile?: string } | null>(() => {
     try {
@@ -135,18 +181,30 @@ export default function App() {
 
       if (homeRes.status === "fulfilled" && homeRes.value) {
         setHomepageData(homeRes.value);
+        try {
+          localStorage.setItem("svec_homepage_backup", JSON.stringify(homeRes.value));
+        } catch {}
       }
 
       if (pagesRes.status === "fulfilled" && pagesRes.value) {
         setCustomPages(pagesRes.value);
+        try {
+          localStorage.setItem("svec_custom_pages_backup", JSON.stringify(pagesRes.value));
+        } catch {}
       }
 
       if (menuRes.status === "fulfilled" && menuRes.value) {
         setMenuItems(menuRes.value);
+        try {
+          localStorage.setItem("svec_menu_backup", JSON.stringify(menuRes.value));
+        } catch {}
       }
 
       if (settingsRes.status === "fulfilled" && settingsRes.value) {
         setPublicSettings(settingsRes.value);
+        try {
+          localStorage.setItem("svec_settings_backup", JSON.stringify(settingsRes.value));
+        } catch {}
       }
 
       if (updatesRes.status === "fulfilled" && updatesRes.value) {
@@ -515,7 +573,8 @@ export default function App() {
 
       {/* Main Body */}
       <main className="flex-1 pb-16">
-        <AnimatePresence mode="wait">
+        <Suspense fallback={<SubviewLoader />}>
+          <AnimatePresence mode="wait">
           {/* 1. DYNAMIC HOME PAGE / LANDING PAGE */}
           {view === "home" && homepageData && (
             <motion.div
@@ -862,6 +921,7 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
+        </Suspense>
       </main>
     </div>
   );

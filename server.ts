@@ -1,6 +1,8 @@
 import express from "express";
+import compression from "compression";
 import path from "path";
 import fs from "fs";
+import os from "os";
 import crypto from "crypto";
 import Razorpay from "razorpay";
 import jwt from "jsonwebtoken";
@@ -93,6 +95,9 @@ import { evaluationService, notificationService } from "./server/services";
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const IS_VERCEL = !!process.env.VERCEL;
+
+// Enable HTTP Gzip/Brotli compression for lightning-fast payload transfer speeds
+app.use(compression());
 
 // Enforce standard 5MB JSON payload limit (multipart/form-data handles binary streams)
 app.use(express.json({ limit: "5mb" }));
@@ -2495,13 +2500,14 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
   else if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
   else if (ext === ".webp") contentType = "image/webp";
   else if (ext === ".gif") contentType = "image/gif";
+  else if (ext === ".svg") contentType = "image/svg+xml";
   else if (ext === ".pdf") contentType = "application/pdf";
   else if (ext === ".pptx") contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   else if (ext === ".ppt") contentType = "application/vnd.ms-powerpoint";
   else if (ext === ".docx") contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   else if (ext === ".doc") contentType = "application/msword";
 
-  const isImage = ["images", "gallery", "homepage", "logos", "certificates", "upi_qr", "payment_proofs"].includes(category) || [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext);
+  const isImage = ["images", "gallery", "homepage", "logos", "certificates", "upi_qr", "payment_proofs"].includes(category) || [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext);
 
   // 1. If file is available on local disk in any standard uploads location, serve immediately
   const candidatePaths = [
@@ -2520,6 +2526,10 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
     path.join(process.cwd(), "uploads", "sample_ppts", cleanFilename),
     path.join(process.cwd(), "uploads", "upi_qr", cleanFilename),
     path.join(process.cwd(), "uploads", "payment_proofs", cleanFilename),
+    path.join(os.tmpdir(), "svec_uploads", category, cleanFilename),
+    path.join(os.tmpdir(), "svec_uploads", "images", cleanFilename),
+    path.join(os.tmpdir(), "svec_data", "uploads", category, cleanFilename),
+    path.join(os.tmpdir(), "svec_data", "uploads", "images", cleanFilename),
     path.join("/tmp/svec_uploads", category, cleanFilename),
     path.join("/tmp/svec_uploads", "images", cleanFilename),
     path.join("/tmp/svec_data/uploads", category, cleanFilename),
@@ -2527,7 +2537,8 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
   ];
 
   for (const p of candidatePaths) {
-    if (fs.existsSync(p)) {
+    const absPath = path.resolve(p);
+    if (fs.existsSync(absPath)) {
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Content-Type", contentType);
       res.setHeader("Cache-Control", "public, max-age=86400");
@@ -2536,13 +2547,32 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
       } else {
         res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(cleanFilename)}"`);
       }
-      return res.sendFile(p);
+      return res.sendFile(absPath, (err) => {
+        if (err && !res.headersSent) {
+          console.warn(`[File Streaming Notice] ${absPath}: ${err.message}`);
+          try {
+            res.status(404).json({ error: "File could not be sent" });
+          } catch {}
+        }
+      });
     }
   }
 
   // 2. On-demand restoration from persistent Database / Cloud Storage (Survives Container Redeploys)
   try {
-    const fileRecord = await db.getFileRecord(category, cleanFilename);
+    let fileRecord = await db.getFileRecord(category, cleanFilename);
+    if (!fileRecord && (category === "logos" || category === "images")) {
+      fileRecord = await db.getFileRecord(category === "logos" ? "images" : "logos", cleanFilename);
+    }
+    if (!fileRecord) {
+      // Also check standard generic categories
+      for (const cat of ["images", "logos", "upi_qr", "certificates", "ppts", "sample_ppts", "documents"]) {
+        if (cat !== category) {
+          fileRecord = await db.getFileRecord(cat, cleanFilename);
+          if (fileRecord) break;
+        }
+      }
+    }
     if (fileRecord && fileRecord.dataBase64) {
       const cleanBase64 = fileRecord.dataBase64.replace(/^data:[^;]+;base64,/, "");
       const buffer = Buffer.from(cleanBase64, "base64");
@@ -5567,8 +5597,35 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
+    const assetsPath = path.join(distPath, "assets");
+
+    // Fast-path immutable caching for compiled Vite asset bundles (JS, CSS)
+    app.use(
+      "/assets",
+      express.static(assetsPath, {
+        maxAge: "1y",
+        immutable: true,
+      })
+    );
+
+    // Serve remaining static assets with sensible cache, but ensure index.html is revalidated
+    app.use(
+      express.static(distPath, {
+        maxAge: "1h",
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith("index.html")) {
+            res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            res.setHeader("Pragma", "no-cache");
+            res.setHeader("Expires", "0");
+          }
+        },
+      })
+    );
+
     app.get("*", (req, res) => {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
