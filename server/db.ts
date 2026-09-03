@@ -285,7 +285,8 @@ class DatabaseManager {
           this.pgPool = null;
         }
 
-        const isSupabaseDirect = initialHost && (
+        const isSupabasePooler = initialHost && initialHost.includes("pooler.supabase.com");
+        const isSupabaseDirect = initialHost && !isSupabasePooler && (
           /db\.([a-z0-9_-]+)\.supabase\.co/i.test(initialHost) ||
           initialHost.includes("supabase.co")
         );
@@ -295,62 +296,74 @@ class DatabaseManager {
 
         if (isSupabaseDirect) {
           // Direct db.<ref>.supabase.co host only resolves to IPv6, which is unreachable in IPv4-only container environments.
-          // Directly auto-route to official Supabase IPv4 Pooler (Supavisor)
+          // Directly auto-route to official Supabase IPv4 Pooler (Supavisor) across all global AWS regions concurrently.
           const match = initialHost.match(/db\.([a-z0-9_-]+)\.supabase\.co/i);
           const projectRef = match ? match[1] : initialHost.replace(/^db\./, "").replace(/\.supabase\.co$/, "");
           const tenantUser = projectRef ? (initialUser.includes(".") ? initialUser : `postgres.${projectRef}`) : initialUser;
           
-          // Order prioritized: ap-southeast-1 first (matches Singapore/Asia-Southeast & current project), then other standard AWS regions
           const knownRegions = [
-            "ap-southeast-1", "ap-south-1", "us-east-1", "eu-central-1", 
-            "ap-southeast-2", "us-west-1", "us-east-2", "eu-west-1", 
-            "eu-west-2", "ca-central-1", "sa-east-1"
+            "ap-southeast-1", "ap-south-1", "ap-northeast-1", "ap-northeast-2", "ap-southeast-2",
+            "us-east-1", "us-east-2", "us-west-1", "us-west-2",
+            "eu-central-1", "eu-west-1", "eu-west-2", "eu-west-3", "eu-north-1",
+            "ca-central-1", "sa-east-1", "me-central-1", "af-south-1"
           ];
 
-          let resolvedPooler = false;
           let authFailedError: string | null = null;
-          let lastPoolerError = "";
-
-          for (const region of knownRegions) {
-            const poolerHost = `aws-0-${region}.pooler.supabase.com`;
-            // Test 6543 (transaction pooler) and 5432 (session pooler)
+          const candidates: { host: string; port: number }[] = [];
+          for (const reg of knownRegions) {
             for (const poolerPort of [6543, 5432]) {
-              const candidatePool = new pg.Pool({
-                host: poolerHost,
-                port: poolerPort,
-                database: initialDb || "postgres",
-                user: tenantUser,
-                password: initialPass,
-                max: 20,
-                idleTimeoutMillis: 30000,
-                connectionTimeoutMillis: 3000,
-                ssl: { rejectUnauthorized: false }
-              });
-
-              try {
-                connectedClient = await candidatePool.connect();
-                activePool = candidatePool;
-                resolvedPooler = true;
-                console.log(`✅ [Database] Auto-connected to Supabase IPv4 Pooler (${poolerHost}:${poolerPort})`);
-                break;
-              } catch (candidateErr: any) {
-                await candidatePool.end();
-                lastPoolerError = candidateErr?.message || "";
-                if (lastPoolerError.includes("password authentication failed")) {
-                  authFailedError = `Supabase IPv4 Pooler reached (${poolerHost}:${poolerPort}), but password authentication failed for user '${tenantUser}'. Please verify your database password in Admin Settings.`;
-                  break;
-                }
-              }
+              candidates.push({ host: `aws-0-${reg}.pooler.supabase.com`, port: poolerPort });
             }
-            if (resolvedPooler || authFailedError) break;
           }
 
-          if (authFailedError) {
+          const candidateChecks = candidates.map(async ({ host: poolerHost, port: poolerPort }) => {
+            const candidatePool = new pg.Pool({
+              host: poolerHost,
+              port: poolerPort,
+              database: initialDb || "postgres",
+              user: tenantUser,
+              password: initialPass,
+              max: 5,
+              idleTimeoutMillis: 15000,
+              connectionTimeoutMillis: 3500,
+              ssl: { rejectUnauthorized: false }
+            });
+
+            try {
+              const client = await candidatePool.connect();
+              return { poolerHost, poolerPort, pool: candidatePool, client };
+            } catch (candidateErr: any) {
+              await candidatePool.end().catch(() => {});
+              const errMsg = candidateErr?.message || "";
+              if (errMsg.includes("password authentication failed")) {
+                return { poolerHost, poolerPort, authFailed: true, error: errMsg };
+              }
+              return null;
+            }
+          });
+
+          const results = await Promise.all(candidateChecks);
+          for (const res of results) {
+            if (res && res.client && res.pool) {
+              if (!connectedClient) {
+                connectedClient = res.client;
+                activePool = res.pool;
+                console.log(`✅ [Database] Connected to Supabase IPv4 Pooler (${res.poolerHost}:${res.poolerPort})`);
+              } else {
+                res.client.release();
+                await res.pool.end().catch(() => {});
+              }
+            } else if (res && res.authFailed && !authFailedError) {
+              authFailedError = `Supabase IPv4 Pooler reached (${res.poolerHost}:${res.poolerPort}), but password authentication failed for user '${tenantUser}'. Please verify your database password in Admin Settings.`;
+            }
+          }
+
+          if (authFailedError && !activePool) {
             throw new Error(authFailedError);
           }
 
-          if (!resolvedPooler) {
-            throw new Error(`Supabase IPv4 Pooler resolution failed for project '${projectRef}' (${lastPoolerError || "unreachable"}). Operating on resilient local storage adapter.`);
+          if (!activePool) {
+            throw new Error(`Supabase project '${projectRef}' could not be resolved on standard IPv4 poolers. Please verify the project reference ID or specify the direct pooler host in Admin Settings.`);
           }
         } else {
           // Standard PostgreSQL host (non-Supabase direct)
@@ -440,7 +453,10 @@ class DatabaseManager {
         .replace(/[0-9A-Fa-f]{10,}:error:[^:]+:[^:]+:[^:]+:[^:]+:\d+:[^\n]+/g, "SSL handshake error")
         .replace(/.*SSL alert number \d+.*/i, "Database SSL negotiation error: invalid TLS/SSL handshake with host")
         .trim();
-      console.log("ℹ️ [Database Notice]:", cleanMessage, "(Operating on local storage adapter)");
+      const statusNotice = cleanMessage.includes("local storage adapter") 
+        ? cleanMessage 
+        : `${cleanMessage} (Operating on local storage adapter)`;
+      console.log("ℹ️ [Database Notice]:", statusNotice);
       if (this.pgPool) {
         try { await this.pgPool.end(); } catch (e) {}
         this.pgPool = null;
