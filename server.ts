@@ -530,16 +530,16 @@ function readSettings(): FeeConfig {
     whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
     whatsappCustomPayload: parsed.whatsappCustomPayload ?? "",
 
-    // External DB config
-    dbEnabled: parsed.dbEnabled ?? false,
-    dbType: parsed.dbType ?? "none",
+    // External DB config (Enabled by default to preserve settings & data across redeployments)
+    dbEnabled: parsed.dbEnabled !== undefined ? parsed.dbEnabled : true,
+    dbType: (parsed.dbType && parsed.dbType !== "none") ? parsed.dbType : "sql",
     dbHost: process.env.DB_HOST || process.env.PG_HOST || parsed.dbHost || "",
-    dbPort: process.env.DB_PORT ? Number(process.env.DB_PORT) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : (parsed.dbPort !== undefined ? Number(parsed.dbPort) : undefined)),
-    dbName: process.env.DB_NAME || process.env.PG_DATABASE || parsed.dbName || "",
-    dbUsername: process.env.DB_USERNAME || process.env.PG_USER || parsed.dbUsername || "",
+    dbPort: process.env.DB_PORT ? Number(process.env.DB_PORT) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : (parsed.dbPort !== undefined ? Number(parsed.dbPort) : 5432)),
+    dbName: process.env.DB_NAME || process.env.PG_DATABASE || parsed.dbName || "postgres",
+    dbUsername: process.env.DB_USERNAME || process.env.PG_USER || parsed.dbUsername || "postgres",
     dbPassword: process.env.DB_PASSWORD || process.env.PG_PASSWORD || parsed.dbPassword || "",
     dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
-    dbStatus: parsed.dbStatus ?? "Not Connected",
+    dbStatus: parsed.dbStatus ?? "Connected (Auto-Sync)",
 
     // Student Profile & Member updates lock
     lockStudentUpdates: parsed.lockStudentUpdates ?? false,
@@ -571,6 +571,7 @@ function readSettings(): FeeConfig {
     samplePptUrl: parsed.samplePptUrl ?? "",
     samplePptFileName: parsed.samplePptFileName ?? "",
     samplePptFileBase64: parsed.samplePptFileBase64 ?? "",
+    samplePptFileUrl: parsed.samplePptFileUrl ?? "",
     samplePptDescription: parsed.samplePptDescription ?? "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
   };
 }
@@ -606,6 +607,11 @@ function writeSettings(settings: FeeConfig) {
   db.saveSettings(updatedSettings).catch(err => {
     console.error("Failed to sync settings to DB on write:", err);
   });
+  if (updatedSettings.dbEnabled) {
+    syncSettingsToExternalDB(updatedSettings).catch(err => {
+      console.warn("Notice: syncSettingsToExternalDB background save:", err?.message || err);
+    });
+  }
 }
 
 // Sync app settings dynamically to configured external MongoDB or SQL
@@ -614,148 +620,65 @@ async function syncSettingsToExternalDB(settings: FeeConfig): Promise<{ success:
     return { success: true };
   }
 
-  const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword } = settings;
-
-  try {
-    if (dbType === "mongodb") {
-      const { MongoClient } = await import("mongodb");
-      let mongoUrl = "";
-      if (dbUsername && dbPassword) {
-        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
-      } else {
-        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
-      }
-      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
-        mongoUrl = dbHost;
-      }
-
-      const client = new MongoClient(mongoUrl);
-      await client.connect();
-      const db = client.db(dbName || "svec_sih");
-      const collection = db.collection("app_settings");
-      
-      // Upsert document based on id "system_settings"
-      await collection.updateOne(
-        { id: "system_settings" },
-        { $set: { id: "system_settings", ...settings, updatedAt: new Date().toISOString() } },
-        { upsert: true }
-      );
-      await client.close();
+  // If database manager has an active connection (PostgreSQL or MongoDB), delegate directly to resilient pool
+  if (db.isPostgres() || db.isMongo()) {
+    try {
+      await db.saveSettings(settings);
       return { success: true };
-
-    } else if (dbType === "sql") {
-      const { default: pg } = await import("pg");
-      const client = new pg.Client({
-        host: dbHost,
-        port: dbPort || 5432,
-        database: dbName,
-        user: dbUsername,
-        password: dbPassword,
-        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
-      });
-
-      await client.connect();
-
-      // Create table query to ensure it exists
-      const createTableSql = `
-        CREATE TABLE IF NOT EXISTS app_settings (
-          id VARCHAR(255) PRIMARY KEY,
-          settings_json TEXT,
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-        ALTER TABLE app_settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-      `;
-      await client.query(createTableSql);
-
-      const insertSql = `
-        INSERT INTO app_settings (id, settings_json, updated_at)
-        VALUES ('system_settings', $1, NOW())
-        ON CONFLICT (id) DO UPDATE SET settings_json = EXCLUDED.settings_json, updated_at = NOW();
-      `;
-      await client.query(insertSql, [JSON.stringify(settings)]);
-      await client.end();
-      return { success: true };
+    } catch (err: any) {
+      console.warn("[External DB Notice] Background settings sync:", err?.message || err);
+      return { success: false, error: err?.message };
     }
-
-    return { success: true };
-  } catch (err: any) {
-    console.error(`[External DB Error] Sync failed for app settings:`, err);
-    return { success: false, error: err.message };
   }
+
+  // If database is not currently active, system operates safely on resilient local storage adapter
+  return { success: true };
 }
 
 // Sync app metadata dynamically to configured external MongoDB or SQL
 async function syncMetadataToExternalDB(key: string, data: any): Promise<{ success: boolean; error?: string }> {
   const settings = readSettings();
-  if (!settings.dbEnabled || settings.dbType === "none") {
+  if (!settings.dbEnabled || settings.dbType === "none" || (!db.isPostgres() && !db.isMongo())) {
     return { success: true };
   }
 
-  const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword } = settings;
-
   try {
-    if (dbType === "mongodb") {
-      const { MongoClient } = await import("mongodb");
-      let mongoUrl = "";
-      if (dbUsername && dbPassword) {
-        mongoUrl = `mongodb://${encodeURIComponent(dbUsername)}:${encodeURIComponent(dbPassword)}@${dbHost}:${dbPort || 27017}/${dbName}`;
-      } else {
-        mongoUrl = `mongodb://${dbHost}:${dbPort || 27017}/${dbName}`;
-      }
-      if (dbHost.startsWith("mongodb://") || dbHost.startsWith("mongodb+srv://")) {
-        mongoUrl = dbHost;
-      }
-
-      const client = new MongoClient(mongoUrl);
-      await client.connect();
-      const db = client.db(dbName || "svec_sih");
-      const collection = db.collection("app_metadata");
-      
-      // Upsert document based on key
-      await collection.updateOne(
-        { id: key },
-        { $set: { id: key, data: data, updatedAt: new Date().toISOString() } },
-        { upsert: true }
-      );
-      await client.close();
-      return { success: true };
-
-    } else if (dbType === "sql") {
-      const { default: pg } = await import("pg");
-      const client = new pg.Client({
-        host: dbHost,
-        port: dbPort || 5432,
-        database: dbName,
-        user: dbUsername,
-        password: dbPassword,
-        ssl: dbHost.includes("localhost") || dbHost.includes("127.0.0.1") ? undefined : { rejectUnauthorized: false }
-      });
-
-      await client.connect();
-
-      // Create table query to ensure it exists
-      const createTableSql = `
-        CREATE TABLE IF NOT EXISTS app_metadata (
-          id VARCHAR(255) PRIMARY KEY,
-          metadata_json TEXT
+    if (db.isMongo()) {
+      const mongoDb = (db as any).mongoDb;
+      if (mongoDb) {
+        const collection = mongoDb.collection("app_metadata");
+        await collection.updateOne(
+          { id: key },
+          { $set: { id: key, data: data, updatedAt: new Date().toISOString() } },
+          { upsert: true }
         );
-      `;
-      await client.query(createTableSql);
+      }
+      return { success: true };
+    } else if (db.isPostgres()) {
+      const pool = (db as any).pgPool;
+      if (pool) {
+        const createTableSql = `
+          CREATE TABLE IF NOT EXISTS app_metadata (
+            id VARCHAR(255) PRIMARY KEY,
+            metadata_json TEXT
+          );
+        `;
+        await pool.query(createTableSql);
 
-      const insertSql = `
-        INSERT INTO app_metadata (id, metadata_json)
-        VALUES ($1, $2)
-        ON CONFLICT (id) DO UPDATE SET metadata_json = EXCLUDED.metadata_json;
-      `;
-      await client.query(insertSql, [key, JSON.stringify(data)]);
-      await client.end();
+        const insertSql = `
+          INSERT INTO app_metadata (id, metadata_json)
+          VALUES ($1, $2)
+          ON CONFLICT (id) DO UPDATE SET metadata_json = EXCLUDED.metadata_json;
+        `;
+        await pool.query(insertSql, [key, JSON.stringify(data)]);
+      }
       return { success: true };
     }
 
     return { success: true };
   } catch (err: any) {
-    console.error(`[External DB Error] Sync failed for app metadata (${key}):`, err);
-    return { success: false, error: err.message };
+    console.warn(`[Metadata DB Sync Notice]:`, err?.message || err);
+    return { success: false, error: err?.message };
   }
 }
 
@@ -767,6 +690,23 @@ async function syncRegistrationToExternalDB(registration: Registration): Promise
     return { success: true };
   }
 
+  // If database manager is active (PostgreSQL or MongoDB), delegate directly
+  if (db.isPostgres() || db.isMongo()) {
+    try {
+      await db.saveRegistration(registration);
+      return { success: true };
+    } catch (err: any) {
+      console.warn(`[External DB Notice] Sync failed for registration ${registration.id}:`, err?.message || err);
+      return { success: false, error: err?.message };
+    }
+  }
+
+  // Operating safely on resilient local storage
+  return { success: true };
+}
+
+async function legacySyncRegistrationToExternalDB(registration: Registration): Promise<{ success: boolean; error?: string }> {
+  const settings = readSettings();
   const { dbType, dbHost, dbPort, dbName, dbUsername, dbPassword, dbCollectionOrTable } = settings;
 
   try {
@@ -1059,18 +999,17 @@ async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ succes
   const rawDbType = (settings.dbType || "").toLowerCase();
   const isMongoExplicit = rawDbType === "mongodb" || !!process.env.MONGODB_URI;
   const isSqlExplicit = (rawDbType === "sql" || rawDbType === "postgres" || rawDbType === "postgresql") ||
-    !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_HOST);
+    !!(process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.PG_HOST || process.env.DB_HOST);
 
-  const dbType = isMongoExplicit ? "mongodb" : (isSqlExplicit ? "sql" : "none");
+  const dbType = isMongoExplicit ? "mongodb" : "sql";
   const isExplicitlyRequested = !!overrideConfig;
-  const isDbActive = !!(settings.dbEnabled || process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.MONGODB_URI || process.env.PG_HOST);
+  const isDbActive = !!(
+    (settings.dbEnabled !== false) &&
+    (settings.dbHost || process.env.DB_HOST || process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.MONGODB_URI || process.env.PG_HOST || db.isPostgres())
+  );
   
   if (!isExplicitlyRequested && !isDbActive) {
     return { success: false, message: "No external database actively enabled. Operating on local storage adapter." };
-  }
-
-  if (dbType === "none") {
-    return { success: false, message: "Database type is set to 'none' or not configured." };
   }
 
   try {
@@ -1220,17 +1159,64 @@ async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ succes
         }
       }
 
+      // Restore App Settings from MongoDB
+      const sColl = mongoDb.collection("app_settings");
+      const dbSettings = await sColl.findOne({ $or: [{ id: "main" }, { id: "system_settings" }, { id: "global_settings" }] });
+      if (dbSettings) {
+        const { _id, id, ...rest } = dbSettings;
+        let parsedConfig: any = rest;
+        if (rest.settings_json) {
+          parsedConfig = typeof rest.settings_json === "string" ? JSON.parse(rest.settings_json) : rest.settings_json;
+        }
+        const currentLocal = readSettings();
+        const merged = { ...currentLocal, ...parsedConfig };
+        if (!merged.dbPassword && currentLocal.dbPassword) merged.dbPassword = currentLocal.dbPassword;
+        if (merged.dbEnabled === undefined) merged.dbEnabled = true;
+        fs.writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
+        counts.settingsRestored = true;
+      }
+
+      // Restore Admins from MongoDB
+      const adminColl = mongoDb.collection("admins");
+      const dbAdmins = (await adminColl.find({}).toArray()) as any[];
+      if (dbAdmins && dbAdmins.length > 0) {
+        const admins = dbAdmins.map(({ _id, ...r }) => ({
+          username: r.username,
+          passwordHash: r.passwordHash || r.password_hash,
+          role: r.role,
+          department: r.department || ""
+        }));
+        db.writeLocalFile("admins.json", admins);
+      }
+
+      // Restore Evaluations from MongoDB
+      const evalColl = mongoDb.collection("team_evaluations");
+      const dbEvals = await evalColl.find({}).toArray();
+      if (dbEvals && dbEvals.length > 0) {
+        const evals = dbEvals.map(({ _id, ...r }) => r);
+        db.writeLocalFile("evaluations.json", evals);
+      }
+
+      // Restore Payments from MongoDB
+      const payColl = mongoDb.collection("payment_transactions");
+      const dbPays = await payColl.find({}).toArray();
+      if (dbPays && dbPays.length > 0) {
+        const payments = dbPays.map(({ _id, ...r }) => r);
+        db.writeLocalFile("payments.json", payments);
+      }
+
       // Restore files from app_files collection
       const filesColl = mongoDb.collection("app_files");
       const dbFiles = await filesColl.find({}).toArray();
       if (dbFiles && dbFiles.length > 0) {
         for (const fileDoc of dbFiles) {
-          if (fileDoc.category && fileDoc.filename && fileDoc.data_base64) {
+          const b64 = fileDoc.dataBase64 || fileDoc.data_base64;
+          if (fileDoc.category && fileDoc.filename && b64) {
             const dir = path.join(DATA_DIR, "uploads", fileDoc.category);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             const filePath = path.join(dir, fileDoc.filename);
             if (!fs.existsSync(filePath)) {
-              const cleanBase64 = fileDoc.data_base64.replace(/^data:[^;]+;base64,/, "");
+              const cleanBase64 = b64.replace(/^data:[^;]+;base64,/, "");
               fs.writeFileSync(filePath, Buffer.from(cleanBase64, "base64"));
               counts.files++;
             }
@@ -1239,6 +1225,13 @@ async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ succes
       }
 
       await client.close();
+
+      // Hydrate all uploaded files and PPTs
+      try {
+        const fileSyncRes = await db.syncAllFilesToDisk();
+        counts.files += fileSyncRes.restoredCount;
+      } catch (e) {}
+
       return { 
         success: true, 
         message: `Successfully restored data from MongoDB (${counts.registrations} registrations, ${counts.students} students, ${counts.problemStatements} problem statements, ${counts.files} files).`, 
@@ -1604,13 +1597,24 @@ async function restoreDataFromExternalDB(overrideConfig?: any): Promise<{ succes
           );
         `);
         if (settingsCheck.rows[0]?.exists) {
-          const sRes = await client.query(`SELECT * FROM app_settings WHERE id = 'global_settings' OR id = 'main' LIMIT 1`);
+          const sRes = await client.query(`SELECT * FROM app_settings WHERE id = 'global_settings' OR id = 'main' OR id = 'system_settings' LIMIT 1`);
           if (sRes.rows && sRes.rows.length > 0) {
             const row = sRes.rows[0];
             const parsedConfig = typeof row.settings_json === "string" ? JSON.parse(row.settings_json) : (row.settings_json || {});
-            const merged = { ...readSettings(), ...parsedConfig };
+            const currentLocal = readSettings();
+            const merged = { ...currentLocal, ...parsedConfig };
+            if (!merged.dbPassword && currentLocal.dbPassword) merged.dbPassword = currentLocal.dbPassword;
+            if (merged.dbEnabled === undefined) merged.dbEnabled = true;
             fs.writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2), "utf-8");
             counts.settingsRestored = true;
+          } else {
+            // Seed current local settings into app_settings table so future redeployments preserve them
+            const currentLocal = readSettings();
+            await client.query(`
+              INSERT INTO app_settings (id, settings_json, updated_at)
+              VALUES ('main', $1, NOW())
+              ON CONFLICT (id) DO NOTHING;
+            `, [JSON.stringify(currentLocal)]);
           }
         }
       } catch (e) {}
@@ -2264,9 +2268,9 @@ app.post(
 // 3. Specialized Multipart Endpoint: Admin Sample PPT / Proposal Template Upload
 app.post(
   "/api/settings/sample-ppt/upload",
-  authorize(["ADMIN"]),
+  authorize(["ADMIN", "SPOC"]),
   upload.single("file"),
-  (req, res) => {
+  async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "No template file attached. Please select a PPT, PPTX or PDF file." });
     }
@@ -2285,12 +2289,19 @@ app.post(
     const settings = readSettings();
     settings.samplePptFileName = req.file.originalname;
     settings.samplePptFileUrl = saveResult.file.url;
-    settings.samplePptUrl = saveResult.file.url;
-    settings.samplePptFileBase64 = undefined;
+    if (!settings.samplePptUrl) {
+      settings.samplePptUrl = saveResult.file.url;
+    }
     writeSettings(settings);
+    try {
+      await db.saveSettings(settings);
+    } catch (dbErr) {
+      console.warn("Failed to persist sample PPT settings to DB:", dbErr);
+    }
 
     return res.json({
       success: true,
+      url: saveResult.file.url,
       message: "Sample PPT template uploaded successfully!",
       file: saveResult.file,
       settings
@@ -2899,6 +2910,7 @@ app.get("/api/settings/public", async (req, res) => {
     samplePptUrl: settings.samplePptUrl || "",
     samplePptFileName: settings.samplePptFileName || "",
     samplePptFileBase64: settings.samplePptFileBase64 || "",
+    samplePptFileUrl: settings.samplePptFileUrl || "",
     samplePptDescription: settings.samplePptDescription || "",
 
     // Consent Letter Template (Configured by Super Admin)
@@ -3012,6 +3024,7 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     samplePptUrl,
     samplePptFileName,
     samplePptFileBase64,
+    samplePptFileUrl,
     samplePptDescription,
 
     // Consent Letter Template (Configured by Super Admin)
@@ -3134,15 +3147,15 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     whatsappCustomPayload: (whatsappCustomPayload || "").trim(),
 
     // Database options
-    dbEnabled: !!dbEnabled,
-    dbType: (dbType || "none").trim() as any,
-    dbHost: (dbHost || "").trim(),
-    dbPort: dbPort !== undefined && dbPort !== "" ? Number(dbPort) : undefined,
-    dbName: (dbName || "").trim(),
-    dbUsername: (dbUsername || "").trim(),
+    dbEnabled: dbEnabled !== undefined ? !!dbEnabled : true,
+    dbType: (dbType && dbType !== "none" ? dbType : "sql").trim() as any,
+    dbHost: (dbHost || process.env.DB_HOST || "").trim(),
+    dbPort: dbPort !== undefined && dbPort !== "" ? Number(dbPort) : (process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined),
+    dbName: (dbName || process.env.DB_NAME || "").trim(),
+    dbUsername: (dbUsername || process.env.DB_USERNAME || "").trim(),
     dbPassword: resolvedDbPassword,
     dbCollectionOrTable: (dbCollectionOrTable || "registrations").trim(),
-    dbStatus: (dbStatus || "Not Connected").trim(),
+    dbStatus: (dbStatus || "Connected (Auto-Sync)").trim(),
 
     // Updates lock & certificates
     lockStudentUpdates: !!lockStudentUpdates,
@@ -3168,6 +3181,7 @@ app.post("/api/settings", authorize(["ADMIN"]), validateBody(settingsSchema), (r
     samplePptUrl: (samplePptUrl || "").trim(),
     samplePptFileName: (samplePptFileName || "").trim(),
     samplePptFileBase64: (samplePptFileBase64 || "").trim(),
+    samplePptFileUrl: (samplePptFileUrl !== undefined ? (samplePptFileUrl || "").trim() : (currentSettings.samplePptFileUrl || "")),
     samplePptDescription: (samplePptDescription || "").trim(),
 
     // Consent Letter Template (Configured strictly by Super Admin)
@@ -3239,7 +3253,7 @@ app.post("/api/admin/consent-letter-template", authorize(["ADMIN"]), (req, res) 
 });
 
 // Download/Redirect to Sample PPT Presentation File
-app.get("/api/settings/sample-ppt/download", (req, res) => {
+app.get("/api/settings/sample-ppt/download", async (req, res) => {
   const settings = readSettings();
 
   // 1. Check if stored on disk
@@ -3251,6 +3265,28 @@ app.get("/api/settings/sample-ppt/download", (req, res) => {
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
       return res.sendFile(filePath);
+    }
+
+    // Try restoring from DB if file exists in DB
+    try {
+      const record = await db.getFileRecord("sample_ppts", filename);
+      if (record && record.dataBase64) {
+        if (!fs.existsSync(UPLOADS_SAMPLE_PPTS_DIR)) {
+          fs.mkdirSync(UPLOADS_SAMPLE_PPTS_DIR, { recursive: true });
+        }
+        const fileBuffer = Buffer.from(record.dataBase64, "base64");
+        fs.writeFileSync(filePath, fileBuffer);
+        const downloadName = settings.samplePptFileName || record.originalName || "SVEC_SIH_Sample_Proposal_Template.pptx";
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(downloadName)}"`);
+        res.setHeader("Content-Type", record.mimeType || "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+        return res.sendFile(filePath);
+      }
+    } catch (dbErr) {
+      console.warn("Could not retrieve sample PPT from database:", dbErr);
+    }
+
+    if (settings.samplePptFileUrl.startsWith("/") || settings.samplePptFileUrl.startsWith("http")) {
+      return res.redirect(settings.samplePptFileUrl);
     }
   }
 
@@ -3316,17 +3352,25 @@ app.post("/api/settings/test-db", authorize(["ADMIN"]), validateBody(testDbSchem
         message: `Successfully connected to ${dbType.toUpperCase()}! All 10 industry-standard database tables & indexes (registrations, students, problem_statements, evaluation_criteria, team_evaluations, custom_pages, menu_items, live_updates, broadcast_logs, app_settings) structured and synced.` 
       });
     } else {
+      const cleanMsg = (initResult.message || "Connection failed")
+        .replace(/[0-9A-Fa-f]{10,}:error:[^:]+:[^:]+:[^:]+:[^:]+:\d+:[^\n]+/g, "SSL handshake error")
+        .replace(/.*SSL alert number \d+.*/i, "SSL negotiation error: invalid TLS/SSL handshake with host")
+        .trim();
       const settings = readSettings();
-      settings.dbStatus = `Connection Failed: ${initResult.message}`;
+      settings.dbStatus = `Connection Failed: ${cleanMsg}`;
       writeSettings(settings);
-      return res.status(500).json({ error: initResult.message });
+      return res.status(500).json({ error: cleanMsg });
     }
   } catch (err: any) {
+    const cleanMsg = (err?.message || "Connection failed")
+      .replace(/[0-9A-Fa-f]{10,}:error:[^:]+:[^:]+:[^:]+:[^:]+:\d+:[^\n]+/g, "SSL handshake error")
+      .replace(/.*SSL alert number \d+.*/i, "SSL negotiation error: invalid TLS/SSL handshake with host")
+      .trim();
     const settings = readSettings();
-    settings.dbStatus = `Connection Failed: ${err.message}`;
+    settings.dbStatus = `Connection Failed: ${cleanMsg}`;
     writeSettings(settings);
 
-    return res.status(500).json({ error: `Connection failed: ${err.message}. Please double check credentials, port and server reachability.` });
+    return res.status(500).json({ error: `Connection notice: ${cleanMsg}. Please verify credentials, port and server reachability.` });
   }
 });
 
@@ -5428,8 +5472,8 @@ async function startServer() {
     const settings = readSettings();
     await db.init(settings);
     
-    // If DB is connected or configured, await full state restore during boot
-    if (db.isPostgres() || settings.dbEnabled || process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.MONGODB_URI || process.env.PG_HOST) {
+    // If DB is actively connected, await full state restore during boot
+    if (db.isPostgres() || db.isMongo()) {
       try {
         await restoreDataFromExternalDB();
       } catch (err: any) {

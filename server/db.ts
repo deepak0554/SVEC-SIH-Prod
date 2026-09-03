@@ -135,8 +135,11 @@ export const defaultDefaultAdmins: AdminUser[] = [
  */
 class DatabaseManager {
   private pgPool: any = null;
+  private mongoClient: any = null;
+  private mongoDb: any = null;
   private isInitialized = false;
   private isPostgresActive = false;
+  private isMongoActive = false;
 
   constructor() {
     if (!fs.existsSync(DATA_DIR)) {
@@ -148,116 +151,240 @@ class DatabaseManager {
     return this.isPostgresActive;
   }
 
+  public isMongo(): boolean {
+    return this.isMongoActive;
+  }
+
+  public buildMongoUri(config?: Partial<FeeConfig>): string {
+    if (process.env.MONGODB_URI) return process.env.MONGODB_URI;
+    const host = (config?.dbHost || process.env.DB_HOST || "").trim();
+    if (host.startsWith("mongodb://") || host.startsWith("mongodb+srv://")) {
+      return host;
+    }
+    const port = config?.dbPort ? Number(config.dbPort) : (process.env.DB_PORT ? Number(process.env.DB_PORT) : 27017);
+    const dbName = (config?.dbName || process.env.DB_NAME || "svec_sih").trim();
+    const user = (config?.dbUsername || process.env.DB_USERNAME || "").trim();
+    const pass = (config?.dbPassword || process.env.DB_PASSWORD || "").trim();
+
+    if (host.includes(".mongodb.net")) {
+      return user && pass
+        ? `mongodb+srv://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}/${dbName}?retryWrites=true&w=majority`
+        : `mongodb+srv://${host}/${dbName}?retryWrites=true&w=majority`;
+    }
+
+    if (user && pass) {
+      return `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host || "localhost"}:${port}/${dbName}`;
+    } else if (user) {
+      return `mongodb://${encodeURIComponent(user)}@${host || "localhost"}:${port}/${dbName}`;
+    } else {
+      return `mongodb://${host || "localhost"}:${port}/${dbName}`;
+    }
+  }
+
   public async init(config?: Partial<FeeConfig>): Promise<{ success: boolean; message: string; dbType: string }> {
     try {
       const connStr = process.env.DATABASE_URL || process.env.POSTGRES_URL;
-      const envPgHost = process.env.PG_HOST;
-      const dbTypeNormalized = (config?.dbType || "").toLowerCase();
-      const isSqlExplicitlyEnabled = !!(
-        config?.dbEnabled && 
-        (dbTypeNormalized === "sql" || dbTypeNormalized === "postgres" || dbTypeNormalized === "postgresql") &&
-        (config?.dbHost || envPgHost)
-      );
-      const isSqlConfigured = !!(
-        connStr || 
-        envPgHost || 
-        isSqlExplicitlyEnabled
+      const envPgHost = process.env.PG_HOST || process.env.DB_HOST;
+      const envPgPort = process.env.PG_PORT || process.env.DB_PORT;
+      const envPgUser = process.env.PG_USER || process.env.DB_USERNAME || process.env.DB_USER;
+      const envPgPass = process.env.PG_PASSWORD || process.env.DB_PASSWORD || process.env.DB_PASS;
+      const envPgDb = process.env.PG_DATABASE || process.env.DB_NAME || process.env.DB_DATABASE;
+
+      const rawDbType = (config?.dbType || "").toLowerCase();
+      const hostInput = (config?.dbHost || "").trim();
+      const isSqlExplicit = rawDbType === "sql" || rawDbType === "postgres" || rawDbType === "postgresql";
+      const isMongoExplicit = !isSqlExplicit && (
+        rawDbType === "mongodb" ||
+        (!rawDbType && !!process.env.MONGODB_URI) ||
+        hostInput.startsWith("mongodb://") ||
+        hostInput.startsWith("mongodb+srv://") ||
+        hostInput.includes(".mongodb.net")
       );
 
-      if (isSqlConfigured) {
+      // By default enable DB sync if configured or if dbEnabled is not explicitly set to false
+      const isDbEnabled = config?.dbEnabled !== undefined ? config.dbEnabled : true;
+
+      // 1. MONGODB INITIALIZATION
+      if (isDbEnabled && isMongoExplicit) {
+        if (hostInput.includes("supabase") || config?.dbPort === 5432 || config?.dbPort === 6543) {
+          throw new Error("Specified database endpoint is a Supabase / PostgreSQL host. Please set Database Type to 'PostgreSQL / Supabase / SQL' or provide a valid MongoDB connection string.");
+        }
+
+        const { MongoClient } = await import("mongodb");
+        const mongoUrl = this.buildMongoUri(config);
+
+        if (this.mongoClient) {
+          try { await this.mongoClient.close(); } catch (e) {}
+          this.mongoClient = null;
+          this.mongoDb = null;
+        }
+        if (this.pgPool) {
+          try { await this.pgPool.end(); } catch (e) {}
+          this.pgPool = null;
+        }
+
+        const client = new MongoClient(mongoUrl, {
+          serverSelectionTimeoutMS: 5000,
+          connectTimeoutMS: 5000
+        });
+
+        try {
+          await client.connect();
+          const dbName = (config?.dbName || process.env.DB_NAME || "svec_sih").trim();
+          const mongoDb = client.db(dbName || "svec_sih");
+          await mongoDb.command({ ping: 1 });
+
+          this.mongoClient = client;
+          this.mongoDb = mongoDb;
+          this.isMongoActive = true;
+          this.isPostgresActive = false;
+          this.isInitialized = true;
+
+          await this.createMongoIndexes();
+          await this.bootstrapMongoData();
+
+          try {
+            await this.syncDatabaseStateToLocalDisk();
+          } catch (syncErr: any) {
+            console.log("[MongoDB State Sync Notice]:", syncErr?.message || syncErr);
+          }
+
+          console.log("✅ [Database] MongoDB is active as the Single Source of Truth.");
+          return { success: true, message: "MongoDB connected, indexes verified, and state synced.", dbType: "mongodb" };
+        } catch (mongoErr: any) {
+          try { await client.close(); } catch (e) {}
+          const rawMsg = mongoErr?.message || "Could not connect to MongoDB cluster";
+          const cleanMongoMsg = rawMsg
+            .replace(/^MongoServerSelectionError:\s*/i, "")
+            .replace(/^connect\s*/i, "")
+            .replace(/.*SSL alert number \d+.*/i, "TLS/SSL negotiation rejected by host. Please verify database protocol and SSL settings.")
+            .replace(/[0-9A-Fa-f]{10,}:error:[^:]+:[^:]+:[^:]+:[^:]+:\d+:[^\n]+/g, "SSL handshake error")
+            .trim();
+          throw new Error(`MongoDB connection notice: ${cleanMongoMsg}`);
+        }
+      }
+
+      // 2. POSTGRESQL INITIALIZATION
+      const isSqlConfigured = !!(
+        (isDbEnabled && (isSqlExplicit || !isMongoExplicit) && (connStr || envPgHost || config?.dbHost)) ||
+        connStr ||
+        envPgHost
+      );
+
+      if (isSqlConfigured && !isMongoExplicit) {
         const { default: pg } = await import("pg");
         
-        let initialHost = (isSqlExplicitlyEnabled ? config?.dbHost : undefined) || envPgHost || "localhost";
-        let initialPort = config?.dbPort ? Number(config.dbPort) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : 5432);
-        let initialUser = config?.dbUsername || process.env.PG_USER || "postgres";
-        let initialPass = config?.dbPassword || process.env.PG_PASSWORD || "";
-        let initialDb = config?.dbName || process.env.PG_DATABASE || "postgres";
-
-        let poolConfig: any;
-        if (connStr) {
-          poolConfig = {
-            connectionString: connStr,
-            max: 20,
-            idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000,
-            ssl: (connStr.includes("localhost") || connStr.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
-          };
-        } else {
-          poolConfig = {
-            host: initialHost,
-            port: initialPort,
-            database: initialDb,
-            user: initialUser,
-            password: initialPass,
-            max: 20,
-            idleTimeoutMillis: 30000,
-            connectionTimeoutMillis: 5000,
-            ssl: (initialHost?.includes("localhost") || initialHost?.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
-          };
-        }
+        let initialHost = (config?.dbHost || envPgHost || "localhost").trim();
+        let initialPort = config?.dbPort ? Number(config.dbPort) : (envPgPort ? Number(envPgPort) : 5432);
+        let initialUser = (config?.dbUsername || envPgUser || "postgres").trim();
+        let initialPass = (config?.dbPassword || envPgPass || "").trim();
+        let initialDb = (config?.dbName || envPgDb || "postgres").trim();
 
         if (this.pgPool) {
           try { await this.pgPool.end(); } catch (e) {}
+          this.pgPool = null;
         }
 
+        const isSupabaseDirect = initialHost && (
+          /db\.([a-z0-9_-]+)\.supabase\.co/i.test(initialHost) ||
+          initialHost.includes("supabase.co")
+        );
+
         let connectedClient: any = null;
-        let activePool = new pg.Pool(poolConfig);
+        let activePool: any = null;
 
-        try {
-          connectedClient = await activePool.connect();
-        } catch (initialErr: any) {
-          await activePool.end();
+        if (isSupabaseDirect) {
+          // Direct db.<ref>.supabase.co host only resolves to IPv6, which is unreachable in IPv4-only container environments.
+          // Directly auto-route to official Supabase IPv4 Pooler (Supavisor)
+          const match = initialHost.match(/db\.([a-z0-9_-]+)\.supabase\.co/i);
+          const projectRef = match ? match[1] : initialHost.replace(/^db\./, "").replace(/\.supabase\.co$/, "");
+          const tenantUser = projectRef ? (initialUser.includes(".") ? initialUser : `postgres.${projectRef}`) : initialUser;
+          
+          // Order prioritized: ap-southeast-1 first (matches Singapore/Asia-Southeast & current project), then other standard AWS regions
+          const knownRegions = [
+            "ap-southeast-1", "ap-south-1", "us-east-1", "eu-central-1", 
+            "ap-southeast-2", "us-west-1", "us-east-2", "eu-west-1", 
+            "eu-west-2", "ca-central-1", "sa-east-1"
+          ];
 
-          // Intelligent Supabase IPv4 Pooler Auto-Resolution if direct IPv6 connection failed
-          const isSupabaseDirect = initialHost && (/db\.([a-z0-9_-]+)\.supabase\.co/i.test(initialHost) || initialHost.includes("supabase"));
-          const isNetworkError = initialErr.code === "ECONNREFUSED" || initialErr.code === "ENETUNREACH" || initialErr.code === "ETIMEDOUT" || (initialErr.message && initialErr.message.includes("ECONNREFUSED"));
+          let resolvedPooler = false;
+          let authFailedError: string | null = null;
+          let lastPoolerError = "";
 
-          if (isSupabaseDirect && isNetworkError) {
-            const match = initialHost.match(/db\.([a-z0-9_-]+)\.supabase\.co/i);
-            const projectRef = match ? match[1] : "";
-            const tenantUser = projectRef ? (initialUser.includes(".") ? initialUser : `postgres.${projectRef}`) : initialUser;
-            const knownRegions = ["ap-southeast-1", "ap-south-1", "us-east-1", "eu-central-1", "ap-southeast-2", "us-west-1"];
+          for (const region of knownRegions) {
+            const poolerHost = `aws-0-${region}.pooler.supabase.com`;
+            // Test 6543 (transaction pooler) and 5432 (session pooler)
+            for (const poolerPort of [6543, 5432]) {
+              const candidatePool = new pg.Pool({
+                host: poolerHost,
+                port: poolerPort,
+                database: initialDb || "postgres",
+                user: tenantUser,
+                password: initialPass,
+                max: 20,
+                idleTimeoutMillis: 30000,
+                connectionTimeoutMillis: 3000,
+                ssl: { rejectUnauthorized: false }
+              });
 
-            let resolvedPooler = false;
-            let lastPoolerError = "";
-
-            for (const region of knownRegions) {
-              const poolerHost = `aws-0-${region}.pooler.supabase.com`;
-              for (const poolerPort of [6543, 5432]) {
-                const testConfig = {
-                  host: poolerHost,
-                  port: poolerPort,
-                  database: initialDb || "postgres",
-                  user: tenantUser,
-                  password: initialPass,
-                  max: 20,
-                  idleTimeoutMillis: 30000,
-                  connectionTimeoutMillis: 4000,
-                  ssl: { rejectUnauthorized: false }
-                };
-
-                const candidatePool = new pg.Pool(testConfig);
-                try {
-                  connectedClient = await candidatePool.connect();
-                  activePool = candidatePool;
-                  resolvedPooler = true;
-                  console.log(`✅ [Database] Auto-connected to Supabase IPv4 Pooler (${poolerHost}:${poolerPort})`);
+              try {
+                connectedClient = await candidatePool.connect();
+                activePool = candidatePool;
+                resolvedPooler = true;
+                console.log(`✅ [Database] Auto-connected to Supabase IPv4 Pooler (${poolerHost}:${poolerPort})`);
+                break;
+              } catch (candidateErr: any) {
+                await candidatePool.end();
+                lastPoolerError = candidateErr?.message || "";
+                if (lastPoolerError.includes("password authentication failed")) {
+                  authFailedError = `Supabase IPv4 Pooler reached (${poolerHost}:${poolerPort}), but password authentication failed for user '${tenantUser}'. Please verify your database password in Admin Settings.`;
                   break;
-                } catch (candidateErr: any) {
-                  await candidatePool.end();
-                  lastPoolerError = candidateErr.message;
-                  if (candidateErr.message && candidateErr.message.includes("password authentication failed")) {
-                    throw new Error(`Connected to Supabase IPv4 Pooler (${poolerHost}:${poolerPort}), but password authentication failed for user '${tenantUser}'. Please verify your Supabase database password in Admin Settings.`);
-                  }
                 }
               }
-              if (resolvedPooler) break;
             }
+            if (resolvedPooler || authFailedError) break;
+          }
 
-            if (!resolvedPooler) {
-              throw new Error(`Direct connection to Supabase host failed (IPv6 unreachable in container). Please use the Supabase IPv4 Connection Pooler: Host: aws-0-[region].pooler.supabase.com (e.g. aws-0-ap-southeast-1.pooler.supabase.com), Port: 6543, Username: postgres.${projectRef || "[project-id]"}. (${lastPoolerError || initialErr.message})`);
-            }
+          if (authFailedError) {
+            throw new Error(authFailedError);
+          }
+
+          if (!resolvedPooler) {
+            throw new Error(`Supabase IPv4 Pooler resolution failed for project '${projectRef}' (${lastPoolerError || "unreachable"}). Operating on resilient local storage adapter.`);
+          }
+        } else {
+          // Standard PostgreSQL host (non-Supabase direct)
+          let poolConfig: any;
+          if (connStr) {
+            poolConfig = {
+              connectionString: connStr,
+              max: 20,
+              idleTimeoutMillis: 30000,
+              connectionTimeoutMillis: 5000,
+              ssl: (connStr.includes("localhost") || connStr.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
+            };
           } else {
+            poolConfig = {
+              host: initialHost,
+              port: initialPort,
+              database: initialDb,
+              user: initialUser,
+              password: initialPass,
+              max: 20,
+              idleTimeoutMillis: 30000,
+              connectionTimeoutMillis: 5000,
+              ssl: (initialHost.includes("localhost") || initialHost.includes("127.0.0.1")) ? undefined : { rejectUnauthorized: false }
+            };
+          }
+
+          activePool = new pg.Pool(poolConfig);
+          try {
+            connectedClient = await activePool.connect();
+          } catch (initialErr: any) {
+            await activePool.end();
+            if (initialErr?.message && (initialErr.message.includes("SSL") || initialErr.message.includes("alert"))) {
+              throw new Error(`PostgreSQL SSL handshake error with ${initialHost}:${initialPort}. Please check database SSL configuration and credentials.`);
+            }
             throw initialErr;
           }
         }
@@ -288,28 +415,187 @@ class DatabaseManager {
         return { success: true, message: "PostgreSQL connected and schema verified.", dbType: "sql" };
       }
 
-      // Local storage fallback for dev/testing when no PostgreSQL credentials exist
+      // Local storage fallback for dev/testing when no external DB credentials exist
       if (this.pgPool) {
         try { await this.pgPool.end(); } catch (e) {}
         this.pgPool = null;
       }
+      if (this.mongoClient) {
+        try { await this.mongoClient.close(); } catch (e) {}
+        this.mongoClient = null;
+        this.mongoDb = null;
+      }
       this.isPostgresActive = false;
+      this.isMongoActive = false;
       this.isInitialized = true;
       if (IS_VERCEL) {
-        console.warn("⚠️ [Storage Warning] Running on serverless /tmp. Configure DATABASE_URL for permanent PostgreSQL storage.");
+        console.warn("⚠️ [Storage Warning] Running on serverless /tmp. Configure DATABASE_URL or MONGODB_URI for permanent storage.");
       } else {
         console.log("ℹ️ [Database] Running on local storage adapter.");
       }
       return { success: true, message: "Operating on local storage adapter.", dbType: "local" };
     } catch (err: any) {
-      console.warn("⚠️ [Database Init Notice]:", err.message);
+      const cleanMessage = (err?.message || "Database connection notice")
+        .replace(/^Database initialization failed:\s*/i, "")
+        .replace(/[0-9A-Fa-f]{10,}:error:[^:]+:[^:]+:[^:]+:[^:]+:\d+:[^\n]+/g, "SSL handshake error")
+        .replace(/.*SSL alert number \d+.*/i, "Database SSL negotiation error: invalid TLS/SSL handshake with host")
+        .trim();
+      console.log("ℹ️ [Database Notice]:", cleanMessage, "(Operating on local storage adapter)");
       if (this.pgPool) {
         try { await this.pgPool.end(); } catch (e) {}
         this.pgPool = null;
       }
+      if (this.mongoClient) {
+        try { await this.mongoClient.close(); } catch (e) {}
+        this.mongoClient = null;
+        this.mongoDb = null;
+      }
       this.isPostgresActive = false;
+      this.isMongoActive = false;
       this.isInitialized = true;
-      return { success: false, message: `Database initialization failed: ${err.message}`, dbType: "local" };
+      return { success: false, message: cleanMessage, dbType: "local" };
+    }
+  }
+
+  // Ensure MongoDB indexes across all collections
+  private async createMongoIndexes(): Promise<void> {
+    if (!this.mongoDb) return;
+    try {
+      const regColl = this.mongoDb.collection("registrations");
+      await regColl.createIndex({ id: 1 }, { unique: true });
+      await regColl.createIndex({ registrationId: 1 });
+      await regColl.createIndex({ submittedAt: -1 });
+
+      const studColl = this.mongoDb.collection("students");
+      await studColl.createIndex({ email: 1 }, { unique: true });
+
+      const setColl = this.mongoDb.collection("app_settings");
+      await setColl.createIndex({ id: 1 }, { unique: true });
+
+      const fileColl = this.mongoDb.collection("app_files");
+      await fileColl.createIndex({ id: 1 }, { unique: true });
+      await fileColl.createIndex({ filename: 1 });
+
+      const psColl = this.mongoDb.collection("problem_statements");
+      await psColl.createIndex({ id: 1 }, { unique: true });
+
+      const critColl = this.mongoDb.collection("evaluation_criteria");
+      await critColl.createIndex({ id: 1 }, { unique: true });
+
+      const evalColl = this.mongoDb.collection("team_evaluations");
+      await evalColl.createIndex({ id: 1 }, { unique: true });
+      await evalColl.createIndex({ registrationId: 1 });
+
+      const payColl = this.mongoDb.collection("payment_transactions");
+      await payColl.createIndex({ id: 1 }, { unique: true });
+      await payColl.createIndex({ registrationId: 1 });
+
+      const pageColl = this.mongoDb.collection("custom_pages");
+      await pageColl.createIndex({ id: 1 }, { unique: true });
+      await pageColl.createIndex({ slug: 1 });
+
+      const menuColl = this.mongoDb.collection("menu_items");
+      await menuColl.createIndex({ id: 1 }, { unique: true });
+
+      const updateColl = this.mongoDb.collection("live_updates");
+      await updateColl.createIndex({ id: 1 }, { unique: true });
+
+      const bcastColl = this.mongoDb.collection("broadcast_logs");
+      await bcastColl.createIndex({ id: 1 }, { unique: true });
+
+      const adminColl = this.mongoDb.collection("admins");
+      await adminColl.createIndex({ username: 1 }, { unique: true });
+    } catch (err: any) {
+      console.warn("[MongoDB Index Notice]:", err.message);
+    }
+  }
+
+  // Bootstrap initial baseline data into MongoDB if collections are empty
+  private async bootstrapMongoData(): Promise<void> {
+    if (!this.mongoDb) return;
+    try {
+      // 1. Settings
+      const setColl = this.mongoDb.collection("app_settings");
+      const existingSettings = await setColl.findOne({ $or: [{ id: "main" }, { id: "system_settings" }, { id: "global_settings" }] });
+      if (!existingSettings) {
+        const localSettings = this.readLocalFile<FeeConfig>("settings.json", {} as any);
+        if (localSettings && Object.keys(localSettings).length > 0) {
+          await setColl.updateOne(
+            { id: "main" },
+            { $set: { id: "main", settings_json: JSON.stringify(localSettings), ...localSettings, updatedAt: new Date().toISOString() } },
+            { upsert: true }
+          );
+          await setColl.updateOne(
+            { id: "system_settings" },
+            { $set: { id: "system_settings", settings_json: JSON.stringify(localSettings), ...localSettings, updatedAt: new Date().toISOString() } },
+            { upsert: true }
+          );
+        }
+      }
+
+      // 2. Homepage Content
+      const hpColl = this.mongoDb.collection("homepage_content");
+      const existingHp = await hpColl.findOne({ id: "main" });
+      if (!existingHp) {
+        const localHp = this.readLocalFile<HomepageContent>("homepage_content.json", defaultHomepageContent);
+        await hpColl.updateOne(
+          { id: "main" },
+          { $set: { id: "main", content_json: JSON.stringify(localHp), ...localHp, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      }
+
+      // 3. Problem Statements
+      const psColl = this.mongoDb.collection("problem_statements");
+      const countPs = await psColl.countDocuments();
+      if (countPs === 0) {
+        const localPs = this.readLocalFile<ProblemStatement[]>("problem_statements.json", defaultStatements);
+        if (localPs.length > 0) {
+          await psColl.insertMany(localPs.map((s, idx) => ({ ...s, sortOrder: idx })));
+        }
+      }
+
+      // 4. Evaluation Criteria
+      const critColl = this.mongoDb.collection("evaluation_criteria");
+      const countCrit = await critColl.countDocuments();
+      if (countCrit === 0) {
+        const localCrit = this.readLocalFile<EvaluationCriterion[]>("evaluation_criteria.json", defaultCriteria);
+        if (localCrit.length > 0) {
+          await critColl.insertMany(localCrit.map((c, idx) => ({ ...c, sortOrder: idx })));
+        }
+      }
+
+      // 5. Custom Pages
+      const cpColl = this.mongoDb.collection("custom_pages");
+      const countCp = await cpColl.countDocuments();
+      if (countCp === 0) {
+        const localCp = this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
+        if (localCp.length > 0) {
+          await cpColl.insertMany(localCp);
+        }
+      }
+
+      // 6. Menu Items
+      const mColl = this.mongoDb.collection("menu_items");
+      const countM = await mColl.countDocuments();
+      if (countM === 0) {
+        const localM = this.readLocalFile<MenuItem[]>("menu_items.json", defaultMenuItems);
+        if (localM.length > 0) {
+          await mColl.insertMany(localM);
+        }
+      }
+
+      // 7. Admins
+      const admColl = this.mongoDb.collection("admins");
+      const countAdm = await admColl.countDocuments();
+      if (countAdm === 0) {
+        const localAdm = this.readLocalFile<AdminUser[]>("admins.json", defaultDefaultAdmins);
+        if (localAdm.length > 0) {
+          await admColl.insertMany(localAdm);
+        }
+      }
+    } catch (err: any) {
+      console.warn("[MongoDB Bootstrap Notice]:", err.message);
     }
   }
 
@@ -975,6 +1261,14 @@ class DatabaseManager {
           ]);
         }
       }
+
+      // 6. Ensure problem_statements columns allow long titles and organizations
+      try {
+        await this.pgPool.query(`ALTER TABLE problem_statements ALTER COLUMN title TYPE TEXT;`);
+        await this.pgPool.query(`ALTER TABLE problem_statements ALTER COLUMN organization TYPE TEXT;`);
+      } catch (colErr: any) {
+        // Safe if already TEXT
+      }
     } catch (err: any) {
       console.warn("[DB Migration Notice]:", err.message);
     }
@@ -1057,6 +1351,17 @@ class DatabaseManager {
   // ===================== REGISTRATIONS / TEAMS =====================
 
   public async getRegistrations(): Promise<Registration[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("registrations");
+        const docs = await coll.find({}).sort({ submittedAt: -1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as Registration);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getRegistrations:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM registrations ORDER BY created_at DESC`);
@@ -1069,6 +1374,19 @@ class DatabaseManager {
   }
 
   public async getRegistrationById(id: string): Promise<Registration | null> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("registrations");
+        const doc = await coll.findOne({ $or: [{ id }, { registrationId: id }] });
+        if (doc) {
+          const { _id, ...rest } = doc;
+          return rest as Registration;
+        }
+        return null;
+      } catch (err) {
+        console.error("[MongoDB Query Error] getRegistrationById:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(
@@ -1088,6 +1406,31 @@ class DatabaseManager {
   }
 
   public async saveRegistration(reg: Registration): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("registrations");
+        await coll.updateOne(
+          { id: reg.id },
+          { $set: { ...reg, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+        if (reg.pptBase64) {
+          const filename = reg.pptFileName || `${reg.teamName.replace(/[^a-zA-Z0-9_-]/g, "_")}_presentation.pptx`;
+          const cleanBase64 = reg.pptBase64.replace(/^data:[^;]+;base64,/, "");
+          const buffer = Buffer.from(cleanBase64, "base64");
+          await this.saveFileRecord({
+            category: "ppts",
+            filename,
+            originalName: reg.pptFileName || filename,
+            mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            size: buffer.length,
+            buffer
+          });
+        }
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveRegistration:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const sql = `
@@ -1332,6 +1675,14 @@ class DatabaseManager {
   }
 
   public async deleteRegistration(id: string): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("registrations");
+        await coll.deleteOne({ $or: [{ id }, { registrationId: id }] });
+      } catch (err) {
+        console.error("[MongoDB Delete Error] deleteRegistration:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM registrations WHERE id = $1 OR registration_id = $1`, [id]);
@@ -1350,6 +1701,17 @@ class DatabaseManager {
   // ===================== STUDENTS =====================
 
   public async getStudents(): Promise<Student[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("students");
+        const docs = await coll.find({}).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as Student);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getStudents:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM students ORDER BY created_at DESC`);
@@ -1371,6 +1733,18 @@ class DatabaseManager {
 
   public async getStudentByEmail(email: string): Promise<Student | null> {
     const cleanEmail = email.trim().toLowerCase();
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("students");
+        const doc = await coll.findOne({ email: cleanEmail });
+        if (doc) {
+          const { _id, ...rest } = doc;
+          return rest as Student;
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getStudentByEmail:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM students WHERE LOWER(email) = $1 LIMIT 1`, [cleanEmail]);
@@ -1398,6 +1772,19 @@ class DatabaseManager {
   public async saveStudent(student: Student): Promise<boolean> {
     const cleanEmail = (student.email || "").toLowerCase().trim();
     if (!cleanEmail) return false;
+
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("students");
+        await coll.updateOne(
+          { email: cleanEmail },
+          { $set: { ...student, email: cleanEmail, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveStudent:", err);
+      }
+    }
 
     if (this.isPostgresActive && this.pgPool) {
       try {
@@ -1452,6 +1839,14 @@ class DatabaseManager {
   }
 
   public async deleteStudent(id: string): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("students");
+        await coll.deleteOne({ $or: [{ id }, { email: id.toLowerCase() }] });
+      } catch (err) {
+        console.error("[MongoDB Delete Error] deleteStudent:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM students WHERE id = $1 OR email = $1`, [id]);
@@ -1467,6 +1862,17 @@ class DatabaseManager {
   // ===================== ADMINS =====================
 
   public async getAdmins(): Promise<AdminUser[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("admins");
+        const docs = await coll.find({}).sort({ username: 1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as AdminUser);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getAdmins:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT username, password_hash, role, department FROM admins ORDER BY username ASC`);
@@ -1487,6 +1893,18 @@ class DatabaseManager {
 
   public async getAdminByUsername(username: string): Promise<AdminUser | null> {
     const clean = username.trim().toLowerCase();
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("admins");
+        const doc = await coll.findOne({ $or: [{ username }, { username: clean }, { id: clean }] });
+        if (doc) {
+          const { _id, ...rest } = doc;
+          return rest as AdminUser;
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getAdminByUsername:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT username, password_hash, role, department FROM admins WHERE LOWER(username) = $1 LIMIT 1`, [clean]);
@@ -1511,6 +1929,18 @@ class DatabaseManager {
   public async saveAdmin(admin: AdminUser): Promise<boolean> {
     const id = admin.username.toLowerCase();
     const dept = admin.department || "";
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("admins");
+        await coll.updateOne(
+          { username: admin.username },
+          { $set: { ...admin, department: dept, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveAdmin:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
@@ -1545,6 +1975,14 @@ class DatabaseManager {
 
   public async deleteAdmin(username: string): Promise<boolean> {
     const id = username.toLowerCase();
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("admins");
+        await coll.deleteOne({ $or: [{ username }, { username: id }, { id }] });
+      } catch (err) {
+        console.error("[MongoDB Delete Error] deleteAdmin:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM admins WHERE id = $1 OR LOWER(username) = $1`, [id]);
@@ -1562,6 +2000,31 @@ class DatabaseManager {
   // ===================== EVALUATIONS =====================
 
   public async saveEvaluation(evaluation: TeamEvaluation): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("team_evaluations");
+        await coll.updateOne(
+          { id: evaluation.id },
+          { $set: { ...evaluation, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+        const regColl = this.mongoDb.collection("registrations");
+        await regColl.updateOne(
+          { $or: [{ id: evaluation.registrationId }, { registrationId: evaluation.registrationId }] },
+          {
+            $set: {
+              evaluatorScores: evaluation.scores,
+              evaluationNotes: evaluation.notes,
+              evaluationStatus: evaluation.status,
+              totalScore: evaluation.totalScore,
+              updatedAt: new Date().toISOString()
+            }
+          }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveEvaluation:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const sql = `
@@ -1614,6 +2077,21 @@ class DatabaseManager {
   }
 
   public async getEvaluations(registrationId?: string): Promise<TeamEvaluation[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("team_evaluations");
+        const query: any = {};
+        if (registrationId) {
+          query.registrationId = registrationId;
+        }
+        const docs = await coll.find(query).sort({ evaluatedAt: -1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as TeamEvaluation);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getEvaluations:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         let sql = `SELECT * FROM team_evaluations`;
@@ -1663,6 +2141,18 @@ class DatabaseManager {
   // ===================== PAYMENTS =====================
 
   public async savePaymentTransaction(payment: PaymentTransaction): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("payment_transactions");
+        await coll.updateOne(
+          { id: payment.id },
+          { $set: { ...payment, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] savePaymentTransaction:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
@@ -1700,6 +2190,19 @@ class DatabaseManager {
   }
 
   public async getPaymentTransactions(registrationId?: string): Promise<PaymentTransaction[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("payment_transactions");
+        const query: any = {};
+        if (registrationId) query.registrationId = registrationId;
+        const docs = await coll.find(query).sort({ createdAt: -1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as PaymentTransaction);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getPaymentTransactions:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         let sql = `SELECT * FROM payment_transactions`;
@@ -1736,6 +2239,17 @@ class DatabaseManager {
   // ===================== PROBLEM STATEMENTS =====================
 
   public async getProblemStatements(): Promise<ProblemStatement[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("problem_statements");
+        const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getProblemStatements:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
@@ -1756,6 +2270,17 @@ class DatabaseManager {
   }
 
   public async saveProblemStatements(statements: ProblemStatement[]): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("problem_statements");
+        await coll.deleteMany({});
+        if (statements.length > 0) {
+          await coll.insertMany(statements.map((ps, idx) => ({ ...ps, sortOrder: idx })));
+        }
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveProblemStatements:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM problem_statements`);
@@ -1777,6 +2302,17 @@ class DatabaseManager {
   // ===================== EVALUATION CRITERIA =====================
 
   public async getEvaluationCriteria(): Promise<EvaluationCriterion[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("evaluation_criteria");
+        const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, sortOrder, ...rest }) => rest as EvaluationCriterion);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getEvaluationCriteria:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM evaluation_criteria ORDER BY sort_order ASC`);
@@ -1796,6 +2332,17 @@ class DatabaseManager {
   }
 
   public async saveEvaluationCriteria(criteria: EvaluationCriterion[]): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("evaluation_criteria");
+        await coll.deleteMany({});
+        if (criteria.length > 0) {
+          await coll.insertMany(criteria.map((c, idx) => ({ ...c, sortOrder: idx })));
+        }
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveEvaluationCriteria:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM evaluation_criteria`);
@@ -1818,6 +2365,22 @@ class DatabaseManager {
   // ===================== SETTINGS & METADATA =====================
 
   public async getSettings(): Promise<FeeConfig> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("app_settings");
+        const doc = await coll.findOne({ $or: [{ id: "main" }, { id: "system_settings" }, { id: "global_settings" }] });
+        if (doc) {
+          const { _id, id, ...rest } = doc;
+          let parsed: any = rest;
+          if (rest.settings_json) {
+            parsed = typeof rest.settings_json === "string" ? JSON.parse(rest.settings_json) : rest.settings_json;
+          }
+          return parsed as FeeConfig;
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getSettings:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'main' LIMIT 1`);
@@ -1838,6 +2401,18 @@ class DatabaseManager {
   }
 
   public async saveSettings(settings: FeeConfig): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("app_settings");
+        await coll.updateOne(
+          { id: "main" },
+          { $set: { id: "main", ...settings, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveSettings:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
@@ -1875,6 +2450,21 @@ class DatabaseManager {
   // ===================== HOMEPAGE CONTENT =====================
 
   public async getHomepageContent(): Promise<HomepageContent> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("homepage_content");
+        const doc = await coll.findOne({ id: "main" });
+        if (doc) {
+          const { _id, id, updatedAt, ...rest } = doc;
+          const parsed = rest.content_json ? (typeof rest.content_json === "string" ? JSON.parse(rest.content_json) : rest.content_json) : rest;
+          if (parsed && (parsed.sihDetails || parsed.heroTitle || parsed.heroSubtitle)) {
+            return parsed as HomepageContent;
+          }
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getHomepageContent:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT content_json FROM homepage_content WHERE id = 'main' LIMIT 1`);
@@ -1889,6 +2479,18 @@ class DatabaseManager {
   }
 
   public async saveHomepageContent(content: HomepageContent): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("homepage_content");
+        await coll.updateOne(
+          { id: "main" },
+          { $set: { id: "main", ...content, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveHomepageContent:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
@@ -1925,6 +2527,17 @@ class DatabaseManager {
   // ===================== CUSTOM PAGES =====================
 
   public async getCustomPages(): Promise<CustomPage[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("custom_pages");
+        const docs = await coll.find({}).sort({ createdAt: 1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as CustomPage);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getCustomPages:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM custom_pages ORDER BY created_at ASC`);
@@ -1946,6 +2559,17 @@ class DatabaseManager {
   }
 
   public async saveCustomPages(pages: CustomPage[]): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("custom_pages");
+        await coll.deleteMany({});
+        if (pages.length > 0) {
+          await coll.insertMany(pages.map(p => ({ ...p })));
+        }
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveCustomPages:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM custom_pages`);
@@ -1965,6 +2589,18 @@ class DatabaseManager {
   }
 
   public async saveCustomPage(page: CustomPage): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("custom_pages");
+        await coll.updateOne(
+          { id: page.id },
+          { $set: { ...page, updatedAt: new Date().toISOString() } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveCustomPage:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
@@ -1990,6 +2626,14 @@ class DatabaseManager {
   }
 
   public async deleteCustomPage(id: string): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("custom_pages");
+        await coll.deleteOne({ $or: [{ id }, { slug: id }] });
+      } catch (err) {
+        console.error("[MongoDB Delete Error] deleteCustomPage:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM custom_pages WHERE id = $1 OR slug = $1`, [id]);
@@ -2007,6 +2651,17 @@ class DatabaseManager {
   // ===================== MENU ITEMS =====================
 
   public async getMenuItems(): Promise<MenuItem[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("menu_items");
+        const docs = await coll.find({}).sort({ order: 1, sort_order: 1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as MenuItem);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getMenuItems:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM menu_items ORDER BY sort_order ASC`);
@@ -2027,6 +2682,17 @@ class DatabaseManager {
   }
 
   public async saveMenuItems(items: MenuItem[]): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("menu_items");
+        await coll.deleteMany({});
+        if (items.length > 0) {
+          await coll.insertMany(items.map((m, idx) => ({ ...m, order: idx })));
+        }
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveMenuItems:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM menu_items`);
@@ -2049,6 +2715,17 @@ class DatabaseManager {
   // ===================== LIVE UPDATES =====================
 
   public async getLiveUpdates(): Promise<LiveUpdate[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("live_updates");
+        const docs = await coll.find({}).sort({ createdAt: -1 }).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as LiveUpdate);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getLiveUpdates:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM live_updates ORDER BY created_at DESC`);
@@ -2072,6 +2749,17 @@ class DatabaseManager {
   }
 
   public async saveLiveUpdates(updates: LiveUpdate[]): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("live_updates");
+        await coll.deleteMany({});
+        if (updates.length > 0) {
+          await coll.insertMany(updates.map(u => ({ ...u })));
+        }
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveLiveUpdates:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM live_updates`);
@@ -2093,6 +2781,17 @@ class DatabaseManager {
   // ===================== BROADCAST LOGS =====================
 
   public async getBroadcastLogs(): Promise<BroadcastLog[]> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("broadcast_logs");
+        const docs = await coll.find({}).sort({ timestamp: -1 }).limit(500).toArray();
+        if (docs && docs.length > 0) {
+          return docs.map(({ _id, ...rest }) => rest as BroadcastLog);
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getBroadcastLogs:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`SELECT * FROM broadcast_logs ORDER BY timestamp DESC LIMIT 500`);
@@ -2115,6 +2814,18 @@ class DatabaseManager {
   }
 
   public async saveBroadcastLog(log: BroadcastLog): Promise<boolean> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("broadcast_logs");
+        await coll.updateOne(
+          { id: log.id },
+          { $set: { ...log } },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveBroadcastLog:", err);
+      }
+    }
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`
@@ -2155,6 +2866,31 @@ class DatabaseManager {
     const id = `${file.category}/${file.filename}`;
     const base64 = file.dataBase64 || (file.buffer ? `data:${file.mimeType};base64,${file.buffer.toString("base64")}` : "");
     if (!base64) return false;
+
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("app_files");
+        await coll.updateOne(
+          { id },
+          {
+            $set: {
+              id,
+              category: file.category,
+              filename: file.filename,
+              originalName: file.originalName || file.filename,
+              mimeType: file.mimeType,
+              size: file.size,
+              dataBase64: base64,
+              data_base64: base64,
+              updatedAt: new Date().toISOString()
+            }
+          },
+          { upsert: true }
+        );
+      } catch (err) {
+        console.error("[MongoDB Save Error] saveFileRecord:", err);
+      }
+    }
 
     if (this.isPostgresActive && this.pgPool) {
       try {
@@ -2199,6 +2935,34 @@ class DatabaseManager {
     dataBase64: string;
   } | null> {
     const id = `${category}/${filename}`;
+
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("app_files");
+        const doc = await coll.findOne({
+          $or: [
+            { id },
+            { category, filename },
+            { filename },
+            { id: { $regex: filename + "$" } }
+          ]
+        });
+        if (doc) {
+          return {
+            id: doc.id,
+            category: doc.category,
+            filename: doc.filename,
+            originalName: doc.originalName || doc.filename,
+            mimeType: doc.mimeType || doc.mime_type || "application/octet-stream",
+            size: Number(doc.size),
+            dataBase64: doc.dataBase64 || doc.data_base64
+          };
+        }
+      } catch (err) {
+        console.error("[MongoDB Query Error] getFileRecord:", err);
+      }
+    }
+
     if (this.isPostgresActive && this.pgPool) {
       try {
         const res = await this.pgPool.query(`
@@ -2243,6 +3007,18 @@ class DatabaseManager {
 
   public async deleteFileRecord(category: string, filename: string): Promise<boolean> {
     const id = `${category}/${filename}`;
+
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        const coll = this.mongoDb.collection("app_files");
+        await coll.deleteMany({
+          $or: [{ id }, { category, filename }, { filename }]
+        });
+      } catch (err) {
+        console.error("[MongoDB Delete Error] deleteFileRecord:", err);
+      }
+    }
+
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM app_files WHERE id = $1 OR (category = $2 AND filename = $3) OR filename = $3`, [id, category, filename]);
@@ -2280,7 +3056,7 @@ class DatabaseManager {
         upi_qr: path.join(uploadsDir, "upi_qr")
       };
 
-      // 1. Gather all file records from PostgreSQL
+      // 1. Gather all file records from PostgreSQL and MongoDB
       const filesToRestore: Array<{
         category: string;
         filename: string;
@@ -2289,18 +3065,43 @@ class DatabaseManager {
         dataBase64: string;
       }> = [];
 
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("app_files");
+          const docs = await coll.find({}).toArray();
+          if (docs && docs.length > 0) {
+            for (const doc of docs) {
+              const b64 = doc.dataBase64 || doc.data_base64;
+              if (doc.filename && b64) {
+                filesToRestore.push({
+                  category: doc.category || "images",
+                  filename: doc.filename,
+                  originalName: doc.originalName || doc.filename,
+                  mimeType: doc.mimeType || doc.mime_type || "application/octet-stream",
+                  dataBase64: b64
+                });
+              }
+            }
+          }
+        } catch (err) {
+          console.error("[MongoDB Storage Hydration Error] Querying app_files:", err);
+        }
+      }
+
       if (this.isPostgresActive && this.pgPool) {
         try {
           const res = await this.pgPool.query(`SELECT category, filename, original_name, mime_type, data_base64 FROM app_files`);
           if (res.rows && res.rows.length > 0) {
             for (const r of res.rows) {
-              filesToRestore.push({
-                category: r.category,
-                filename: r.filename,
-                originalName: r.original_name,
-                mimeType: r.mime_type,
-                dataBase64: r.data_base64
-              });
+              if (!filesToRestore.some(f => f.filename === r.filename)) {
+                filesToRestore.push({
+                  category: r.category,
+                  filename: r.filename,
+                  originalName: r.original_name,
+                  mimeType: r.mime_type,
+                  dataBase64: r.data_base64
+                });
+              }
             }
           }
         } catch (err) {
@@ -2437,19 +3238,147 @@ class DatabaseManager {
   }
 
   /**
-   * Synchronizes all state from PostgreSQL into local JSON disk cache
+   * Synchronizes all state from external database (PostgreSQL or MongoDB) into local JSON disk cache
    * so that local reads and file backups never revert across restarts.
    */
   public async syncDatabaseStateToLocalDisk(): Promise<void> {
+    if (this.isMongoActive && this.mongoDb) {
+      try {
+        // 1. Settings from MongoDB
+        const sColl = this.mongoDb.collection("app_settings");
+        const sDoc = await sColl.findOne({ $or: [{ id: "main" }, { id: "system_settings" }, { id: "global_settings" }] });
+        if (sDoc) {
+          const { _id, id, ...rest } = sDoc;
+          let parsed: any = rest;
+          if (rest.settings_json) {
+            parsed = typeof rest.settings_json === "string" ? JSON.parse(rest.settings_json) : rest.settings_json;
+          }
+          const existing = this.readLocalFile<FeeConfig>("settings.json", {} as any);
+          const merged = { ...existing, ...parsed };
+          if (merged.dbEnabled === undefined) merged.dbEnabled = true;
+          this.writeLocalFile("settings.json", merged);
+        } else {
+          // If empty in MongoDB, seed local settings to prevent reset
+          const existing = this.readLocalFile<FeeConfig>("settings.json", {} as any);
+          if (existing && Object.keys(existing).length > 0) {
+            await this.saveSettings(existing);
+          }
+        }
+
+        // 2. Homepage Content from MongoDB
+        const hpColl = this.mongoDb.collection("homepage_content");
+        const hpDoc = await hpColl.findOne({ id: "main" });
+        if (hpDoc) {
+          const { _id, id, updatedAt, ...rest } = hpDoc;
+          const parsedHp = rest.content_json ? (typeof rest.content_json === "string" ? JSON.parse(rest.content_json) : rest.content_json) : rest;
+          if (parsedHp && (parsedHp.sihDetails || parsedHp.heroTitle)) {
+            this.writeLocalFile("homepage_content.json", parsedHp);
+          }
+        }
+
+        // 3. Custom Pages from MongoDB
+        const cpColl = this.mongoDb.collection("custom_pages");
+        const cpDocs = await cpColl.find({}).sort({ createdAt: 1 }).toArray();
+        if (cpDocs && cpDocs.length > 0) {
+          const pages: CustomPage[] = cpDocs.map(({ _id, ...rest }) => rest as CustomPage);
+          this.writeLocalFile("custom_pages.json", pages);
+        }
+
+        // 4. Menu Items from MongoDB
+        const mColl = this.mongoDb.collection("menu_items");
+        const mDocs = await mColl.find({}).sort({ order: 1, sort_order: 1 }).toArray();
+        if (mDocs && mDocs.length > 0) {
+          const items: MenuItem[] = mDocs.map(({ _id, ...rest }) => rest as MenuItem);
+          this.writeLocalFile("menu_items.json", items);
+        }
+
+        // 5. Live Updates from MongoDB
+        const uColl = this.mongoDb.collection("live_updates");
+        const uDocs = await uColl.find({}).sort({ createdAt: -1 }).toArray();
+        if (uDocs && uDocs.length > 0) {
+          const updates: LiveUpdate[] = uDocs.map(({ _id, ...rest }) => rest as LiveUpdate);
+          this.writeLocalFile("updates.json", updates);
+        }
+
+        // 6. Problem Statements from MongoDB
+        const psColl = this.mongoDb.collection("problem_statements");
+        const psDocs = await psColl.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
+        if (psDocs && psDocs.length > 0) {
+          const statements: ProblemStatement[] = psDocs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
+          this.writeLocalFile("problem_statements.json", statements);
+        }
+
+        // 7. Evaluation Criteria from MongoDB
+        const critColl = this.mongoDb.collection("evaluation_criteria");
+        const critDocs = await critColl.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
+        if (critDocs && critDocs.length > 0) {
+          const criteria: EvaluationCriterion[] = critDocs.map(({ _id, sortOrder, ...rest }) => rest as EvaluationCriterion);
+          this.writeLocalFile("evaluation_criteria.json", criteria);
+        }
+
+        // 8. Registrations from MongoDB
+        const regColl = this.mongoDb.collection("registrations");
+        const regDocs = await regColl.find({}).sort({ createdAt: -1, created_at: -1 }).toArray();
+        if (regDocs && regDocs.length > 0) {
+          const regs: Registration[] = regDocs.map(({ _id, ...rest }) => rest as Registration);
+          this.writeLocalFile("registrations.json", regs);
+        }
+
+        // 9. Students from MongoDB
+        const studColl = this.mongoDb.collection("students");
+        const studDocs = await studColl.find({}).toArray();
+        if (studDocs && studDocs.length > 0) {
+          const students: Student[] = studDocs.map(({ _id, ...rest }) => rest as Student);
+          this.writeLocalFile("students.json", students);
+        }
+
+        // 10. Admins from MongoDB
+        const admColl = this.mongoDb.collection("admins");
+        const admDocs = await admColl.find({}).toArray();
+        if (admDocs && admDocs.length > 0) {
+          const admins = admDocs.map(({ _id, ...rest }) => rest as any);
+          this.writeLocalFile("admins.json", admins);
+        }
+
+        // 11. Evaluations & Payments from MongoDB
+        const evalColl = this.mongoDb.collection("team_evaluations");
+        const evalDocs = await evalColl.find({}).toArray();
+        if (evalDocs && evalDocs.length > 0) {
+          const evals = evalDocs.map(({ _id, ...rest }) => rest);
+          this.writeLocalFile("evaluations.json", evals);
+        }
+
+        const payColl = this.mongoDb.collection("payment_transactions");
+        const payDocs = await payColl.find({}).toArray();
+        if (payDocs && payDocs.length > 0) {
+          const payments = payDocs.map(({ _id, ...rest }) => rest as PaymentTransaction);
+          this.writeLocalFile("payments.json", payments);
+        }
+
+        console.log("✅ [Database State Sync] Local disk cache successfully updated with latest MongoDB state.");
+        return;
+      } catch (mongoSyncErr: any) {
+        console.warn("[MongoDB State Sync Warning]:", mongoSyncErr.message);
+      }
+    }
+
     if (!this.isPostgresActive || !this.pgPool) return;
 
     try {
       // 1. Settings
       const sRes = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'main' OR id = 'global_settings' LIMIT 1`);
       if (sRes.rows.length > 0 && sRes.rows[0].settings_json) {
-        const parsed = JSON.parse(sRes.rows[0].settings_json);
+        const parsed = typeof sRes.rows[0].settings_json === "string" ? JSON.parse(sRes.rows[0].settings_json) : sRes.rows[0].settings_json;
         const existing = this.readLocalFile<FeeConfig>("settings.json", {} as any);
-        this.writeLocalFile("settings.json", { ...existing, ...parsed });
+        const merged = { ...existing, ...parsed };
+        if (merged.dbEnabled === undefined) merged.dbEnabled = true;
+        this.writeLocalFile("settings.json", merged);
+      } else {
+        // If app_settings table exists but is empty, seed local settings to DB to prevent reset on redeployment
+        const existing = this.readLocalFile<FeeConfig>("settings.json", {} as any);
+        if (existing && Object.keys(existing).length > 0) {
+          await this.saveSettings(existing);
+        }
       }
 
       // 2. Homepage
@@ -2642,7 +3571,18 @@ class DatabaseManager {
   public readLocalFile<T>(filename: string, fallback: T): T {
     try {
       const fullPath = path.join(DATA_DIR, filename);
-      if (!fs.existsSync(fullPath)) return fallback;
+      if (!fs.existsSync(fullPath)) {
+        // If file missing in DATA_DIR (e.g. on serverless /tmp), attempt to read from seed data/ directory
+        const bundledPath = path.join(process.cwd(), "data", filename);
+        if (bundledPath !== fullPath && fs.existsSync(bundledPath)) {
+          const content = fs.readFileSync(bundledPath, "utf-8");
+          try {
+            fs.writeFileSync(fullPath, content, "utf-8");
+          } catch (writeErr) {}
+          return JSON.parse(content) as T;
+        }
+        return fallback;
+      }
       const content = fs.readFileSync(fullPath, "utf-8");
       return JSON.parse(content) as T;
     } catch (e) {
@@ -2654,6 +3594,13 @@ class DatabaseManager {
     try {
       const fullPath = path.join(DATA_DIR, filename);
       fs.writeFileSync(fullPath, JSON.stringify(data, null, 2), "utf-8");
+      // Also persist to bundled data/ directory so redeployments and git checkpoints retain settings
+      const bundledPath = path.join(process.cwd(), "data", filename);
+      if (bundledPath !== fullPath) {
+        try {
+          fs.writeFileSync(bundledPath, JSON.stringify(data, null, 2), "utf-8");
+        } catch (be) {}
+      }
     } catch (e) {
       console.error(`Error writing to local file ${filename}:`, e);
     }

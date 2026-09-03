@@ -332,26 +332,26 @@ export const problemStatementSchema = z.object({
   code: z
     .string()
     .trim()
-    .min(2, "Code must be at least 2 characters")
-    .max(30, "Code must not exceed 30 characters"),
+    .min(1, "Code must be at least 1 character")
+    .max(100, "Code must not exceed 100 characters"),
   title: z
     .string()
     .trim()
-    .min(3, "Title must be at least 3 characters")
-    .max(300, "Title must not exceed 300 characters"),
+    .min(2, "Title must be at least 2 characters")
+    .max(10000, "Title must not exceed 10,000 characters"),
   category: z
     .string()
     .trim()
-    .min(2, "Category must be at least 2 characters")
+    .min(1, "Category must be at least 1 character")
     .max(100, "Category must not exceed 100 characters"),
   organization: z
     .string()
     .trim()
-    .min(2, "Organization must be at least 2 characters")
-    .max(150, "Organization must not exceed 150 characters"),
-  domain: z.string().trim().max(100).optional().or(z.literal("")),
-  description: z.string().trim().max(5000).optional().or(z.literal("")),
-  psType: z.enum(["Software", "Hardware", "Both"]).optional().or(z.string().max(50))
+    .min(1, "Organization must be at least 1 character")
+    .max(1000, "Organization must not exceed 1,000 characters"),
+  domain: z.string().trim().max(1000).optional().or(z.literal("")),
+  description: z.string().trim().max(20000).optional().or(z.literal("")),
+  psType: z.enum(["Software", "Hardware", "Both"]).optional().or(z.string().max(100))
 });
 
 export const bulkProblemStatementsSchema = z.object({
@@ -561,7 +561,7 @@ export const settingsSchema = z.object({
   // DB
   dbEnabled: z.boolean().optional(),
   dbType: z.string().max(50).optional(),
-  dbHost: z.string().trim().max(255).optional().or(z.literal("")),
+  dbHost: z.string().trim().max(2000).optional().or(z.literal("")),
   dbPort: z.union([z.number(), z.string()]).optional(),
   dbName: z.string().trim().max(100).optional().or(z.literal("")),
   dbUsername: z.string().trim().max(100).optional().or(z.literal("")),
@@ -593,6 +593,7 @@ export const settingsSchema = z.object({
   samplePptUrl: z.string().max(500).optional().or(z.literal("")),
   samplePptFileName: z.string().max(200).optional().or(z.literal("")),
   samplePptFileBase64: z.string().max(35 * 1024 * 1024).optional().or(z.literal("")),
+  samplePptFileUrl: z.string().max(2000).optional().or(z.literal("")),
   samplePptDescription: z.string().max(2000).optional().or(z.literal("")),
 
   // Consent Letter Template (Super Admin Only)
@@ -613,7 +614,7 @@ export const settingsSchema = z.object({
 
 export const testDbSchema = z.object({
   dbType: z.string().min(1, "Database type is required"),
-  dbHost: z.string().trim().min(1, "Host is required").max(255),
+  dbHost: z.string().trim().min(1, "Host is required").max(2000),
   dbPort: z.union([z.number(), z.string()]).optional(),
   dbName: z.string().trim().min(1, "Database name is required").max(100),
   dbUsername: z.string().trim().max(100).optional().or(z.literal("")),

@@ -62,26 +62,41 @@ export interface AllowedFileType {
   maxSize: number; // in bytes
 }
 
-// Presentations: PPT, PPTX
+// Presentations: PPT, PPTX, ODP
 const PRESENTATION_TYPES: AllowedFileType[] = [
   {
     extension: ".pptx",
     mimeTypes: [
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/vnd.ms-powerpoint",
       "application/zip",
       "application/x-zip-compressed",
       "application/octet-stream"
     ],
-    maxSize: 15 * 1024 * 1024 // 15MB
+    maxSize: 35 * 1024 * 1024 // 35MB
   },
   {
     extension: ".ppt",
     mimeTypes: [
       "application/vnd.ms-powerpoint",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       "application/msword",
+      "application/zip",
+      "application/x-zip-compressed",
       "application/octet-stream"
     ],
-    maxSize: 15 * 1024 * 1024 // 15MB
+    maxSize: 35 * 1024 * 1024 // 35MB
+  },
+  {
+    extension: ".odp",
+    mimeTypes: [
+      "application/vnd.oasis.opendocument.presentation",
+      "application/x-vnd.oasis.opendocument.presentation",
+      "application/zip",
+      "application/x-zip-compressed",
+      "application/octet-stream"
+    ],
+    maxSize: 35 * 1024 * 1024 // 35MB
   }
 ];
 
@@ -90,7 +105,7 @@ const DOCUMENT_TYPES: AllowedFileType[] = [
   {
     extension: ".pdf",
     mimeTypes: ["application/pdf"],
-    maxSize: 15 * 1024 * 1024 // 15MB
+    maxSize: 35 * 1024 * 1024 // 35MB
   },
   {
     extension: ".docx",
@@ -99,12 +114,12 @@ const DOCUMENT_TYPES: AllowedFileType[] = [
       "application/zip",
       "application/octet-stream"
     ],
-    maxSize: 15 * 1024 * 1024 // 15MB
+    maxSize: 35 * 1024 * 1024 // 35MB
   },
   {
     extension: ".doc",
     mimeTypes: ["application/msword", "application/octet-stream"],
-    maxSize: 15 * 1024 * 1024 // 15MB
+    maxSize: 35 * 1024 * 1024 // 35MB
   }
 ];
 
@@ -204,16 +219,51 @@ export function validateMagicBytes(buffer: Buffer, extension: string): boolean {
     return riff === "RIFF" && webp === "WEBP";
   }
 
-  // PPTX / DOCX (OpenXML ZIP archive): PK\x03\x04 (50 4B 03 04)
-  if (ext === ".pptx" || ext === ".docx") {
+  // PPTX / PPT / ODP (Presentations): OpenXML ZIP archive, OLE Compound Binary, or PDF format
+  if (ext === ".pptx" || ext === ".ppt" || ext === ".odp") {
+    if (buffer.length < 4) return false;
+    // ZIP / OpenXML archive (PK\x03\x04, PK\x05\x06, PK\x07\x08, PK\x01\x02)
+    const isZip = buffer[0] === 0x50 && buffer[1] === 0x4b && (
+      (buffer[2] === 0x03 && buffer[3] === 0x04) ||
+      (buffer[2] === 0x05 && buffer[3] === 0x06) ||
+      (buffer[2] === 0x07 && buffer[3] === 0x08) ||
+      (buffer[2] === 0x01 && buffer[3] === 0x02)
+    );
+    if (isZip) return true;
+
+    // OLE Compound File Binary Format: D0 CF 11 E0 A1 B1 1A E1
+    if (
+      buffer.length >= 8 &&
+      buffer[0] === 0xd0 &&
+      buffer[1] === 0xcf &&
+      buffer[2] === 0x11 &&
+      buffer[3] === 0xe0 &&
+      buffer[4] === 0xa1 &&
+      buffer[5] === 0xb1 &&
+      buffer[6] === 0x1a &&
+      buffer[7] === 0xe1
+    ) {
+      return true;
+    }
+
+    // PDF format (%PDF)
+    if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+      return true;
+    }
+
+    return false;
+  }
+
+  // DOCX (OpenXML ZIP archive): PK\x03\x04 (50 4B 03 04)
+  if (ext === ".docx") {
     return (
       (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04) ||
       (buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x05 && buffer[3] === 0x06) // Empty zip
     );
   }
 
-  // PPT / DOC (OLE Compound File Binary Format): D0 CF 11 E0 A1 B1 1A E1
-  if (ext === ".ppt" || ext === ".doc") {
+  // DOC (OLE Compound File Binary Format): D0 CF 11 E0 A1 B1 1A E1
+  if (ext === ".doc") {
     if (buffer.length < 8) return false;
     return (
       buffer[0] === 0xd0 &&
@@ -293,7 +343,7 @@ const memoryStorage = multer.memoryStorage();
 export const upload = multer({
   storage: memoryStorage,
   limits: {
-    fileSize: 15 * 1024 * 1024, // 15MB ceiling for multipart uploads
+    fileSize: 35 * 1024 * 1024, // 35MB ceiling for multipart uploads
     files: 1 // Single file per request
   },
   fileFilter: (_req, file, cb) => {

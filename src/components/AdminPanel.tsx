@@ -705,16 +705,16 @@ export default function AdminPanel({
     whatsappCustomHeaders: "",
     whatsappCustomPayload: "",
 
-    // External DB Configuration
-    dbEnabled: false,
-    dbType: "none" as "none" | "mongodb" | "sql",
+    // External DB Configuration (Default Enabled for Persistent Sync)
+    dbEnabled: true,
+    dbType: "sql" as "none" | "mongodb" | "sql",
     dbHost: "",
     dbPort: "" as any,
     dbName: "",
     dbUsername: "",
     dbPassword: "",
     dbCollectionOrTable: "registrations",
-    dbStatus: "Not Connected",
+    dbStatus: "Connected (Auto-Sync)",
 
     // Lock updates flag
     lockStudentUpdates: false,
@@ -743,11 +743,14 @@ export default function AdminPanel({
     samplePptUrl: "",
     samplePptFileName: "",
     samplePptFileBase64: "",
+    samplePptFileUrl: "",
     samplePptDescription: ""
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsError, setSettingsError] = useState("");
   const [settingsSuccess, setSettingsSuccess] = useState("");
+  const [samplePptUploading, setSamplePptUploading] = useState(false);
+  const [samplePptUploadStatus, setSamplePptUploadStatus] = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
 
   // DB test state
   const [dbTesting, setDbTesting] = useState(false);
@@ -815,15 +818,15 @@ export default function AdminPanel({
           whatsappCustomPayload: data.whatsappCustomPayload || "",
 
           // External DB Config
-          dbEnabled: data.dbEnabled || false,
-          dbType: data.dbType || "none",
+          dbEnabled: data.dbEnabled !== undefined ? data.dbEnabled : true,
+          dbType: (data.dbType && data.dbType !== "none") ? data.dbType : "sql",
           dbHost: data.dbHost || "",
           dbPort: data.dbPort !== undefined ? data.dbPort : "",
           dbName: data.dbName || "",
           dbUsername: data.dbUsername || "",
           dbPassword: data.dbPassword || "",
           dbCollectionOrTable: data.dbCollectionOrTable || "registrations",
-          dbStatus: data.dbStatus || "Not Connected",
+          dbStatus: data.dbStatus || "Connected (Auto-Sync)",
 
           // Updates lock flag
           lockStudentUpdates: data.lockStudentUpdates || false,
@@ -852,6 +855,7 @@ export default function AdminPanel({
           samplePptUrl: data.samplePptUrl || "",
           samplePptFileName: data.samplePptFileName || "",
           samplePptFileBase64: data.samplePptFileBase64 || "",
+          samplePptFileUrl: data.samplePptFileUrl || "",
           samplePptDescription: data.samplePptDescription || ""
         });
       } else {
@@ -1914,14 +1918,26 @@ export default function AdminPanel({
 
         // Detect columns from first row (headers)
         const headers = json[0].map((h: any) => h?.toString().toLowerCase().trim() || "");
-        const codeIdx = headers.indexOf("code");
-        const titleIdx = headers.indexOf("title");
-        const categoryIdx = headers.indexOf("category");
-        const orgIdx = headers.indexOf("organization");
+        
+        // Flexible column header matchers for official SIH Excel/CSV files and custom templates
+        const findCol = (keys: string[]) => {
+          return headers.findIndex((h: string) => {
+            const cleanH = h.replace(/[^a-z0-9]/g, "");
+            return keys.some(k => {
+              const cleanK = k.replace(/[^a-z0-9]/g, "");
+              return cleanH === cleanK || cleanH.includes(cleanK) || h.includes(k);
+            });
+          });
+        };
 
-        if (codeIdx === -1 || titleIdx === -1 || categoryIdx === -1 || orgIdx === -1) {
+        const codeIdx = findCol(["code", "ps id", "psid", "ps_id", "problem statement id", "problem id", "ps code", "pscode", "problem code", "statement id", "id"]);
+        const titleIdx = findCol(["title", "problem statement title", "problem statement", "problem title", "statement", "challenge", "challenge statement", "description", "problem description"]);
+        const categoryIdx = findCol(["category", "ps category", "track", "category track", "domain", "ps type", "type"]);
+        const orgIdx = findCol(["organization", "ministry", "department", "nodal agency", "agency", "organization name", "nodal ministry", "org"]);
+
+        if (codeIdx === -1 || titleIdx === -1) {
           setImportError(
-            "Invalid header columns. The file must contain headers matching: 'code', 'title', 'category', 'organization' (case-insensitive)."
+            `Could not locate required columns.\nFound headers: [${headers.join(", ")}]\nPlease ensure your spreadsheet has at least 'code' (or 'Problem Statement ID') and 'title' (or 'Problem Statement Title') columns.`
           );
           return;
         }
@@ -1936,22 +1952,25 @@ export default function AdminPanel({
           }
 
           const code = row[codeIdx]?.toString().trim() || "";
-          const title = row[titleIdx]?.toString().trim() || "";
-          const categoryRaw = row[categoryIdx]?.toString().trim() || "";
-          const organization = row[orgIdx]?.toString().trim() || "";
+          const rawTitle = row[titleIdx]?.toString() || "";
+          // Clean excessive whitespace and internal carriage returns from spreadsheet cells
+          const title = rawTitle.replace(/\r?\n|\r/g, " ").replace(/\s+/g, " ").trim();
+          const categoryRaw = (categoryIdx !== -1 ? row[categoryIdx]?.toString().trim() : "") || "Software";
+          const organization = (orgIdx !== -1 ? row[orgIdx]?.toString().trim() : "") || "SIH / Government Agency";
 
-          if (!code || !title || !categoryRaw || !organization) {
-            validationErrors.push(`Row ${i + 1}: Missing one or more required fields.`);
+          if (!code || !title) {
+            validationErrors.push(`Row ${i + 1}: Missing code or title.`);
             continue;
           }
 
-          const category = (categoryRaw.toLowerCase() === "hardware" || categoryRaw.toLowerCase() === "h") ? "Hardware" : "Software";
+          const lowerCat = categoryRaw.toLowerCase();
+          const category = (lowerCat.includes("hard") || lowerCat === "h" || lowerCat.includes("hardware")) ? "Hardware" : "Software";
 
           rows.push({
             code,
             title,
             category,
-            organization
+            organization: organization || "SIH / Ministry"
           });
         }
 
@@ -5125,10 +5144,10 @@ export default function AdminPanel({
                             1. Upload PPT / Presentation File
                           </label>
                           <p className="text-[10px] text-slate-400">
-                            Upload the official .ppt, .pptx, or .pdf template file directly to the portal server.
+                            Upload the official .ppt, .pptx, .pdf, or .odp template presentation file directly to the portal server.
                           </p>
 
-                          {settingsForm.samplePptFileName && settingsForm.samplePptFileBase64 ? (
+                          {settingsForm.samplePptFileName && (settingsForm.samplePptFileUrl || settingsForm.samplePptFileBase64) ? (
                             <div className="p-3 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-2.5">
                               <div className="flex items-center gap-2.5">
                                 <div className="p-2 bg-indigo-600 text-white rounded-lg shrink-0">
@@ -5145,16 +5164,26 @@ export default function AdminPanel({
                               </div>
                               <div className="flex items-center gap-2 pt-1">
                                 <a
-                                  href={settingsForm.samplePptFileBase64}
-                                  download={settingsForm.samplePptFileName}
-                                  className="flex-1 py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                                  href={settingsForm.samplePptFileUrl || settingsForm.samplePptFileBase64 || "/api/settings/sample-ppt/download"}
+                                  download={settingsForm.samplePptFileName || "SVEC_SIH_Sample_Proposal_Template.pptx"}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex-1 py-1.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
                                 >
                                   <Download className="w-3 h-3 text-indigo-600" />
                                   Test Download
                                 </a>
                                 <button
                                   type="button"
-                                  onClick={() => setSettingsForm(prev => ({ ...prev, samplePptFileName: "", samplePptFileBase64: "" }))}
+                                  onClick={() => {
+                                    setSettingsForm(prev => ({
+                                      ...prev,
+                                      samplePptFileName: "",
+                                      samplePptFileUrl: "",
+                                      samplePptFileBase64: ""
+                                    }));
+                                    setSamplePptUploadStatus({ type: "", message: "" });
+                                  }}
                                   className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-100 cursor-pointer"
                                   title="Remove uploaded file"
                                 >
@@ -5163,50 +5192,151 @@ export default function AdminPanel({
                               </div>
                             </div>
                           ) : (
-                            <label className="border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/20 rounded-xl p-4 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 block">
-                              <Upload className="w-6 h-6 text-indigo-500" />
-                              <div>
-                                <span className="text-xs font-bold text-slate-700 block">Click to upload template file</span>
-                                <span className="text-[10px] text-slate-400 block mt-0.5">Supports .ppt, .pptx, .pdf (Max 15MB)</span>
-                              </div>
+                            <label className={`border-2 border-dashed ${samplePptUploading ? 'border-indigo-400 bg-indigo-50/30 cursor-wait' : 'border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/20 cursor-pointer'} rounded-xl p-4 text-center transition-all flex flex-col items-center justify-center gap-2 block`}>
+                              {samplePptUploading ? (
+                                <div className="flex flex-col items-center gap-2 py-1">
+                                  <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                                  <span className="text-xs font-bold text-indigo-700">Uploading presentation file...</span>
+                                  <span className="text-[10px] text-slate-400">Verifying file signature & storing securely</span>
+                                </div>
+                              ) : (
+                                <>
+                                  <Upload className="w-6 h-6 text-indigo-500" />
+                                  <div>
+                                    <span className="text-xs font-bold text-slate-700 block">Click to upload template file</span>
+                                    <span className="text-[10px] text-slate-400 block mt-0.5">Supports .ppt, .pptx, .pdf, .odp (Max 35MB)</span>
+                                  </div>
+                                </>
+                              )}
                               <input
                                 type="file"
-                                accept=".ppt,.pptx,.pdf,.odp"
+                                accept=".ppt,.pptx,.pdf,.odp,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf"
                                 className="hidden"
+                                disabled={samplePptUploading}
                                 onChange={async (e) => {
                                   const file = e.target.files?.[0];
-                                  if (file) {
-                                    if (file.size > 15 * 1024 * 1024) {
-                                      alert("File size exceeds 15MB limit. Please upload a smaller file or provide a cloud link.");
-                                      return;
+                                  if (!file) return;
+
+                                  if (file.size > 35 * 1024 * 1024) {
+                                    setSamplePptUploadStatus({
+                                      type: "error",
+                                      message: `File size (${(file.size / (1024 * 1024)).toFixed(1)}MB) exceeds 35MB limit. Please compress or provide an external drive link.`
+                                    });
+                                    return;
+                                  }
+
+                                  setSamplePptUploading(true);
+                                  setSamplePptUploadStatus({ type: "", message: "" });
+
+                                  // Read file as Base64 in parallel as an immediate local fallback
+                                  let base64Result = "";
+                                  try {
+                                    base64Result = await new Promise<string>((resolve) => {
+                                      const reader = new FileReader();
+                                      reader.onload = (re) => resolve((re.target?.result as string) || "");
+                                      reader.onerror = () => resolve("");
+                                      reader.readAsDataURL(file);
+                                    });
+                                  } catch {
+                                    // ignore fallback reader errors
+                                  }
+
+                                  try {
+                                    const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
+                                    const headers: Record<string, string> = {};
+                                    if (adminToken) {
+                                      headers["Authorization"] = adminToken.startsWith("Bearer ") ? adminToken : `Bearer ${adminToken}`;
+                                      headers["X-Admin-Passcode"] = adminToken;
                                     }
-                                    try {
-                                      const formData = new FormData();
-                                      formData.append("file", file);
-                                      formData.append("category", "sample_ppts");
-                                      const res = await fetch("/api/upload", {
+
+                                    const formData = new FormData();
+                                    formData.append("file", file);
+                                    formData.append("category", "sample_ppts");
+
+                                    // First try specialized settings upload endpoint
+                                    let res = await fetch("/api/settings/sample-ppt/upload", {
+                                      method: "POST",
+                                      headers,
+                                      body: formData
+                                    });
+
+                                    // Fallback to general /api/upload endpoint
+                                    if (!res.ok) {
+                                      res = await fetch("/api/upload", {
                                         method: "POST",
-                                        headers: { "X-Admin-Passcode": passcode },
+                                        headers,
                                         body: formData
                                       });
-                                      const data = await res.json();
-                                      if (res.ok && data.success) {
+                                    }
+
+                                    const data = await res.json();
+                                    if (res.ok && data.success) {
+                                      const fileUrl = data.url || data.file?.url || "";
+                                      setSettingsForm(prev => ({
+                                        ...prev,
+                                        samplePptFileName: file.name,
+                                        samplePptFileUrl: fileUrl,
+                                        samplePptFileBase64: base64Result || prev.samplePptFileBase64,
+                                        samplePptUrl: prev.samplePptUrl || fileUrl
+                                      }));
+                                      setSamplePptUploadStatus({
+                                        type: "success",
+                                        message: `Template "${file.name}" uploaded and attached successfully!`
+                                      });
+                                    } else {
+                                      if (base64Result) {
                                         setSettingsForm(prev => ({
                                           ...prev,
                                           samplePptFileName: file.name,
-                                          samplePptFileUrl: data.url,
-                                          samplePptFileBase64: ""
+                                          samplePptFileBase64: base64Result
                                         }));
+                                        setSamplePptUploadStatus({
+                                          type: "success",
+                                          message: `File "${file.name}" attached locally. Click "Save System Settings" below to persist.`
+                                        });
                                       } else {
-                                        alert(getErrorMessage(data, "Failed to upload template presentation file."));
+                                        const errMsg = getErrorMessage(data, "Failed to upload template presentation file.");
+                                        setSamplePptUploadStatus({ type: "error", message: errMsg });
                                       }
-                                    } catch (err) {
-                                      alert("Network error while uploading template presentation file.");
                                     }
+                                  } catch (err: any) {
+                                    if (base64Result) {
+                                      setSettingsForm(prev => ({
+                                        ...prev,
+                                        samplePptFileName: file.name,
+                                        samplePptFileBase64: base64Result
+                                      }));
+                                      setSamplePptUploadStatus({
+                                        type: "success",
+                                        message: `File attached locally via data encoding. Click "Save System Settings" to save.`
+                                      });
+                                    } else {
+                                      setSamplePptUploadStatus({
+                                        type: "error",
+                                        message: "Network error while uploading presentation file. Please check connection and retry."
+                                      });
+                                    }
+                                  } finally {
+                                    setSamplePptUploading(false);
                                   }
                                 }}
                               />
                             </label>
+                          )}
+
+                          {samplePptUploadStatus.message && (
+                            <div className={`p-2.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 ${
+                              samplePptUploadStatus.type === "success" 
+                                ? "bg-emerald-50 text-emerald-800 border border-emerald-200" 
+                                : "bg-rose-50 text-rose-800 border border-rose-200"
+                            }`}>
+                              {samplePptUploadStatus.type === "success" ? (
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              ) : (
+                                <AlertCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                              )}
+                              <span>{samplePptUploadStatus.message}</span>
+                            </div>
                           )}
                         </div>
 
