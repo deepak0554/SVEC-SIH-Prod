@@ -4891,16 +4891,46 @@ export default function AdminPanel({
                     </div>
                   </div>
 
-                  {/* Docker Volume Command Note */}
-                  <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 space-y-1">
-                    <p className="font-bold flex items-center gap-1.5 text-amber-800">
-                      💡 Container Volume Persistence Note:
+                  {/* Container Volume & Cloud Run Persistence Note */}
+                  <div className="p-4 bg-amber-50/80 border border-amber-200/90 rounded-2xl text-[11px] text-amber-900 space-y-3">
+                    <p className="font-bold flex items-center gap-1.5 text-amber-900 text-xs">
+                      💡 Why Cloud Run / Docker resets data, and how to fix it:
                     </p>
-                    <p>
-                      To ensure all data and uploads survive Docker redeployments, run your container with a persistent volume mounted to <code className="font-mono bg-amber-100 px-1 py-0.5 rounded font-bold">/app/data</code>:
+                    <p className="text-amber-800 leading-relaxed">
+                      Google Cloud Run is <strong>stateless and serverless</strong>. Whenever your container scales down to 0 instances or restarts, any files written inside the container are reset. To make all settings, registrations, and uploaded images permanent, use one of the following methods:
                     </p>
-                    <div className="font-mono bg-slate-900 text-slate-100 p-2 rounded-lg text-[10px] select-all overflow-x-auto">
-                      docker run -d -p 3000:3000 -v svec_hackathon_data:/app/data --name svec-sih &lt;image-name&gt;
+
+                    <div className="space-y-2 pt-1">
+                      <div className="bg-white/80 border border-amber-200 rounded-xl p-3 space-y-1.5">
+                        <p className="font-bold text-amber-900 text-xs">Option 1: Google Cloud Run Volume Mount (Easiest — 2 mins)</p>
+                        <p className="text-[11px] text-amber-800">
+                          Mount a <strong>Google Cloud Storage (GCS) bucket</strong> directly to <code className="font-mono bg-amber-100 px-1 py-0.5 rounded font-bold">/app/data</code> in Cloud Run:
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1 text-[11px] text-amber-800 pl-1">
+                          <li>Create a GCS bucket (e.g., <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">svec-portal-data</code>).</li>
+                          <li>In Cloud Run &rarr; <strong>Edit & Deploy New Revision</strong> &rarr; <strong>Volumes</strong> tab &rarr; Add Volume: <strong>Cloud Storage bucket</strong> (<code className="font-mono bg-amber-100 px-1 py-0.5 rounded">svec-portal-data</code>).</li>
+                          <li>In <strong>Container</strong> tab &rarr; <strong>Volume Mounts</strong> &rarr; Add Mount: Path = <code className="font-mono bg-amber-100 px-1 py-0.5 rounded font-bold">/app/data</code>.</li>
+                          <li>Click <strong>Deploy</strong>. All settings, database files, and uploaded images will now persist forever!</li>
+                        </ol>
+                      </div>
+
+                      <div className="bg-white/80 border border-amber-200 rounded-xl p-3 space-y-1.5">
+                        <p className="font-bold text-amber-900 text-xs">Option 2: External Database & Cloud Storage</p>
+                        <p className="text-[11px] text-amber-800">
+                          Set environment variables in Cloud Run:
+                          <br />
+                          &bull; Database: <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">MONGODB_URI</code> (MongoDB Atlas) or <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">DATABASE_URL</code> (PostgreSQL / Supabase / Neon).
+                          <br />
+                          &bull; Uploaded Images/Files: <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">S3_BUCKET</code>, <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">S3_ACCESS_KEY_ID</code>, <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">S3_SECRET_ACCESS_KEY</code>.
+                        </p>
+                      </div>
+
+                      <div className="bg-white/80 border border-amber-200 rounded-xl p-3 space-y-1.5">
+                        <p className="font-bold text-amber-900 text-xs">Option 3: Standard Docker Volume</p>
+                        <div className="font-mono bg-slate-900 text-slate-100 p-2 rounded-lg text-[10px] select-all overflow-x-auto">
+                          docker run -d -p 3000:3000 -v svec_hackathon_data:/app/data --name svec-sih &lt;image-name&gt;
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
