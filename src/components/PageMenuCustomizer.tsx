@@ -214,14 +214,8 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
         headers["X-Admin-Passcode"] = adminToken;
       }
 
-      // Immediate visual fallback via FileReader
-      const reader = new FileReader();
-      reader.onload = (re) => {
-        if (re.target?.result) {
-          callback(re.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
+      const objectUrl = URL.createObjectURL(file);
+      callback(objectUrl);
 
       const formData = new FormData();
       formData.append("file", file);
@@ -1941,7 +1935,7 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
               <label className="block text-xs font-bold text-slate-700 mb-1">Patron Profile Photo (Optional)</label>
               <input
                 type="file"
-                accept="image/*"
+                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
                 className="w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100"
                 onChange={(e) => handleImageUpload(e, setPatronImageBase64)}
               />

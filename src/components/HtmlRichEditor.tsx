@@ -126,14 +126,8 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
     }
 
     setUploadingImage(true);
-    // Pre-read Base64 as immediate visual fallback so embedding always works
-    const reader = new FileReader();
-    reader.onload = (re) => {
-      if (re.target?.result) {
-        setImageUrl(re.target.result as string);
-      }
-    };
-    reader.readAsDataURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    setImageUrl(objectUrl);
 
     try {
       const adminToken = sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
@@ -720,13 +714,13 @@ export default function HtmlRichEditor({ value, onChange, placeholder = "Design 
                           Upload local image file
                           <input
                             type="file"
-                            accept="image/*"
+                            accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
                             className="hidden"
                             onChange={handleLocalImageUpload}
                             disabled={uploadingImage}
                           />
                         </label>
-                        <span className="text-[9px] text-slate-400 block mt-0.5">Accepts PNG, JPG or WebP up to 5MB</span>
+                        <span className="text-[9px] text-slate-400 block mt-0.5">Accepts most common image formats up to 5MB</span>
                       </div>
                     </>
                   )}

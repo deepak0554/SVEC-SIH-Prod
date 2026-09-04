@@ -60,7 +60,6 @@ import {
   Eye,
   ImageIcon
 } from "lucide-react";
-import * as XLSX from "xlsx";
 import { ProblemStatement, Registration, Stats } from "../types";
 import PageMenuCustomizer from "./PageMenuCustomizer";
 import LiveUpdatesCustomizer from "./LiveUpdatesCustomizer";
@@ -1905,15 +1904,29 @@ export default function AdminPanel({
     e.target.value = "";
   };
 
-  const parseFile = (file: File) => {
+  const parseFile = async (file: File) => {
     setImportError("");
     setImportSuccess("");
     setParsedData([]);
 
+    let XLSX: any;
+    try {
+      XLSX = await import("xlsx");
+    } catch (err) {
+      setImportError("Spreadsheet parser failed to load. Please try again.");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const result = e.target?.result;
+        if (!result) {
+          setImportError("The uploaded file could not be read.");
+          return;
+        }
+
+        const data = new Uint8Array(result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: "array" });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
@@ -4064,7 +4077,7 @@ export default function AdminPanel({
                                       <span>{qrUploading ? "Uploading..." : "Upload QR Image"}</span>
                                       <input
                                         type="file"
-                                        accept="image/*"
+                                        accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
                                         onChange={handleQrCodeUpload}
                                         className="sr-only"
                                         disabled={qrUploading}

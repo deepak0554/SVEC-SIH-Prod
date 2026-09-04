@@ -1,8 +1,6 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Printer, X, Download, Award, ShieldCheck, Loader2 } from "lucide-react";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
 import { Registration, ProblemStatement } from "../types";
 import SvecLogo from "./SvecLogo";
 
@@ -199,6 +197,11 @@ export default function ParticipationCertificateModal({
       // Save scroll positions of all ancestors to prevent shifted/clipped canvas captures
       const scrolledAncestors: { element: HTMLElement; scrollTop: number; scrollLeft: number }[] = [];
       try {
+        const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+          import("html2canvas"),
+          import("jspdf")
+        ]);
+
         const element = document.getElementById("certificate-print-area");
         if (!element) {
           throw new Error("Print area not found");

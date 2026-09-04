@@ -1,0 +1,20 @@
+[
+  {
+    "id": "1",
+    "text": "Registrations are now open for Sri Vasavi Internal Hackathon 2026!",
+    "createdAt": "2026-09-04T04:09:35.918Z",
+    "isImportant": true
+  },
+  {
+    "id": "2",
+    "text": "Important: Every team must have at least one female member.",
+    "createdAt": "2026-09-04T04:09:35.918Z",
+    "isImportant": false
+  },
+  {
+    "id": "3",
+    "text": "All teams must submit their abstract PPT before the deadline.",
+    "createdAt": "2026-09-04T04:09:35.918Z",
+    "isImportant": false
+  }
+]

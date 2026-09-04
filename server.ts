@@ -43,7 +43,9 @@ import {
   UPLOADS_DOCS_DIR,
   UPLOADS_SAMPLE_PPTS_DIR,
   CATEGORY_DIR_MAP,
-  UploadCategory
+  UploadCategory,
+  resolveUploadDirectory,
+  resolveUploadFilePath
 } from "./server/fileUpload";
 import {
   validateBody,
@@ -122,7 +124,7 @@ function saveBase64File(
     url: res.url,
     filename: res.filename,
     size: res.size,
-    relativePath: `/uploads/${category}/${res.filename}`
+    relativePath: `/api/uploads/${category}/${res.filename}`
   };
 }
 
@@ -353,15 +355,18 @@ function writeCriteria(criteria: EvaluationCriterion[]) {
 }
 
 function readStatements(): ProblemStatement[] {
-  const local = db.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
-  if (local && local.length > 0) {
+  const local = db.readLocalFile<ProblemStatement[] | undefined>("problem_statements.json", undefined as any);
+  if (Array.isArray(local)) {
     return local;
   }
+
   const settings = readSettings();
-  if ((settings as any)?.savedProblemStatements && Array.isArray((settings as any).savedProblemStatements) && (settings as any).savedProblemStatements.length > 0) {
-    db.writeLocalFile("problem_statements.json", (settings as any).savedProblemStatements);
-    return (settings as any).savedProblemStatements;
+  const savedStatements = settings?.savedProblemStatements;
+  if (Array.isArray(savedStatements)) {
+    db.writeLocalFile("problem_statements.json", savedStatements);
+    return savedStatements;
   }
+
   return defaultStatements;
 }
 
@@ -409,7 +414,7 @@ function readHomepage(): HomepageContent {
     content.patrons = [
       { id: "p1", name: "Sri G. Satyanarayana", position: "President", imageUrl: "" },
       { id: "p2", name: "Sri Ch. V. V. Subba Rao", position: "Secretary", imageUrl: "" },
-      { id: "p3", name: "Sri K. Venkateswara Rao", position: "Technical Director", imageUrl: "" },
+      { id: "p3", name: "Sri Ch. Apparao", position: "Technical Director", imageUrl: "" },
       { id: "p4", name: "Dr. Ch. Rambabu", position: "Principal", imageUrl: "" }
     ];
     db.writeLocalFile("homepage_content.json", content);
@@ -497,7 +502,10 @@ export function resolveSecretUpdate(incoming: string | undefined, currentSecret:
 
 function readSettings(): FeeConfig {
   const parsed = db.readLocalFile<any>("settings.json", {});
+  const savedProblemStatements = Array.isArray(parsed.savedProblemStatements) ? parsed.savedProblemStatements : undefined;
+
   return {
+    savedProblemStatements,
     feeEnabled: parsed.feeEnabled ?? false,
     feeAmount: parsed.feeAmount ?? 499,
     paymentMode: parsed.paymentMode || (parsed.manualPaymentEnabled ? "manual_upi" : "manual_upi"),
@@ -2244,6 +2252,62 @@ app.post(
   }
 );
 
+// Test endpoint: validate a real uploaded image URL end-to-end by saving it and fetching the generated URL from the running server.
+app.post(
+  "/api/test/upload-image-url",
+  extractUserOptional,
+  upload.single("file"),
+  async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file provided. Please send multipart/form-data with the 'file' field." });
+    }
+
+    const saveResult = validateAndSaveFile({
+      buffer: req.file.buffer,
+      clientOriginalName: req.file.originalname,
+      clientMimeType: req.file.mimetype,
+      category: "images"
+    });
+
+    if (!saveResult.success) {
+      return res.status(400).json({ error: saveResult.error });
+    }
+
+    const storedPath = resolveUploadFilePath("images", saveResult.file.filename);
+    const existsOnDisk = fs.existsSync(storedPath);
+    const absoluteUrl = `http://127.0.0.1:${PORT}${saveResult.file.url}`;
+
+    try {
+      const probe = await fetch(absoluteUrl, { method: "GET" });
+      const contentType = probe.headers.get("content-type") || "";
+      const isImageResponse = contentType.startsWith("image/") || saveResult.file.url.toLowerCase().endsWith(".svg");
+
+      return res.json({
+        success: true,
+        file: saveResult.file,
+        storedPath,
+        existsOnDisk,
+        absoluteUrl,
+        served: {
+          ok: probe.ok,
+          status: probe.status,
+          contentType,
+          isImageResponse
+        }
+      });
+    } catch (error: any) {
+      return res.status(500).json({
+        success: false,
+        error: `Upload saved, but URL probe failed: ${error.message}`,
+        file: saveResult.file,
+        storedPath,
+        existsOnDisk,
+        absoluteUrl
+      });
+    }
+  }
+);
+
 // 2. Specialized Multipart Endpoint: Student Team Proposal PPT / PDF Upload
 app.post(
   "/api/registrations/my/upload-ppt",
@@ -2485,33 +2549,38 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
   }
 
   const cleanFilename = path.basename(filename);
-  const targetDir = CATEGORY_DIR_MAP[category as UploadCategory] || path.join(UPLOADS_DIR, category);
+  const targetDir = resolveUploadDirectory(category as UploadCategory);
 
   if (!isPathSafe(targetDir, cleanFilename)) {
     return res.status(400).json({ error: "Path traversal attempt detected." });
   }
 
-  const filePath = path.join(targetDir, cleanFilename);
+  const filePath = resolveUploadFilePath(category as UploadCategory, cleanFilename);
 
   // Content type mapping helper
   const ext = path.extname(cleanFilename).toLowerCase();
   let contentType = "application/octet-stream";
   if (ext === ".png") contentType = "image/png";
-  else if (ext === ".jpg" || ext === ".jpeg") contentType = "image/jpeg";
+  else if (ext === ".jpg" || ext === ".jpeg" || ext === ".jfif") contentType = "image/jpeg";
   else if (ext === ".webp") contentType = "image/webp";
   else if (ext === ".gif") contentType = "image/gif";
   else if (ext === ".svg") contentType = "image/svg+xml";
+  else if (ext === ".bmp") contentType = "image/bmp";
+  else if (ext === ".tif" || ext === ".tiff") contentType = "image/tiff";
+  else if (ext === ".avif") contentType = "image/avif";
+  else if (ext === ".heic" || ext === ".heif") contentType = "image/heic";
+  else if (ext === ".ico") contentType = "image/x-icon";
   else if (ext === ".pdf") contentType = "application/pdf";
   else if (ext === ".pptx") contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   else if (ext === ".ppt") contentType = "application/vnd.ms-powerpoint";
   else if (ext === ".docx") contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   else if (ext === ".doc") contentType = "application/msword";
 
-  const isImage = ["images", "gallery", "homepage", "logos", "certificates", "upi_qr", "payment_proofs"].includes(category) || [".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"].includes(ext);
+  const isImage = ["images", "gallery", "homepage", "logos", "certificates", "upi_qr", "payment_proofs"].includes(category) || [".png", ".jpg", ".jpeg", ".jfif", ".webp", ".gif", ".svg", ".bmp", ".tif", ".tiff", ".avif", ".heic", ".heif", ".ico"].includes(ext);
 
   // 1. If file is available on local disk in any standard uploads location, serve immediately
   const candidatePaths = [
-    path.join(targetDir, cleanFilename),
+    filePath,
     path.join(DATA_DIR, "uploads", category, cleanFilename),
     path.join(DATA_DIR, "uploads", "images", cleanFilename),
     path.join(DATA_DIR, "uploads", "documents", cleanFilename),
@@ -2527,13 +2596,9 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
     path.join(process.cwd(), "uploads", "upi_qr", cleanFilename),
     path.join(process.cwd(), "uploads", "payment_proofs", cleanFilename),
     path.join(os.tmpdir(), "svec_uploads", category, cleanFilename),
-    path.join(os.tmpdir(), "svec_uploads", "images", cleanFilename),
     path.join(os.tmpdir(), "svec_data", "uploads", category, cleanFilename),
-    path.join(os.tmpdir(), "svec_data", "uploads", "images", cleanFilename),
     path.join("/tmp/svec_uploads", category, cleanFilename),
-    path.join("/tmp/svec_uploads", "images", cleanFilename),
-    path.join("/tmp/svec_data/uploads", category, cleanFilename),
-    path.join("/tmp/svec_data/uploads", "images", cleanFilename)
+    path.join("/tmp/svec_data/uploads", category, cleanFilename)
   ];
 
   for (const p of candidatePaths) {
@@ -2661,11 +2726,6 @@ app.get("/api/uploads/:category/:filename", extractUserOptional, async (req, res
   }
 
   return res.status(404).json({ error: "File not found." });
-});
-
-// Alias for /uploads/:category/:filename
-app.get("/uploads/:category/:filename", (req, res) => {
-  res.redirect(`/api/uploads/${encodeURIComponent(req.params.category)}/${encodeURIComponent(req.params.filename)}`);
 });
 
 // 5. Stream or download team PPT presentation directly from server disk / database (Authenticated)
@@ -3955,6 +4015,17 @@ app.get("/api/problem-statements", async (req, res) => {
     console.warn("[Problem Statements] DB query notice, using local:", e);
   }
   res.json(readStatements());
+});
+
+// DELETE all problem statements (Admin)
+app.delete("/api/problem-statements", authorize(["ADMIN", "STUDENT_SPOC"]), async (req, res) => {
+  try {
+    await writeStatements([]);
+    return res.json({ success: true, count: 0, message: "All problem statements cleared." });
+  } catch (err: any) {
+    console.error("Failed to clear problem statements:", err);
+    return res.status(500).json({ error: "Failed to clear problem statements." });
+  }
 });
 
 // POST a new problem statement (Admin)

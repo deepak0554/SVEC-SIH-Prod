@@ -1302,13 +1302,19 @@ class DatabaseManager {
       // 1. Problem Statements (Resilient: never overwrite customized statements with defaults)
       const psRes = await this.pgPool.query(`SELECT COUNT(*) as count FROM problem_statements`);
       if (parseInt(psRes.rows[0].count, 10) === 0) {
-        const localStatements = this.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
+        const localFilePath = path.join(DATA_DIR, "problem_statements.json");
+        const localStatements = fs.existsSync(localFilePath)
+          ? this.readLocalFile<ProblemStatement[]>("problem_statements.json", [])
+          : [];
         const localSettings = this.readLocalFile<any>("settings.json", {});
-        const candidateStatements = (localStatements && localStatements.length > 0)
+
+        const candidateStatements = Array.isArray(localStatements) && localStatements.length > 0
           ? localStatements
-          : ((localSettings?.savedProblemStatements && Array.isArray(localSettings.savedProblemStatements) && localSettings.savedProblemStatements.length > 0)
+          : (Array.isArray(localSettings?.savedProblemStatements) && localSettings.savedProblemStatements.length > 0
               ? localSettings.savedProblemStatements
-              : defaultStatements);
+              : (fs.existsSync(localFilePath) || Array.isArray(localSettings?.savedProblemStatements)
+                  ? []
+                  : defaultStatements));
 
         for (let i = 0; i < candidateStatements.length; i++) {
           const ps = candidateStatements[i];
@@ -2321,12 +2327,12 @@ class DatabaseManager {
         console.error("[PostgreSQL Query Error] getProblemStatements:", err);
       }
     }
-    const local = this.readLocalFile<ProblemStatement[]>("problem_statements.json", []);
-    if (local && local.length > 0) {
+    const local = this.readLocalFile<ProblemStatement[] | undefined>("problem_statements.json", undefined as any);
+    if (Array.isArray(local)) {
       return local;
     }
     const settings = this.readLocalFile<any>("settings.json", {});
-    if (settings?.savedProblemStatements && Array.isArray(settings.savedProblemStatements) && settings.savedProblemStatements.length > 0) {
+    if (Array.isArray(settings?.savedProblemStatements)) {
       this.writeLocalFile("problem_statements.json", settings.savedProblemStatements);
       return settings.savedProblemStatements;
     }

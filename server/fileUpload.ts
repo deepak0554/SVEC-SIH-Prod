@@ -99,6 +99,29 @@ export const CATEGORY_DIR_MAP: Record<UploadCategory, string> = {
   upi_qr: UPLOADS_IMAGES_DIR
 };
 
+export function resolveUploadUrl(category: UploadCategory, filename: string): string {
+  return `/api/uploads/${category}/${encodeURIComponent(filename)}`;
+}
+
+export function resolveUploadDirectory(category: UploadCategory): string {
+  const targetDir = CATEGORY_DIR_MAP[category] || path.join(UPLOADS_DIR, category);
+
+  try {
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+  } catch (err: any) {
+    console.warn(`[Upload Dir Notice] Standard directory ${targetDir} inaccessible (${err.message}), continuing with compatibility fallback.`);
+  }
+
+  return targetDir;
+}
+
+export function resolveUploadFilePath(category: UploadCategory, filename: string): string {
+  const safeFilename = path.basename(filename);
+  return path.join(resolveUploadDirectory(category), safeFilename);
+}
+
 // ==========================================
 // 1. STRICT MIME & EXTENSION WHITELISTS
 // ==========================================
@@ -170,7 +193,7 @@ const DOCUMENT_TYPES: AllowedFileType[] = [
   }
 ];
 
-// Images: PNG, JPG, JPEG, WEBP, GIF, SVG
+// Images: PNG, JPG, JPEG, WEBP, GIF, SVG, BMP, TIFF, AVIF, HEIC/HEIF, ICO
 const IMAGE_TYPES: AllowedFileType[] = [
   {
     extension: ".png",
@@ -188,6 +211,11 @@ const IMAGE_TYPES: AllowedFileType[] = [
     maxSize: 5 * 1024 * 1024 // 5MB
   },
   {
+    extension: ".jfif",
+    mimeTypes: ["image/jpeg", "image/pjpeg"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
     extension: ".webp",
     mimeTypes: ["image/webp"],
     maxSize: 5 * 1024 * 1024 // 5MB
@@ -200,6 +228,41 @@ const IMAGE_TYPES: AllowedFileType[] = [
   {
     extension: ".svg",
     mimeTypes: ["image/svg+xml", "text/xml", "application/xml", "image/svg"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".bmp",
+    mimeTypes: ["image/bmp", "image/x-ms-bmp"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".tif",
+    mimeTypes: ["image/tiff", "image/x-tiff"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".tiff",
+    mimeTypes: ["image/tiff", "image/x-tiff"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".avif",
+    mimeTypes: ["image/avif"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".heic",
+    mimeTypes: ["image/heic", "image/heif"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".heif",
+    mimeTypes: ["image/heif", "image/heic"],
+    maxSize: 5 * 1024 * 1024 // 5MB
+  },
+  {
+    extension: ".ico",
+    mimeTypes: ["image/x-icon", "image/vnd.microsoft.icon", "image/ico", "image/icon"],
     maxSize: 5 * 1024 * 1024 // 5MB
   }
 ];
@@ -251,8 +314,8 @@ export function validateMagicBytes(buffer: Buffer, extension: string): boolean {
     );
   }
 
-  // JPEG signature: FF D8 FF
-  if (ext === ".jpg" || ext === ".jpeg") {
+  // JPEG / JFIF signature: FF D8 FF
+  if (ext === ".jpg" || ext === ".jpeg" || ext === ".jfif") {
     return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
   }
 
@@ -269,6 +332,34 @@ export function validateMagicBytes(buffer: Buffer, extension: string): boolean {
     const riff = buffer.subarray(0, 4).toString("ascii");
     const webp = buffer.subarray(8, 12).toString("ascii");
     return riff === "RIFF" && webp === "WEBP";
+  }
+
+  // BMP signature: BM
+  if (ext === ".bmp") {
+    return buffer[0] === 0x42 && buffer[1] === 0x4d;
+  }
+
+  // TIFF signature: II* or MM* (little-endian or big-endian)
+  if (ext === ".tif" || ext === ".tiff") {
+    if (buffer.length < 4) return false;
+    const magic = buffer.subarray(0, 2).toString("ascii");
+    const tag = buffer.subarray(2, 4).toString("ascii");
+    return (magic === "II" && tag === "*\x00") || (magic === "MM" && tag === "\x00*");
+  }
+
+  // AVIF / HEIC / HEIF: ISO BMFF container with ftyp brand marker
+  if (ext === ".avif" || ext === ".heic" || ext === ".heif") {
+    if (buffer.length < 12) return false;
+    return buffer.subarray(4, 8).toString("ascii") === "ftyp";
+  }
+
+  // ICO signature: 00 00 01 00 or 00 00 02 00
+  if (ext === ".ico") {
+    if (buffer.length < 4) return false;
+    return (
+      (buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00) ||
+      (buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x02 && buffer[3] === 0x00)
+    );
   }
 
   // SVG signature: XML / SVG elements with security sanity check against stored XSS
@@ -514,36 +605,29 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
   }
 
   // 5. Generate secure UUID filename & ensure target dir safely
-  let targetDir = CATEGORY_DIR_MAP[category] || path.join(UPLOADS_DIR, category);
-  try {
-    if (!fs.existsSync(targetDir)) {
-      fs.mkdirSync(targetDir, { recursive: true });
-    }
-  } catch (dirErr: any) {
-    console.warn(`[Upload Dir Notice] Primary directory ${targetDir} inaccessible (${dirErr.message}), preparing fallback.`);
-  }
-
+  const targetDir = resolveUploadDirectory(category);
   const secureFilename = generateSecureFilename(clientOriginalName, matchedType.extension);
-  
+
   if (!isPathSafe(targetDir, secureFilename)) {
     return { success: false, error: "Path traversal attempt detected." };
   }
 
-  const targetPath = path.join(targetDir, secureFilename);
+  const targetPath = resolveUploadFilePath(category, secureFilename);
   const mimeType = clientMimeType || matchedType.mimeTypes[0];
   const sanitizedOriginal = sanitizeClientFilename(clientOriginalName) + matchedType.extension;
 
-  // Multi-tier disk write strategy to survive Windows Server 2025 and Linux permission quirks
+  // Standardize on the canonical app data path while retaining a narrow compatibility fallback
   let writtenSuccessfully = false;
-  const candidateWritePaths = [
-    targetPath,
-    path.join(DATA_DIR, "uploads", category, secureFilename),
+  const legacyFallbackPaths = [
     path.join(process.cwd(), "uploads", category, secureFilename),
+    path.join(process.cwd(), "data", "uploads", category, secureFilename),
     path.join(os.tmpdir(), "svec_uploads", category, secureFilename),
     path.join(os.tmpdir(), "svec_data", "uploads", category, secureFilename),
     path.join("/tmp/svec_uploads", category, secureFilename),
     path.join("/tmp/svec_data/uploads", category, secureFilename)
   ];
+
+  const candidateWritePaths = [targetPath, ...legacyFallbackPaths];
 
   for (const cPath of candidateWritePaths) {
     try {
@@ -555,7 +639,7 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
       writtenSuccessfully = true;
       break;
     } catch (e: any) {
-      // Continue trying next candidate path
+      // Continue trying the next compatible location.
     }
   }
 
@@ -591,7 +675,7 @@ export function validateAndSaveFile(options: ValidateAndSaveOptions): ValidateAn
     });
   }
 
-  const relativeUrl = `/api/uploads/${category}/${encodeURIComponent(secureFilename)}`;
+  const relativeUrl = resolveUploadUrl(category, secureFilename);
 
   return {
     success: true,
@@ -630,10 +714,15 @@ export function saveBase64Securely(
         if (detectedMime.includes("presentation") || detectedMime.includes("powerpoint") || detectedMime.includes("pptx")) ext = ".pptx";
         else if (detectedMime.includes("pdf")) ext = ".pdf";
         else if (detectedMime.includes("png")) ext = ".png";
-        else if (detectedMime.includes("jpeg") || detectedMime.includes("jpg")) ext = ".jpg";
+        else if (detectedMime.includes("jpeg") || detectedMime.includes("jpg") || detectedMime.includes("jfif")) ext = ".jpg";
         else if (detectedMime.includes("webp")) ext = ".webp";
         else if (detectedMime.includes("gif")) ext = ".gif";
         else if (detectedMime.includes("svg")) ext = ".svg";
+        else if (detectedMime.includes("bmp") || detectedMime.includes("x-ms-bmp")) ext = ".bmp";
+        else if (detectedMime.includes("tiff") || detectedMime.includes("x-tiff")) ext = ".tiff";
+        else if (detectedMime.includes("avif")) ext = ".avif";
+        else if (detectedMime.includes("heic") || detectedMime.includes("heif")) ext = ".heic";
+        else if (detectedMime.includes("icon") || detectedMime.includes("x-icon")) ext = ".ico";
       }
     }
 

@@ -1,10 +1,10 @@
 {
   "sihDetails": {
-    "title": "Smart India Hackathon 2026",
+    "bannerUrl": "",
     "description": "Smart India Hackathon is a nationwide initiative to provide students with a platform to solve some of the pressing problems we face in our daily lives, and thus inculcate a culture of product innovation and a mindset of problem-solving. This year, Sri Vasavi Engineering College is hosting the Internal Hackathon to select the best teams to represent us at the national level. Join us in this prestigious competition to showcase your technical skills and innovation!",
+    "title": "Smart India Hackathon 2026",
     "slogan": "Inculcating a Culture of Product Innovation and Problem-Solving",
-    "dates": "Registration: Oct 1 - Oct 25 | Internal Hackathon: Nov 10-11, 2026",
-    "bannerUrl": ""
+    "dates": "Registration: Oct 1 - Oct 25 | Internal Hackathon: Nov 10-11, 2026"
   },
   "sponsors": [
     {
@@ -38,20 +38,7 @@
       "imageUrl": ""
     }
   ],
-  "previousPhotos": [
-    {
-      "id": "1",
-      "title": "SIH 2024 Winning Ceremony",
-      "imageUrl": "",
-      "description": "SVEC team receiving the 1st prize at nodal center."
-    },
-    {
-      "id": "2",
-      "title": "Internal Evaluation Hackathon",
-      "imageUrl": "",
-      "description": "Expert panel evaluating student prototypes during the 2025 internal round."
-    }
-  ],
+  "previousPhotos": [],
   "patrons": [
     {
       "id": "p1",

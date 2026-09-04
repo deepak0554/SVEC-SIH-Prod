@@ -257,17 +257,14 @@ export default function RegistrationForm({
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPaymentProofBase64(reader.result as string);
-      setPaymentProofFileName(file.name);
-      setErrors(prev => {
-        const copy = { ...prev };
-        delete copy.paymentProof;
-        return copy;
-      });
-    };
-    reader.readAsDataURL(file);
+    const objectUrl = URL.createObjectURL(file);
+    setPaymentProofBase64(objectUrl);
+    setPaymentProofFileName(file.name);
+    setErrors(prev => {
+      const copy = { ...prev };
+      delete copy.paymentProof;
+      return copy;
+    });
   };
 
   const handleRemoveProof = () => {
@@ -1764,7 +1761,7 @@ export default function RegistrationForm({
                                 </span>
                                 <input
                                   type="file"
-                                  accept="image/*"
+                                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
                                   onChange={handleProofUpload}
                                   className="hidden"
                                 />

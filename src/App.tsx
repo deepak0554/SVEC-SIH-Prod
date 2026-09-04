@@ -19,8 +19,9 @@ import {
 } from "lucide-react";
 import { ProblemStatement, Registration, HomepageContent, CustomPage, MenuItem, LiveUpdate } from "./types";
 import SvecLogo from "./components/SvecLogo";
-import LandingPage from "./components/LandingPage";
 import { api } from "./services/api";
+
+const LandingPage = lazy(() => import("./components/LandingPage"));
 
 // Lazy-loaded route subviews for optimized initial bundle loading speed
 const RegistrationForm = lazy(() => import("./components/RegistrationForm"));
@@ -73,6 +74,20 @@ function parseInitialRoute(): string {
   return "home";
 }
 
+function hasCachedInitialData(): boolean {
+  try {
+    return Boolean(
+      localStorage.getItem("svec_homepage_backup") ||
+      localStorage.getItem("svec_problem_statements_backup") ||
+      localStorage.getItem("svec_custom_pages_backup") ||
+      localStorage.getItem("svec_menu_backup") ||
+      localStorage.getItem("svec_settings_backup")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export default function App() {
   const [view, setView] = useState<string>(parseInitialRoute);
   const [problemStatements, setProblemStatements] = useState<ProblemStatement[]>(() => {
@@ -84,7 +99,7 @@ export default function App() {
     }
   });
   const [latestRegistration, setLatestRegistration] = useState<Registration | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !hasCachedInitialData());
   const [hasExistingRegistration, setHasExistingRegistration] = useState<Registration | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedProblemId, setSelectedProblemId] = useState<string | undefined>(undefined);
@@ -143,6 +158,11 @@ export default function App() {
 
   // Fetch initial content, navigation links and lists
   const fetchAllInitialData = async () => {
+    const hadCachedData = hasCachedInitialData();
+    if (hadCachedData) {
+      setLoading(false);
+    }
+
     try {
       const [psRes, homeRes, pagesRes, menuRes, settingsRes, updatesRes] = await Promise.allSettled([
         api.get<ProblemStatement[]>("/api/problem-statements"),
@@ -213,7 +233,9 @@ export default function App() {
     } catch (err) {
       console.error("Failed to load initial workspace data", err);
     } finally {
-      setLoading(false);
+      if (!hadCachedData) {
+        setLoading(false);
+      }
     }
   };
 

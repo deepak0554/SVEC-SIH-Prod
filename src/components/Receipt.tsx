@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, Suspense, lazy } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   CheckCircle,
@@ -31,9 +31,10 @@ import {
 } from "lucide-react";
 import { Registration, ProblemStatement } from "../types";
 import SvecLogo from "./SvecLogo";
-import ParticipationCertificateModal from "./ParticipationCertificateModal";
-import ConsentLetterModal from "./ConsentLetterModal";
 import { getErrorMessage } from "../utils/error";
+
+const ParticipationCertificateModal = lazy(() => import("./ParticipationCertificateModal"));
+const ConsentLetterModal = lazy(() => import("./ConsentLetterModal"));
 
 interface ReceiptProps {
   registration: Registration;
@@ -2384,25 +2385,29 @@ export default function Receipt({
       `}</style>
 
       {selectedCertStudentName && enableCertificates && (
-        <ParticipationCertificateModal
-          isOpen={true}
-          onClose={() => setSelectedCertStudentName(null)}
-          studentName={selectedCertStudentName}
-          registration={registration}
-          config={certificateConfig}
-          problemStatement={problemStatements.find(p => p.id === registration.problemStatementId)}
-        />
+        <Suspense fallback={null}>
+          <ParticipationCertificateModal
+            isOpen={true}
+            onClose={() => setSelectedCertStudentName(null)}
+            studentName={selectedCertStudentName}
+            registration={registration}
+            config={certificateConfig}
+            problemStatement={problemStatements.find(p => p.id === registration.problemStatementId)}
+          />
+        </Suspense>
       )}
 
       {showConsentLetter && registration.isFinalSelected && (
-        <ConsentLetterModal
-          isOpen={true}
-          onClose={() => setShowConsentLetter(false)}
-          registration={registration}
-          isReadOnly={true}
-          isSuperAdmin={false}
-          canCustomize={false}
-        />
+        <Suspense fallback={null}>
+          <ConsentLetterModal
+            isOpen={true}
+            onClose={() => setShowConsentLetter(false)}
+            registration={registration}
+            isReadOnly={true}
+            isSuperAdmin={false}
+            canCustomize={false}
+          />
+        </Suspense>
       )}
 
     </div>

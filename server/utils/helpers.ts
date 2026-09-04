@@ -91,6 +91,6 @@ export function saveBase64File(
     url: res.url,
     filename: res.filename,
     size: res.size,
-    relativePath: `/uploads/${category}/${res.filename}`
+    relativePath: `/api/uploads/${category}/${res.filename}`
   };
 }

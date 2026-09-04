@@ -100,6 +100,7 @@ export interface Student {
 }
 
 export interface FeeConfig {
+  savedProblemStatements?: ProblemStatement[];
   feeEnabled: boolean;
   feeAmount: number;
   paymentMode?: "gateway" | "manual_upi" | "both" | "free";

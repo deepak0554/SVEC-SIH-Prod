@@ -355,7 +355,7 @@ export const problemStatementSchema = z.object({
 });
 
 export const bulkProblemStatementsSchema = z.object({
-  statements: z.array(problemStatementSchema).min(1, "At least one problem statement is required"),
+  statements: z.array(problemStatementSchema).max(5000),
   action: z.enum(["merge", "replace"]).default("merge")
 });
 
