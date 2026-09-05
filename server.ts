@@ -4489,14 +4489,17 @@ app.get("/api/registrations/my", validateStudentJWT, (req, res) => {
 
 // PUT update own project proposal (Student portal)
 app.put("/api/registrations/my/proposal", validateStudentJWT, validateBody(updateProposalSchema), (req, res) => {
-  const { email, abstract, implementationSteps, pptFileName, pptBase64, proposalStatus } = req.body;
+  const bodyEmail = typeof req.body?.email === "string" ? req.body.email : "";
+  const tokenEmail = (req as any).studentUser?.email;
+  const email = bodyEmail.trim() || tokenEmail || "";
+  const { abstract, implementationSteps, pptFileName, pptBase64, proposalStatus } = req.body;
+
   if (!email || typeof email !== "string") {
     return res.status(400).json({ error: "Email is required." });
   }
 
   const settings = readSettings();
   if (settings.jwtEnabled) {
-    const tokenEmail = (req as any).studentUser?.email;
     if (tokenEmail && tokenEmail.toLowerCase() !== email.trim().toLowerCase()) {
       return res.status(403).json({ error: "Forbidden: Accessing another student's registration is not allowed." });
     }

@@ -318,10 +318,13 @@ export const updateTeamRosterSchema = z.object({
 });
 
 export const updateProposalSchema = z.object({
+  email: emailSchema.optional().or(z.literal("")),
   abstract: z.string().max(15000, "Abstract must not exceed 15,000 characters").optional().or(z.literal("")),
   implementationSteps: z.string().max(15000, "Implementation steps must not exceed 15,000 characters").optional().or(z.literal("")),
   pptFileName: z.string().max(255).optional().or(z.literal("")),
-  pptBase64: base64DataSchema.optional().or(z.literal(""))
+  pptFileUrl: z.string().max(500).optional().or(z.literal("")),
+  pptBase64: base64DataSchema.optional().or(z.literal("")),
+  proposalStatus: z.enum(["saved", "submitted"]).optional()
 });
 
 // ==========================================
