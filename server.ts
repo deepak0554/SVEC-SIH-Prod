@@ -93,6 +93,8 @@ import { validateTeamRegistration, validateProposalSubmission } from "./server/b
 import { createAuthoritativePaymentOrder, verifyAuthoritativePayment } from "./server/paymentSecurity";
 import { standardizeResponseMiddleware, errorHandler, notFoundHandler } from "./server/middleware";
 import { evaluationService, notificationService } from "./server/services";
+import { registerUploadRoutes } from "./server/routes/upload";
+import { getAvailablePort } from "./server/startup";
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -2173,140 +2175,13 @@ function saveAdmins(admins: AdminUser[]) {
 // SECURE FILE UPLOADS & SERVING
 // ==========================================
 
-// 1. Unified Multipart & Encrypted File Upload (PPT, PPTX, PDF, Images, Documents)
-app.post(
-  "/api/upload",
-  extractUserOptional,
-  upload.single("file"),
-  (req, res) => {
-    // A. Multipart file stream provided in req.file
-    if (req.file) {
-      const rawCategory = (req.body.category as UploadCategory) || "documents";
-      const validCategories: UploadCategory[] = [
-        "ppts", "images", "documents", "sample_ppts", "abstracts",
-        "gallery", "homepage", "logos", "certificates", "media",
-        "payment_proofs", "upi_qr"
-      ];
-      const validCategory: UploadCategory = validCategories.includes(rawCategory) ? rawCategory : "documents";
-
-      // Role authorization: Strict admin requirement for official templates, certificates, and UPI QR codes
-      if (["sample_ppts", "certificates", "upi_qr"].includes(validCategory)) {
-        const isAdmin = (req as any).isAdmin || (req as any).adminRole;
-        if (!isAdmin) {
-          return res.status(403).json({ error: "Access Denied: Only administrators can upload official templates, certificates, and payment QR codes." });
-        }
-      }
-
-      // If category is ppts or documents or abstracts, must be an authenticated student or admin
-      if (["ppts", "documents", "abstracts", "media"].includes(validCategory)) {
-        const isAuth = (req as any).studentUser || (req as any).adminUser || (req as any).isAdmin;
-        if (!isAuth) {
-          return res.status(401).json({ error: "Authentication required to upload proposals or project documents." });
-        }
-      }
-
-      // Note: General "images", "gallery", "homepage", "logos", and "payment_proofs" are validated
-      // by strict magic bytes, extension whitelisting, and UUID isolation so student forms, consent letters,
-      // and admin editors can safely upload visuals without spurious 403 blocks.
-
-      const saveResult = validateAndSaveFile({
-        buffer: req.file.buffer,
-        clientOriginalName: req.file.originalname,
-        clientMimeType: req.file.mimetype,
-        category: validCategory
-      });
-
-      if (!saveResult.success) {
-        return res.status(400).json({ error: saveResult.error });
-      }
-
-      return res.json({ success: true, ...saveResult.file });
-    }
-
-    // B. Base64 JSON fallback with strict magic-byte validation
-    if (req.body && req.body.data) {
-      const { data, category, filename } = req.body;
-      const validCategories: UploadCategory[] = [
-        "ppts", "images", "documents", "sample_ppts", "abstracts",
-        "gallery", "homepage", "logos", "certificates", "media"
-      ];
-      const rawCat = (category as UploadCategory) || "documents";
-      const validCategory: UploadCategory = validCategories.includes(rawCat) ? rawCat : "documents";
-
-      if (["sample_ppts", "certificates"].includes(validCategory)) {
-        const isAdmin = (req as any).isAdmin || (req as any).adminRole;
-        if (!isAdmin) {
-          return res.status(403).json({ error: "Access Denied: Only administrators can upload official templates and certificates." });
-        }
-      }
-
-      const saveResult = saveBase64Securely(data, validCategory, filename);
-      if (!saveResult) {
-        return res.status(400).json({ error: "Failed to process file. Signature mismatch or unsupported file type." });
-      }
-
-      return res.json({ success: true, ...saveResult });
-    }
-
-    return res.status(400).json({ error: "No file provided. Please send multipart/form-data with the 'file' field." });
-  }
-);
-
-// Test endpoint: validate a real uploaded image URL end-to-end by saving it and fetching the generated URL from the running server.
-app.post(
-  "/api/test/upload-image-url",
-  extractUserOptional,
-  upload.single("file"),
-  async (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file provided. Please send multipart/form-data with the 'file' field." });
-    }
-
-    const saveResult = validateAndSaveFile({
-      buffer: req.file.buffer,
-      clientOriginalName: req.file.originalname,
-      clientMimeType: req.file.mimetype,
-      category: "images"
-    });
-
-    if (!saveResult.success) {
-      return res.status(400).json({ error: saveResult.error });
-    }
-
-    const storedPath = resolveUploadFilePath("images", saveResult.file.filename);
-    const existsOnDisk = fs.existsSync(storedPath);
-    const absoluteUrl = `http://127.0.0.1:${PORT}${saveResult.file.url}`;
-
-    try {
-      const probe = await fetch(absoluteUrl, { method: "GET" });
-      const contentType = probe.headers.get("content-type") || "";
-      const isImageResponse = contentType.startsWith("image/") || saveResult.file.url.toLowerCase().endsWith(".svg");
-
-      return res.json({
-        success: true,
-        file: saveResult.file,
-        storedPath,
-        existsOnDisk,
-        absoluteUrl,
-        served: {
-          ok: probe.ok,
-          status: probe.status,
-          contentType,
-          isImageResponse
-        }
-      });
-    } catch (error: any) {
-      return res.status(500).json({
-        success: false,
-        error: `Upload saved, but URL probe failed: ${error.message}`,
-        file: saveResult.file,
-        storedPath,
-        existsOnDisk,
-        absoluteUrl
-      });
-    }
-  }
-);
+registerUploadRoutes(app, {
+  readRegistrations,
+  writeRegistrations,
+  readSettings,
+  writeSettings,
+  syncRegistrationToExternalDB
+});
 
 // 2. Specialized Multipart Endpoint: Student Team Proposal PPT / PDF Upload
 app.post(
@@ -5705,8 +5580,12 @@ async function startServer() {
   }
 
   if (!IS_VERCEL) {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on port ${PORT}`);
+    const usablePort = await getAvailablePort(PORT, "0.0.0.0");
+    if (usablePort !== PORT) {
+      console.warn(`Port ${PORT} is busy; falling back to ${usablePort} for local development.`);
+    }
+    app.listen(usablePort, "0.0.0.0", () => {
+      console.log(`Server running on port ${usablePort}`);
     });
   }
 }

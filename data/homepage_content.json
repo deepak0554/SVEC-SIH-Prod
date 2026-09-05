@@ -44,25 +44,25 @@
       "id": "p1",
       "name": "Sri G. Satyanarayana",
       "position": "President",
-      "imageUrl": ""
+      "imageUrl": "/api/uploads/images/b12757c9-0875-41fa-9def-4c0e480bf37d_president.jpeg"
     },
     {
       "id": "p2",
       "name": "Sri Ch. V. V. Subba Rao",
       "position": "Secretary",
-      "imageUrl": ""
+      "imageUrl": "/api/uploads/images/4679ced4-f112-4fef-898c-5bc95b01db61_secretary.jpeg"
     },
     {
       "id": "p3",
       "name": "Sri K. Venkateswara Rao",
       "position": "Technical Director",
-      "imageUrl": ""
+      "imageUrl": "/api/uploads/images/604230f1-dc60-463a-9322-1b7ad19898f6_tech_director1.png"
     },
     {
       "id": "p4",
       "name": "Dr. Ch. Rambabu",
       "position": "Principal",
-      "imageUrl": ""
+      "imageUrl": "/api/uploads/images/406668a9-7753-4c71-9dfe-cb1b5543ffa4_principal.jpeg"
     }
   ]
 }

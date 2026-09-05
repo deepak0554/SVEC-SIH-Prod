@@ -122,6 +122,31 @@ export function resolveUploadFilePath(category: UploadCategory, filename: string
   return path.join(resolveUploadDirectory(category), safeFilename);
 }
 
+export function listUploadedFiles(category: UploadCategory): Array<{ filename: string; url: string; size: number; path: string }> {
+  const dir = resolveUploadDirectory(category);
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+
+  return fs
+    .readdirSync(dir)
+    .filter((name) => {
+      const fullPath = path.join(dir, name);
+      return fs.statSync(fullPath).isFile();
+    })
+    .map((filename) => {
+      const fullPath = path.join(dir, filename);
+      const stats = fs.statSync(fullPath);
+      return {
+        filename,
+        url: resolveUploadUrl(category, filename),
+        size: stats.size,
+        path: fullPath,
+      };
+    })
+    .sort((a, b) => b.filename.localeCompare(a.filename));
+}
+
 // ==========================================
 // 1. STRICT MIME & EXTENSION WHITELISTS
 // ==========================================
@@ -198,72 +223,72 @@ const IMAGE_TYPES: AllowedFileType[] = [
   {
     extension: ".png",
     mimeTypes: ["image/png"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".jpg",
     mimeTypes: ["image/jpeg", "image/pjpeg"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".jpeg",
     mimeTypes: ["image/jpeg", "image/pjpeg"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".jfif",
     mimeTypes: ["image/jpeg", "image/pjpeg"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".webp",
     mimeTypes: ["image/webp"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".gif",
     mimeTypes: ["image/gif"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".svg",
     mimeTypes: ["image/svg+xml", "text/xml", "application/xml", "image/svg"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".bmp",
     mimeTypes: ["image/bmp", "image/x-ms-bmp"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".tif",
     mimeTypes: ["image/tiff", "image/x-tiff"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".tiff",
     mimeTypes: ["image/tiff", "image/x-tiff"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".avif",
     mimeTypes: ["image/avif"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".heic",
     mimeTypes: ["image/heic", "image/heif"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".heif",
     mimeTypes: ["image/heif", "image/heic"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   },
   {
     extension: ".ico",
     mimeTypes: ["image/x-icon", "image/vnd.microsoft.icon", "image/ico", "image/icon"],
-    maxSize: 5 * 1024 * 1024 // 5MB
+    maxSize: 15 * 1024 * 1024 // 15MB for modern phone photos and screens
   }
 ];
 

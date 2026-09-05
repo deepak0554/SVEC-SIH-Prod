@@ -14,6 +14,230 @@ interface PageMenuCustomizerProps {
   passcode: string;
 }
 
+export function ExistingImagePicker({
+  category,
+  label,
+  onSelect,
+  currentValue,
+  passcode,
+}: {
+  category: "images" | "gallery" | "homepage" | "logos" | "certificates" | "payment_proofs" | "upi_qr";
+  label: string;
+  onSelect: (url: string) => void;
+  currentValue?: string;
+  passcode: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [files, setFiles] = useState<Array<{ filename: string; url: string; size: number }>>([]);
+  const [loading, setLoading] = useState(false);
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const isRenderableImage = (filename: string) => {
+    const ext = filename.split(".").pop()?.toLowerCase() || "";
+    return ["png", "jpg", "jpeg", "jfif", "gif", "webp", "svg", "avif", "heic", "heif", "bmp", "ico"].includes(ext);
+  };
+
+  const getErrorMessageFromResponse = (payload: any): string => {
+    if (!payload) return "Unable to delete this image.";
+    if (typeof payload === "string") return payload;
+    if (typeof payload.message === "string") return payload.message;
+    if (typeof payload.error === "string") return payload.error;
+    if (payload.error && typeof payload.error.message === "string") return payload.error.message;
+    if (payload.error && typeof payload.error.code === "string" && typeof payload.error.message === "string") {
+      return `${payload.error.code}: ${payload.error.message}`;
+    }
+    if (typeof payload.code === "string") return payload.code;
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return "Unable to delete this image.";
+    }
+  };
+
+  const loadFiles = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/uploads/list?category=${category}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      setFiles((data.files || []).filter((file: { filename: string }) => isRenderableImage(file.filename)));
+    } catch (err) {
+      console.warn("Failed to load existing images:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (filename: string) => {
+    const confirmed = window.confirm(`Delete the uploaded image "${filename}" from the server?`);
+    if (!confirmed) return;
+
+    setDeletingFile(filename);
+    try {
+      const res = await fetch(`/api/uploads/${category}/${encodeURIComponent(filename)}`, {
+        method: "DELETE",
+        headers: {
+          "X-Admin-Passcode": passcode,
+          Authorization: passcode ? `Bearer ${passcode}` : "",
+        },
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(getErrorMessageFromResponse(data));
+      }
+
+      setFiles((prev) => prev.filter((file) => file.filename !== filename));
+    } catch (error) {
+      console.error(error);
+      alert(error instanceof Error ? error.message : "Unable to delete the selected image.");
+    } finally {
+      setDeletingFile(null);
+    }
+  };
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("category", category);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: {
+          "X-Admin-Passcode": passcode,
+          Authorization: passcode ? `Bearer ${passcode}` : "",
+        },
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(getErrorMessageFromResponse(data));
+      }
+
+      await loadFiles();
+      if (data.url) {
+        onSelect(data.url);
+      }
+    } catch (error) {
+      console.error("Failed to upload image:", error);
+      alert(error instanceof Error ? error.message : "Unable to upload the selected image.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (open) {
+      loadFiles();
+    }
+  }, [open, category]);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className="border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-[10px] px-3 py-2 rounded-xl cursor-pointer transition-all flex items-center gap-1.5"
+      >
+        <ImageIcon className="w-3.5 h-3.5" />
+        {label}
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
+          <div className="w-full max-w-[440px] max-h-[75vh] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Media Library</p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold px-2 py-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {uploading ? "Uploading..." : "Upload New"}
+                </button>
+                <button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-slate-200 px-2 py-1 text-[10px] font-bold text-slate-500 hover:text-slate-700 cursor-pointer">Close</button>
+              </div>
+            </div>
+
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleUpload} />
+
+            <div className="max-h-[calc(75vh-58px)] overflow-y-auto p-3">
+              {loading ? (
+                <p className="text-[10px] text-slate-400 py-6 text-center">Loading uploaded media...</p>
+              ) : files.length === 0 ? (
+                <div className="py-8 text-center">
+                  <ImageIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-[10px] text-slate-400">No uploaded images yet.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2.5">
+                  {files.map((file) => (
+                    <div
+                      key={file.filename}
+                      className={`rounded-xl border p-2 transition-all ${
+                        currentValue === file.url ? "border-indigo-500 bg-indigo-50" : "border-slate-200 bg-slate-50/60"
+                      }`}
+                    >
+                      <div className="relative h-24 w-full overflow-hidden rounded-lg border border-slate-200 bg-white">
+                        <img src={file.url} alt={file.filename} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                      </div>
+
+                      <p className="mt-2 text-[9px] font-bold text-slate-700 truncate" title={file.filename}>{file.filename}</p>
+                      <p className="text-[8px] text-slate-400">{(file.size / 1024).toFixed(1)} KB</p>
+
+                      <div className="mt-2 flex gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelect(file.url);
+                            setOpen(false);
+                          }}
+                          className="flex-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-[9px] font-bold px-2 py-1.5 cursor-pointer"
+                        >
+                          Select
+                        </button>
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex-1 rounded-lg border border-slate-200 bg-white text-slate-700 text-[9px] font-bold px-2 py-1.5 text-center"
+                        >
+                          View
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(file.filename)}
+                          disabled={deletingFile === file.filename}
+                          className="rounded-lg border border-red-200 bg-red-50 text-red-600 text-[9px] font-bold px-2 py-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          {deletingFile === file.filename ? "..." : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps) {
   // Global tab within customizer
   const [activeSubTab, setActiveSubTab] = useState<"details" | "timeline" | "guidelines" | "sponsors" | "spocs" | "photos" | "pages" | "menu" | "credits">("details");
@@ -201,8 +425,8 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      alert("Image size should be less than 5MB.");
+    if (file.size > 15 * 1024 * 1024) {
+      alert("Image size should be less than 15MB.");
       return;
     }
 
@@ -527,8 +751,8 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
   // Helper for uploading gallery file via multipart
   const uploadGalleryFile = async (file: File): Promise<string> => {
-    if (file.size > 5 * 1024 * 1024) {
-      throw new Error(`File "${file.name}" is larger than 5MB.`);
+    if (file.size > 15 * 1024 * 1024) {
+      throw new Error(`File "${file.name}" is larger than 15MB.`);
     }
 
     const adminToken = passcode || sessionStorage.getItem("svec_sih_admin_token") || localStorage.getItem("svec_sih_admin_token") || "";
@@ -1650,6 +1874,26 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
               />
             </div>
 
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Hero Banner Image URL</label>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <input
+                  type="text"
+                  className="flex-1 px-4 py-2 border border-slate-200 rounded-xl text-xs font-semibold focus:outline-none focus:border-indigo-500"
+                  value={detailsForm.bannerUrl}
+                  onChange={(e) => setDetailsForm({ ...detailsForm, bannerUrl: e.target.value })}
+                  placeholder="https://... or /api/uploads/images/....png"
+                />
+                <ExistingImagePicker
+                  category="images"
+                  label="Use uploaded image"
+                  currentValue={detailsForm.bannerUrl}
+                  passcode={passcode}
+                  onSelect={(url) => setDetailsForm((prev) => ({ ...prev, bannerUrl: url }))}
+                />
+              </div>
+            </div>
+
             {/* Quick Visibility Switch for Timeline Section */}
             <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
               <div className="space-y-1">
@@ -1933,12 +2177,21 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Patron Profile Photo (Optional)</label>
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
-                className="w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100"
-                onChange={(e) => handleImageUpload(e, setPatronImageBase64)}
-              />
+              <div className="flex flex-col sm:flex-row gap-2 items-center">
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
+                  className="flex-1 w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100"
+                  onChange={(e) => handleImageUpload(e, setPatronImageBase64)}
+                />
+                <ExistingImagePicker
+                  category="images"
+                  label="Choose existing"
+                  currentValue={patronImageBase64}
+                  passcode={passcode}
+                  onSelect={setPatronImageBase64}
+                />
+              </div>
               <p className="text-[10px] text-slate-400 mt-1">Accepts images up to 2MB. If photo is omitted, a letter-based initials avatar is automatically generated.</p>
               {patronImageBase64 && (
                 <div className="mt-3 flex items-center gap-3">
@@ -2147,12 +2400,21 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">Profile Photo (Optional)</label>
-              <input
-                type="file"
-                accept="image/*"
-                className="w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100"
-                onChange={(e) => handleImageUpload(e, setSpocImageBase64)}
-              />
+              <div className="flex flex-col sm:flex-row gap-2 items-center">
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="flex-1 w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100"
+                  onChange={(e) => handleImageUpload(e, setSpocImageBase64)}
+                />
+                <ExistingImagePicker
+                  category="images"
+                  label="Choose existing"
+                  currentValue={spocImageBase64}
+                  passcode={passcode}
+                  onSelect={setSpocImageBase64}
+                />
+              </div>
               {spocImageBase64 && (
                 <div className="mt-3">
                   <span className="text-[10px] text-slate-400 block mb-1">Photo Preview:</span>
@@ -3022,12 +3284,21 @@ export default function PageMenuCustomizer({ passcode }: PageMenuCustomizerProps
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">Replace Image (Optional)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
-                    onChange={(e) => handleImageUpload(e, setEditingPhotoBase64)}
-                  />
+                  <div className="flex flex-col sm:flex-row gap-2 items-center">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="flex-1 w-full text-xs font-semibold text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer"
+                      onChange={(e) => handleImageUpload(e, setEditingPhotoBase64)}
+                    />
+                    <ExistingImagePicker
+                      category="images"
+                      label="Use existing"
+                      currentValue={editingPhotoBase64}
+                      passcode={passcode}
+                      onSelect={setEditingPhotoBase64}
+                    />
+                  </div>
                   {editingPhotoBase64 && (
                     <div className="mt-3">
                       <span className="text-[10px] text-slate-400 block mb-1 font-bold">Image Preview:</span>

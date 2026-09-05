@@ -61,7 +61,7 @@ import {
   ImageIcon
 } from "lucide-react";
 import { ProblemStatement, Registration, Stats } from "../types";
-import PageMenuCustomizer from "./PageMenuCustomizer";
+import PageMenuCustomizer, { ExistingImagePicker } from "./PageMenuCustomizer";
 import LiveUpdatesCustomizer from "./LiveUpdatesCustomizer";
 import SvecLogo from "./SvecLogo";
 import ConsentLetterModal from "./ConsentLetterModal";
@@ -232,13 +232,13 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const [adminUsername, setAdminUsername] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
-  const [adminRole, setAdminRole] = useState<"SPOC" | "Dept SPOC" | "Student SPOC" | "Evaluator" | null>(() => {
-    return (sessionStorage.getItem("svec_sih_admin_role") as any) || null;
+  const [adminRole, setAdminRole] = useState<string | null>(() => {
+    return sessionStorage.getItem("svec_sih_admin_role") || null;
   });
   const [adminDepartment, setAdminDepartment] = useState<string>(() => {
     return sessionStorage.getItem("svec_sih_admin_dept") || "";
   });
-  const [selectedRole, setSelectedRole] = useState<"SPOC" | "Dept SPOC" | "Student SPOC" | "Evaluator">("SPOC");
+  const [selectedRole, setSelectedRole] = useState<string>("SPOC");
   const [passcode, setPasscode] = useState(() => {
     return sessionStorage.getItem("svec_sih_admin_token") || "";
   });
@@ -307,7 +307,7 @@ export default function AdminPanel({
   const [adminsLoading, setAdminsLoading] = useState(false);
   const [newAdminUser, setNewAdminUser] = useState("");
   const [newAdminPass, setNewAdminPass] = useState("");
-  const [newAdminRole, setNewAdminRole] = useState<"SPOC" | "Dept SPOC" | "Student SPOC" | "Evaluator">("Dept SPOC");
+  const [newAdminRole, setNewAdminRole] = useState<string>("Dept SPOC");
   const [newAdminDept, setNewAdminDept] = useState<string>("Computer Science & Engineering (CSE)");
   const [customAdminDept, setCustomAdminDept] = useState<string>("");
   const [adminAddError, setAdminAddError] = useState("");
@@ -1689,8 +1689,8 @@ export default function AdminPanel({
       setQrUploadError("Please upload a valid image file (.png, .jpg, .jpeg, .webp)");
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setQrUploadError("QR Code image must be smaller than 5MB");
+    if (file.size > 15 * 1024 * 1024) {
+      setQrUploadError("QR Code image must be smaller than 15MB");
       return;
     }
     setQrUploading(true);
@@ -4072,17 +4072,26 @@ export default function AdminPanel({
                                       <span className="text-xs font-bold text-slate-800 block">Custom Official UPI QR Code Image</span>
                                       <span className="text-[11px] text-slate-500 block">Upload college account barcode/QR image, or leave blank to auto-render standard dynamic UPI QR</span>
                                     </div>
-                                    <label className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0">
-                                      <Upload className="w-3.5 h-3.5" />
-                                      <span>{qrUploading ? "Uploading..." : "Upload QR Image"}</span>
-                                      <input
-                                        type="file"
-                                        accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
-                                        onChange={handleQrCodeUpload}
-                                        className="sr-only"
-                                        disabled={qrUploading}
+                                    <div className="flex flex-wrap gap-2 shrink-0">
+                                      <ExistingImagePicker
+                                        category="upi_qr"
+                                        label="Use uploaded QR"
+                                        currentValue={settingsForm.upiQrCodeUrl}
+                                        passcode={passcode}
+                                        onSelect={(url) => setSettingsForm(prev => ({ ...prev, upiQrCodeUrl: url }))}
                                       />
-                                    </label>
+                                      <label className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0">
+                                        <Upload className="w-3.5 h-3.5" />
+                                        <span>{qrUploading ? "Uploading..." : "Upload QR Image"}</span>
+                                        <input
+                                          type="file"
+                                          accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/x-icon,.png,.jpg,.jpeg,.jfif,.webp,.gif,.svg,.bmp,.tif,.tiff,.avif,.heic,.heif,.ico"
+                                          onChange={handleQrCodeUpload}
+                                          className="sr-only"
+                                          disabled={qrUploading}
+                                        />
+                                      </label>
+                                    </div>
                                   </div>
 
                                   {qrUploadError && (
@@ -5053,6 +5062,13 @@ export default function AdminPanel({
                       </div>
                       <div className="flex-1 w-full space-y-2 text-left">
                         <div className="flex flex-wrap gap-2">
+                          <ExistingImagePicker
+                            category="logos"
+                            label="Use uploaded logo"
+                            currentValue={settingsForm.logoUrl}
+                            passcode={passcode}
+                            onSelect={(url) => setSettingsForm(prev => ({ ...prev, logoUrl: url }))}
+                          />
                           <label className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-[11px] px-3 py-2 rounded-xl cursor-pointer transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50">
                             {logoUploading ? (
                               <Loader2 className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
@@ -5069,10 +5085,10 @@ export default function AdminPanel({
                                 const file = e.target.files?.[0];
                                 if (!file) return;
 
-                                if (file.size > 5 * 1024 * 1024) {
+                                if (file.size > 15 * 1024 * 1024) {
                                   setLogoUploadStatus({
                                     type: "error",
-                                    message: `Logo file exceeds 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`
+                                    message: `Logo file exceeds 15MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`
                                   });
                                   return;
                                 }
@@ -5783,10 +5799,10 @@ export default function AdminPanel({
                                   const file = e.target.files?.[0];
                                   if (!file) return;
 
-                                  if (file.size > 5 * 1024 * 1024) {
+                                  if (file.size > 15 * 1024 * 1024) {
                                     setCertBgUploadStatus({
                                       type: "error",
-                                      message: `Background image exceeds 5MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`
+                                      message: `Background image exceeds 15MB limit (${(file.size / (1024 * 1024)).toFixed(1)}MB). Please choose a smaller image.`
                                     });
                                     return;
                                   }

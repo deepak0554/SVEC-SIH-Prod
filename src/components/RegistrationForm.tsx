@@ -252,8 +252,8 @@ export default function RegistrationForm({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      setErrors(prev => ({ ...prev, paymentProof: "File size exceeds 5MB limit. Please upload a smaller image." }));
+    if (file.size > 15 * 1024 * 1024) {
+      setErrors(prev => ({ ...prev, paymentProof: "File size exceeds 15MB limit. Please upload a smaller image." }));
       return;
     }
 

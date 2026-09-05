@@ -140,10 +140,62 @@ class DatabaseManager {
   private isInitialized = false;
   private isPostgresActive = false;
   private isMongoActive = false;
+  private readonly cacheTtlMs = {
+    settings: 2 * 60 * 1000,
+    homepage: 5 * 60 * 1000,
+    customPages: 5 * 60 * 1000,
+    menuItems: 5 * 60 * 1000,
+    liveUpdates: 2 * 60 * 1000,
+    problemStatements: 5 * 60 * 1000,
+    evaluationCriteria: 5 * 60 * 1000
+  } as const;
+  private readonly cache = new Map<string, { value: any; expiresAt: number }>();
 
   constructor() {
     if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  }
+
+  private async getCachedValue<T>(key: string, ttlMs: number, factory: () => Promise<T>): Promise<T> {
+    const existing = this.cache.get(key);
+    const now = Date.now();
+
+    if (existing && existing.expiresAt > now) {
+      return existing.value as T;
+    }
+
+    if (existing && existing.expiresAt <= now) {
+      const staleWindowMs = Math.max(ttlMs, 30000);
+      if (now - existing.expiresAt < staleWindowMs) {
+        void factory()
+          .then((value) => {
+            this.cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+          })
+          .catch(() => {
+            // Keep the stale value if the refresh fails; do not break the request flow.
+          });
+        return existing.value as T;
+      }
+    }
+
+    const value = await factory();
+    this.cache.set(key, { value, expiresAt: now + ttlMs });
+    return value;
+  }
+
+  private invalidateCacheKeys(...keys: string[]): void {
+    for (const key of keys) {
+      this.cache.delete(key);
+    }
+  }
+
+  public clearPublicCache(): void {
+    const keys = Array.from(this.cache.keys());
+    for (const key of keys) {
+      if (key.startsWith("public:")) {
+        this.cache.delete(key);
+      }
     }
   }
 
@@ -2290,53 +2342,56 @@ class DatabaseManager {
   // ===================== PROBLEM STATEMENTS =====================
 
   public async getProblemStatements(): Promise<ProblemStatement[]> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("problem_statements");
-        const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
-        if (docs && docs.length > 0) {
-          const statements = docs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
-          this.writeLocalFile("problem_statements.json", statements);
-          return statements;
-        }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getProblemStatements:", err);
-      }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        let res: any;
+    const cacheKey = "public:problem_statements";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.problemStatements, async () => {
+      if (this.isMongoActive && this.mongoDb) {
         try {
-          res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY sort_order ASC, id ASC`);
-        } catch {
-          res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
+          const coll = this.mongoDb.collection("problem_statements");
+          const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
+          if (docs && docs.length > 0) {
+            const statements = docs.map(({ _id, sortOrder, ...rest }) => rest as ProblemStatement);
+            this.writeLocalFile("problem_statements.json", statements);
+            return statements;
+          }
+        } catch (err) {
+          console.error("[MongoDB Query Error] getProblemStatements:", err);
         }
-        if (res.rows && res.rows.length > 0) {
-          const statements: ProblemStatement[] = res.rows.map((r: any) => ({
-            id: r.id,
-            code: r.code,
-            title: r.title,
-            category: r.category as any,
-            organization: r.organization,
-            description: r.description || ""
-          }));
-          this.writeLocalFile("problem_statements.json", statements);
-          return statements;
-        }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getProblemStatements:", err);
       }
-    }
-    const local = this.readLocalFile<ProblemStatement[] | undefined>("problem_statements.json", undefined as any);
-    if (Array.isArray(local)) {
-      return local;
-    }
-    const settings = this.readLocalFile<any>("settings.json", {});
-    if (Array.isArray(settings?.savedProblemStatements)) {
-      this.writeLocalFile("problem_statements.json", settings.savedProblemStatements);
-      return settings.savedProblemStatements;
-    }
-    return defaultStatements;
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          let res: any;
+          try {
+            res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY sort_order ASC, id ASC`);
+          } catch {
+            res = await this.pgPool.query(`SELECT * FROM problem_statements ORDER BY id ASC`);
+          }
+          if (res.rows && res.rows.length > 0) {
+            const statements: ProblemStatement[] = res.rows.map((r: any) => ({
+              id: r.id,
+              code: r.code,
+              title: r.title,
+              category: r.category as any,
+              organization: r.organization,
+              description: r.description || ""
+            }));
+            this.writeLocalFile("problem_statements.json", statements);
+            return statements;
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getProblemStatements:", err);
+        }
+      }
+      const local = this.readLocalFile<ProblemStatement[] | undefined>("problem_statements.json", undefined as any);
+      if (Array.isArray(local)) {
+        return local;
+      }
+      const settings = this.readLocalFile<any>("settings.json", {});
+      if (Array.isArray(settings?.savedProblemStatements)) {
+        this.writeLocalFile("problem_statements.json", settings.savedProblemStatements);
+        return settings.savedProblemStatements;
+      }
+      return defaultStatements;
+    });
   }
 
   public async saveProblemStatements(statements: ProblemStatement[]): Promise<boolean> {
@@ -2385,6 +2440,7 @@ class DatabaseManager {
     }
     // Redundant backup to local file and settings.json so redeployment restarts never lose items
     this.writeLocalFile("problem_statements.json", statements);
+    this.invalidateCacheKeys("public:problem_statements");
     try {
       const currentSettings = this.readLocalFile<any>("settings.json", {});
       currentSettings.savedProblemStatements = statements;
@@ -2396,33 +2452,36 @@ class DatabaseManager {
   // ===================== EVALUATION CRITERIA =====================
 
   public async getEvaluationCriteria(): Promise<EvaluationCriterion[]> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("evaluation_criteria");
-        const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
-        if (docs && docs.length > 0) {
-          return docs.map(({ _id, sortOrder, ...rest }) => rest as EvaluationCriterion);
+    const cacheKey = "public:evaluation_criteria";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.evaluationCriteria, async () => {
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("evaluation_criteria");
+          const docs = await coll.find({}).sort({ sortOrder: 1, id: 1 }).toArray();
+          if (docs && docs.length > 0) {
+            return docs.map(({ _id, sortOrder, ...rest }) => rest as EvaluationCriterion);
+          }
+        } catch (err) {
+          console.error("[MongoDB Query Error] getEvaluationCriteria:", err);
         }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getEvaluationCriteria:", err);
       }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT * FROM evaluation_criteria ORDER BY sort_order ASC`);
-        if (res.rows && res.rows.length > 0) {
-          return res.rows.map(r => ({
-            id: r.id,
-            name: r.name,
-            maxScore: r.max_score,
-            description: r.description
-          }));
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT * FROM evaluation_criteria ORDER BY sort_order ASC`);
+          if (res.rows && res.rows.length > 0) {
+            return res.rows.map(r => ({
+              id: r.id,
+              name: r.name,
+              maxScore: r.max_score,
+              description: r.description
+            }));
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getEvaluationCriteria:", err);
         }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getEvaluationCriteria:", err);
       }
-    }
-    return this.readLocalFile<EvaluationCriterion[]>("evaluation_criteria.json", defaultCriteria);
+      return this.readLocalFile<EvaluationCriterion[]>("evaluation_criteria.json", defaultCriteria);
+    });
   }
 
   public async saveEvaluationCriteria(criteria: EvaluationCriterion[]): Promise<boolean> {
@@ -2459,6 +2518,7 @@ class DatabaseManager {
       }
     }
     this.writeLocalFile("evaluation_criteria.json", criteria);
+    this.invalidateCacheKeys("public:evaluation_criteria");
     try {
       const currentSettings = this.readLocalFile<any>("settings.json", {});
       currentSettings.savedEvaluationCriteria = criteria;
@@ -2470,38 +2530,41 @@ class DatabaseManager {
   // ===================== SETTINGS & METADATA =====================
 
   public async getSettings(): Promise<FeeConfig> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("app_settings");
-        const doc = await coll.findOne({ $or: [{ id: "main" }, { id: "system_settings" }, { id: "global_settings" }] });
-        if (doc) {
-          const { _id, id, ...rest } = doc;
-          let parsed: any = rest;
-          if (rest.settings_json) {
-            parsed = typeof rest.settings_json === "string" ? JSON.parse(rest.settings_json) : rest.settings_json;
+    const cacheKey = "public:settings";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.settings, async () => {
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("app_settings");
+          const doc = await coll.findOne({ $or: [{ id: "main" }, { id: "system_settings" }, { id: "global_settings" }] });
+          if (doc) {
+            const { _id, id, ...rest } = doc;
+            let parsed: any = rest;
+            if (rest.settings_json) {
+              parsed = typeof rest.settings_json === "string" ? JSON.parse(rest.settings_json) : rest.settings_json;
+            }
+            return parsed as FeeConfig;
           }
-          return parsed as FeeConfig;
+        } catch (err) {
+          console.error("[MongoDB Query Error] getSettings:", err);
         }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getSettings:", err);
       }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'main' LIMIT 1`);
-        if (res.rows.length > 0 && res.rows[0].settings_json) {
-          return JSON.parse(res.rows[0].settings_json) as FeeConfig;
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT settings_json FROM app_settings WHERE id = 'main' LIMIT 1`);
+          if (res.rows.length > 0 && res.rows[0].settings_json) {
+            return JSON.parse(res.rows[0].settings_json) as FeeConfig;
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getSettings:", err);
         }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getSettings:", err);
       }
-    }
-    return this.readLocalFile<FeeConfig>("settings.json", {
-      feeEnabled: false,
-      feeAmount: 499,
-      razorpayKeyId: "",
-      razorpayKeySecret: "",
-      jwtEnabled: false
+      return this.readLocalFile<FeeConfig>("settings.json", {
+        feeEnabled: false,
+        feeAmount: 499,
+        razorpayKeyId: "",
+        razorpayKeySecret: "",
+        jwtEnabled: false
+      });
     });
   }
 
@@ -2527,6 +2590,7 @@ class DatabaseManager {
             settings_json = EXCLUDED.settings_json,
             updated_at = NOW();
         `, [JSON.stringify(settings)]);
+        this.invalidateCacheKeys("public:settings");
         return true;
       } catch (err: any) {
         // Self-heal if updated_at column is missing on legacy table
@@ -2540,6 +2604,7 @@ class DatabaseManager {
                 settings_json = EXCLUDED.settings_json,
                 updated_at = NOW();
             `, [JSON.stringify(settings)]);
+            this.invalidateCacheKeys("public:settings");
             return true;
           } catch (retryErr) {
             console.error("[PostgreSQL Retry Save Error] saveSettings:", retryErr);
@@ -2549,38 +2614,42 @@ class DatabaseManager {
       }
     }
     this.writeLocalFile("settings.json", settings);
+    this.invalidateCacheKeys("public:settings");
     return true;
   }
 
   // ===================== HOMEPAGE CONTENT =====================
 
   public async getHomepageContent(): Promise<HomepageContent> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("homepage_content");
-        const doc = await coll.findOne({ id: "main" });
-        if (doc) {
-          const { _id, id, updatedAt, ...rest } = doc;
-          const parsed = rest.content_json ? (typeof rest.content_json === "string" ? JSON.parse(rest.content_json) : rest.content_json) : rest;
-          if (parsed && (parsed.sihDetails || parsed.heroTitle || parsed.heroSubtitle)) {
-            return parsed as HomepageContent;
+    const cacheKey = "public:homepage";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.homepage, async () => {
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("homepage_content");
+          const doc = await coll.findOne({ id: "main" });
+          if (doc) {
+            const { _id, id, updatedAt, ...rest } = doc;
+            const parsed = rest.content_json ? (typeof rest.content_json === "string" ? JSON.parse(rest.content_json) : rest.content_json) : rest;
+            if (parsed && (parsed.sihDetails || parsed.heroTitle || parsed.heroSubtitle)) {
+              return parsed as HomepageContent;
+            }
           }
+        } catch (err) {
+          console.error("[MongoDB Query Error] getHomepageContent:", err);
         }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getHomepageContent:", err);
       }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT content_json FROM homepage_content WHERE id = 'main' LIMIT 1`);
-        if (res.rows.length > 0 && res.rows[0].content_json) {
-          return JSON.parse(res.rows[0].content_json) as HomepageContent;
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT content_json FROM homepage_content WHERE id = 'main' LIMIT 1`);
+          if (res.rows.length > 0 && res.rows[0].content_json) {
+            return JSON.parse(res.rows[0].content_json) as HomepageContent;
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getHomepageContent:", err);
         }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getHomepageContent:", err);
       }
-    }
-    return this.readLocalFile<HomepageContent>("homepage_content.json", defaultHomepageContent);
+      return this.readLocalFile<HomepageContent>("homepage_content.json", defaultHomepageContent);
+    });
   }
 
   public async saveHomepageContent(content: HomepageContent): Promise<boolean> {
@@ -2605,6 +2674,7 @@ class DatabaseManager {
             content_json = EXCLUDED.content_json,
             updated_at = NOW();
         `, [JSON.stringify(content)]);
+        this.invalidateCacheKeys("public:homepage");
         return true;
       } catch (err: any) {
         if (err && (err.message?.includes("updated_at") || err.code === "42703")) {
@@ -2617,6 +2687,7 @@ class DatabaseManager {
                 content_json = EXCLUDED.content_json,
                 updated_at = NOW();
             `, [JSON.stringify(content)]);
+            this.invalidateCacheKeys("public:homepage");
             return true;
           } catch (retryErr) {
             console.error("[PostgreSQL Retry Save Error] saveHomepageContent:", retryErr);
@@ -2626,41 +2697,45 @@ class DatabaseManager {
       }
     }
     this.writeLocalFile("homepage_content.json", content);
+    this.invalidateCacheKeys("public:homepage");
     return true;
   }
 
   // ===================== CUSTOM PAGES =====================
 
   public async getCustomPages(): Promise<CustomPage[]> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("custom_pages");
-        const docs = await coll.find({}).sort({ createdAt: 1 }).toArray();
-        if (docs && docs.length > 0) {
-          return docs.map(({ _id, ...rest }) => rest as CustomPage);
+    const cacheKey = "public:custom_pages";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.customPages, async () => {
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("custom_pages");
+          const docs = await coll.find({}).sort({ createdAt: 1 }).toArray();
+          if (docs && docs.length > 0) {
+            return docs.map(({ _id, ...rest }) => rest as CustomPage);
+          }
+        } catch (err) {
+          console.error("[MongoDB Query Error] getCustomPages:", err);
         }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getCustomPages:", err);
       }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT * FROM custom_pages ORDER BY created_at ASC`);
-        if (res.rows && res.rows.length > 0) {
-          return res.rows.map(r => ({
-            id: r.id,
-            slug: r.slug,
-            title: r.title,
-            content: r.content,
-            published: r.published !== false,
-            createdAt: r.created_at
-          }));
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT * FROM custom_pages ORDER BY created_at ASC`);
+          if (res.rows && res.rows.length > 0) {
+            return res.rows.map(r => ({
+              id: r.id,
+              slug: r.slug,
+              title: r.title,
+              content: r.content,
+              published: r.published !== false,
+              createdAt: r.created_at
+            }));
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getCustomPages:", err);
         }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getCustomPages:", err);
       }
-    }
-    return this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
+      return this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
+    });
   }
 
   public async saveCustomPages(pages: CustomPage[]): Promise<boolean> {
@@ -2684,12 +2759,14 @@ class DatabaseManager {
             VALUES ($1, $2, $3, $4, $5, $6)
           `, [p.id, p.slug, p.title, p.content, p.published ?? true, p.createdAt || new Date().toISOString()]);
         }
+        this.invalidateCacheKeys("public:custom_pages");
         return true;
       } catch (err) {
         console.error("[PostgreSQL Save Error] saveCustomPages:", err);
       }
     }
     this.writeLocalFile("custom_pages.json", pages);
+    this.invalidateCacheKeys("public:custom_pages");
     return true;
   }
 
@@ -2717,6 +2794,7 @@ class DatabaseManager {
             content = EXCLUDED.content,
             published = EXCLUDED.published;
         `, [page.id, page.slug, page.title, page.content, page.published ?? true, page.createdAt || new Date().toISOString()]);
+        this.invalidateCacheKeys("public:custom_pages");
         return true;
       } catch (err) {
         console.error("[PostgreSQL Save Error] saveCustomPage:", err);
@@ -2727,6 +2805,7 @@ class DatabaseManager {
     if (idx >= 0) local[idx] = page;
     else local.push(page);
     this.writeLocalFile("custom_pages.json", local);
+    this.invalidateCacheKeys("public:custom_pages");
     return true;
   }
 
@@ -2742,6 +2821,7 @@ class DatabaseManager {
     if (this.isPostgresActive && this.pgPool) {
       try {
         await this.pgPool.query(`DELETE FROM custom_pages WHERE id = $1 OR slug = $1`, [id]);
+        this.invalidateCacheKeys("public:custom_pages");
         return true;
       } catch (err) {
         console.error("[PostgreSQL Delete Error] deleteCustomPage:", err);
@@ -2750,40 +2830,44 @@ class DatabaseManager {
     const local = this.readLocalFile<CustomPage[]>("custom_pages.json", defaultCustomPages);
     const filtered = local.filter(p => p.id !== id && p.slug !== id);
     this.writeLocalFile("custom_pages.json", filtered);
+    this.invalidateCacheKeys("public:custom_pages");
     return true;
   }
 
   // ===================== MENU ITEMS =====================
 
   public async getMenuItems(): Promise<MenuItem[]> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("menu_items");
-        const docs = await coll.find({}).sort({ order: 1, sort_order: 1 }).toArray();
-        if (docs && docs.length > 0) {
-          return docs.map(({ _id, ...rest }) => rest as MenuItem);
+    const cacheKey = "public:menu_items";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.menuItems, async () => {
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("menu_items");
+          const docs = await coll.find({}).sort({ order: 1, sort_order: 1 }).toArray();
+          if (docs && docs.length > 0) {
+            return docs.map(({ _id, ...rest }) => rest as MenuItem);
+          }
+        } catch (err) {
+          console.error("[MongoDB Query Error] getMenuItems:", err);
         }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getMenuItems:", err);
       }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT * FROM menu_items ORDER BY sort_order ASC`);
-        if (res.rows && res.rows.length > 0) {
-          return res.rows.map(r => ({
-            id: r.id,
-            label: r.label,
-            type: r.type as any,
-            target: r.target,
-            order: r.sort_order
-          }));
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT * FROM menu_items ORDER BY sort_order ASC`);
+          if (res.rows && res.rows.length > 0) {
+            return res.rows.map(r => ({
+              id: r.id,
+              label: r.label,
+              type: r.type as any,
+              target: r.target,
+              order: r.sort_order
+            }));
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getMenuItems:", err);
         }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getMenuItems:", err);
       }
-    }
-    return this.readLocalFile<MenuItem[]>("menu_items.json", defaultMenuItems);
+      return this.readLocalFile<MenuItem[]>("menu_items.json", defaultMenuItems);
+    });
   }
 
   public async saveMenuItems(items: MenuItem[]): Promise<boolean> {
@@ -2808,49 +2892,54 @@ class DatabaseManager {
             VALUES ($1, $2, $3, $4, $5)
           `, [m.id, m.label, m.type, m.target, i]);
         }
+        this.invalidateCacheKeys("public:menu_items");
         return true;
       } catch (err) {
         console.error("[PostgreSQL Save Error] saveMenuItems:", err);
       }
     }
     this.writeLocalFile("menu_items.json", items);
+    this.invalidateCacheKeys("public:menu_items");
     return true;
   }
 
   // ===================== LIVE UPDATES =====================
 
   public async getLiveUpdates(): Promise<LiveUpdate[]> {
-    if (this.isMongoActive && this.mongoDb) {
-      try {
-        const coll = this.mongoDb.collection("live_updates");
-        const docs = await coll.find({}).sort({ createdAt: -1 }).toArray();
-        if (docs && docs.length > 0) {
-          return docs.map(({ _id, ...rest }) => rest as LiveUpdate);
+    const cacheKey = "public:live_updates";
+    return this.getCachedValue(cacheKey, this.cacheTtlMs.liveUpdates, async () => {
+      if (this.isMongoActive && this.mongoDb) {
+        try {
+          const coll = this.mongoDb.collection("live_updates");
+          const docs = await coll.find({}).sort({ createdAt: -1 }).toArray();
+          if (docs && docs.length > 0) {
+            return docs.map(({ _id, ...rest }) => rest as LiveUpdate);
+          }
+        } catch (err) {
+          console.error("[MongoDB Query Error] getLiveUpdates:", err);
         }
-      } catch (err) {
-        console.error("[MongoDB Query Error] getLiveUpdates:", err);
       }
-    }
-    if (this.isPostgresActive && this.pgPool) {
-      try {
-        const res = await this.pgPool.query(`SELECT * FROM live_updates ORDER BY created_at DESC`);
-        if (res.rows && res.rows.length > 0) {
-          return res.rows.map(r => ({
-            id: r.id,
-            text: r.text,
-            isImportant: !!r.is_important,
-            createdAt: r.created_at
-          }));
+      if (this.isPostgresActive && this.pgPool) {
+        try {
+          const res = await this.pgPool.query(`SELECT * FROM live_updates ORDER BY created_at DESC`);
+          if (res.rows && res.rows.length > 0) {
+            return res.rows.map(r => ({
+              id: r.id,
+              text: r.text,
+              isImportant: !!r.is_important,
+              createdAt: r.created_at
+            }));
+          }
+        } catch (err) {
+          console.error("[PostgreSQL Query Error] getLiveUpdates:", err);
         }
-      } catch (err) {
-        console.error("[PostgreSQL Query Error] getLiveUpdates:", err);
       }
-    }
-    return this.readLocalFile<LiveUpdate[]>("updates.json", [
-      { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
-      { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
-      { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
-    ]);
+      return this.readLocalFile<LiveUpdate[]>("updates.json", [
+        { id: "1", text: "Registrations are now open for Sri Vasavi Internal Hackathon 2026!", createdAt: new Date().toISOString(), isImportant: true },
+        { id: "2", text: "Important: Every team must have at least one female member.", createdAt: new Date().toISOString(), isImportant: false },
+        { id: "3", text: "All teams must submit their abstract PPT before the deadline.", createdAt: new Date().toISOString(), isImportant: false }
+      ]);
+    });
   }
 
   public async saveLiveUpdates(updates: LiveUpdate[]): Promise<boolean> {
@@ -2874,12 +2963,14 @@ class DatabaseManager {
             VALUES ($1, $2, $3, $4)
           `, [u.id, u.text, !!u.isImportant, u.createdAt || new Date().toISOString()]);
         }
+        this.invalidateCacheKeys("public:live_updates");
         return true;
       } catch (err) {
         console.error("[PostgreSQL Save Error] saveLiveUpdates:", err);
       }
     }
     this.writeLocalFile("updates.json", updates);
+    this.invalidateCacheKeys("public:live_updates");
     return true;
   }
 
