@@ -38,31 +38,45 @@
       "imageUrl": ""
     }
   ],
-  "previousPhotos": [],
+  "previousPhotos": [
+    {
+      "id": "1",
+      "title": "SIH 2024 Winning Ceremony",
+      "imageUrl": "",
+      "description": "SVEC team receiving the 1st prize at nodal center."
+    },
+    {
+      "id": "2",
+      "title": "Internal Evaluation Hackathon",
+      "imageUrl": "",
+      "description": "Expert panel evaluating student prototypes during the 2025 internal round."
+    }
+  ],
   "patrons": [
     {
       "id": "p1",
       "name": "Sri G. Satyanarayana",
       "position": "President",
-      "imageUrl": "/api/uploads/images/b12757c9-0875-41fa-9def-4c0e480bf37d_president.jpeg"
+      "imageUrl": ""
     },
     {
       "id": "p2",
       "name": "Sri Ch. V. V. Subba Rao",
       "position": "Secretary",
-      "imageUrl": "/api/uploads/images/4679ced4-f112-4fef-898c-5bc95b01db61_secretary.jpeg"
+      "imageUrl": ""
     },
     {
       "id": "p3",
       "name": "Sri K. Venkateswara Rao",
       "position": "Technical Director",
-      "imageUrl": "/api/uploads/images/604230f1-dc60-463a-9322-1b7ad19898f6_tech_director1.png"
+      "imageUrl": ""
     },
     {
       "id": "p4",
       "name": "Dr. Ch. Rambabu",
       "position": "Principal",
-      "imageUrl": "/api/uploads/images/406668a9-7753-4c71-9dfe-cb1b5543ffa4_principal.jpeg"
+      "imageUrl": ""
     }
-  ]
+  ],
+  "showTimeline": false
 }

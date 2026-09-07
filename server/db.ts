@@ -1,3 +1,4 @@
+import "dotenv/config";
 import fs from "fs";
 import path from "path";
 import { 
@@ -56,7 +57,56 @@ export interface BroadcastLog {
 }
 
 const IS_VERCEL = !!process.env.VERCEL;
-export const DATA_DIR = process.env.DATA_DIR || (IS_VERCEL ? "/tmp/svec_data" : path.join(process.cwd(), "data"));
+
+function resolveSafeDataDir(): string {
+  const envDataDir = (process.env.DATA_DIR || "").trim();
+  const envUploadsDir = (process.env.UPLOADS_DIR || "").trim();
+
+  if (envUploadsDir) {
+    try {
+      if (!fs.existsSync(envUploadsDir)) {
+        fs.mkdirSync(envUploadsDir, { recursive: true });
+      }
+      return path.dirname(envUploadsDir);
+    } catch (e: any) {
+      console.warn(`[Storage Warning] UPLOADS_DIR env '${envUploadsDir}' cannot be accessed (${e.message}). Falling back to automatic directory.`);
+    }
+  }
+
+  if (envDataDir) {
+    try {
+      if (!fs.existsSync(envDataDir)) {
+        fs.mkdirSync(envDataDir, { recursive: true });
+      }
+      return envDataDir;
+    } catch (e: any) {
+      console.warn(`[Storage Warning] DATA_DIR env '${envDataDir}' cannot be accessed (${e.message}). Falling back to automatic directory.`);
+    }
+  }
+
+  if (IS_VERCEL) return "/tmp/svec_data";
+
+  const preferred = path.join(process.cwd(), "data");
+  try {
+    if (!fs.existsSync(preferred)) {
+      fs.mkdirSync(preferred, { recursive: true });
+    }
+    return preferred;
+  } catch (err: any) {
+    console.warn(`[Storage Warning] Host filesystem permissions prevent writing to '${preferred}': ${err.message}.`);
+    const fallbackDir = path.join(process.cwd(), "data");
+    try {
+      if (!fs.existsSync(fallbackDir)) {
+        fs.mkdirSync(fallbackDir, { recursive: true });
+      }
+      return fallbackDir;
+    } catch {
+      return preferred;
+    }
+  }
+}
+
+export const DATA_DIR = resolveSafeDataDir();
 
 // Default initializers
 export const defaultCriteria: EvaluationCriterion[] = [

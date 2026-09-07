@@ -1,0 +1,62 @@
+[
+  {
+    "id": "1788101982092",
+    "email": "test_student_2026@svec.ac.in",
+    "passwordHash": "1ec81c3872300ab9304a17d85876b3ba:6af27a43a7edf5393611df9227c6aadd27e1961fa6d7565471dbf47f6a43b04c2798090da0b31b18d7e193331bb6597fae0246964c3e7d73aeeb781e83074980",
+    "name": "",
+    "gender": "Male",
+    "department": "CSE",
+    "mobile": "9876543210",
+    "academicYear": "",
+    "rollNumber": "",
+    "createdAt": "2026-08-30T14:59:42.092Z"
+  },
+  {
+    "id": "1788185482169",
+    "email": "deepak0554@gmail.com",
+    "passwordHash": "26209d1b8b968a5aec4cd43e82f0c144:02978b05f49429ab20cfa9f0d6568f2e0e0bd92e152fab2c749d8e23bf663b864178445c1324770e18b1a5ecfbe6303027dff3fbf14f672b78b263077227e94c",
+    "name": "",
+    "gender": "Female",
+    "department": "Computer Science & Engineering (CSE)",
+    "mobile": "9491555369",
+    "academicYear": "",
+    "rollNumber": "",
+    "createdAt": "2026-08-31T14:11:22.169Z"
+  },
+  {
+    "id": "1788275184875",
+    "email": "test@test.com",
+    "passwordHash": "cea5e87b55fbc7109cad09bc2c02ba30:c2a3d5c24a6a647856348cbddac3e74604ad6ada9ee175579086168155d68a3c87306f49cfb467abeaa6beb87c2a4c89b00d326785c7014a7c5897dc88e1f68e",
+    "name": "",
+    "gender": "Female",
+    "department": "Mechanical Engineering (MECH)",
+    "mobile": "9491444317",
+    "academicYear": "",
+    "rollNumber": "",
+    "createdAt": "2026-09-01T15:06:24.875Z"
+  },
+  {
+    "id": "1788278054197",
+    "email": "deepak@gmail.com",
+    "passwordHash": "7a98bf0473c82957a8b0f20dc0dabc86:2395aa9d9fddffaab6763f96feab7e59a0c87bddadf4b032dcea2543544988b8abcff99313915bd6c3af088241edf4bc8c833eea042e129fec580797d9545142",
+    "name": "",
+    "gender": "Female",
+    "department": "Mechanical Engineering (MECH)",
+    "mobile": "9491555369",
+    "academicYear": "",
+    "rollNumber": "",
+    "createdAt": "2026-09-01T15:54:14.197Z"
+  },
+  {
+    "id": "1788280206845",
+    "email": "deepak055@gmail.com",
+    "passwordHash": "3ceb2745e68223e7ac8f34827575752e:6bd81a4bbdb53feafe9b6ccb871077b79ce0a248340a68394ca8f0831dbecf01963d4b699f3ad02ba817f955b63c3f45c193888771fe0c966369780c3ffbe924",
+    "name": "",
+    "gender": "Female",
+    "department": "Information Technology (IT)",
+    "mobile": "9415554567",
+    "academicYear": "",
+    "rollNumber": "",
+    "createdAt": "2026-09-01T16:30:06.845Z"
+  }
+]

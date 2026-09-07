@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import compression from "compression";
 import path from "path";
@@ -504,108 +505,116 @@ export function resolveSecretUpdate(incoming: string | undefined, currentSecret:
 
 function readSettings(): FeeConfig {
   const parsed = db.readLocalFile<any>("settings.json", {});
+  const env = process.env;
   const savedProblemStatements = Array.isArray(parsed.savedProblemStatements) ? parsed.savedProblemStatements : undefined;
+
+  const getString = (envKey: string, fallback: string) => env[envKey] && env[envKey]!.trim() ? env[envKey]!.trim() : fallback;
+  const getNumber = (envKey: string, fallback?: number) => {
+    const raw = env[envKey];
+    if (raw === undefined || raw === null || raw.trim() === "") return fallback;
+    const val = Number(raw);
+    return Number.isFinite(val) ? val : fallback;
+  };
+  const getBoolean = (envKey: string, fallback: boolean) => {
+    const raw = env[envKey];
+    if (raw === undefined || raw === null || raw.trim() === "") return fallback;
+    return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+  };
 
   return {
     savedProblemStatements,
-    feeEnabled: parsed.feeEnabled ?? false,
-    feeAmount: parsed.feeAmount ?? 499,
-    paymentMode: parsed.paymentMode || (parsed.manualPaymentEnabled ? "manual_upi" : "manual_upi"),
-    manualPaymentEnabled: parsed.manualPaymentEnabled !== undefined ? parsed.manualPaymentEnabled : (parsed.paymentMode === "manual_upi" || !!parsed.upiQrCodeUrl || true),
-    upiQrCodeUrl: parsed.upiQrCodeUrl ?? "",
-    upiId: parsed.upiId ?? "svec@upi",
-    upiPayeeName: parsed.upiPayeeName ?? "Sri Vasavi Engineering College",
-    upiInstructions: parsed.upiInstructions ?? "Scan the UPI QR code using any UPI App (Google Pay, PhonePe, Paytm, BHIM). Complete the payment, enter your 12-digit UTR/Transaction ID and attach the payment screenshot below.",
-    requirePaymentScreenshot: parsed.requirePaymentScreenshot !== undefined ? parsed.requirePaymentScreenshot : true,
-    razorpayKeyId: process.env.RAZORPAY_KEY_ID || parsed.razorpayKeyId || "",
-    razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || parsed.razorpayKeySecret || "",
-    jwtEnabled: parsed.jwtEnabled ?? false,
-    emailEnabled: parsed.emailEnabled ?? false,
-    smtpHost: process.env.SMTP_HOST || parsed.smtpHost || "",
-    smtpPort: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : (parsed.smtpPort ?? 587),
-    smtpUser: process.env.SMTP_USER || parsed.smtpUser || "",
-    smtpPass: process.env.SMTP_PASS || process.env.SMTP_PASSWORD || parsed.smtpPass || "",
-    smtpFrom: process.env.SMTP_FROM || parsed.smtpFrom || "",
-    portalTheme: parsed.portalTheme ?? "light",
-    logoUrl: parsed.logoUrl ?? "",
-    portalTitle: parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026",
-    portalCaption: parsed.portalCaption ?? "Sri Vasavi Engineering College",
-    teamMembersCount: parsed.teamMembersCount ?? 5,
-    genderDiversityRequired: parsed.genderDiversityRequired ?? true,
-    registrationDeadline: parsed.registrationDeadline ?? "",
-    submissionDeadline: parsed.submissionDeadline ?? "",
-    minTeamSize: parsed.minTeamSize !== undefined ? Number(parsed.minTeamSize) : undefined,
-    maxTeamSize: parsed.maxTeamSize !== undefined ? Number(parsed.maxTeamSize) : undefined,
-    maxTeamsPerProblemStatement: parsed.maxTeamsPerProblemStatement !== undefined ? Number(parsed.maxTeamsPerProblemStatement) : undefined,
+    feeEnabled: getBoolean("FEE_ENABLED", parsed.feeEnabled ?? false),
+    feeAmount: getNumber("FEE_AMOUNT", parsed.feeAmount ?? 499) ?? 499,
+    paymentMode: (getString("PAYMENT_MODE", parsed.paymentMode || (parsed.manualPaymentEnabled ? "manual_upi" : "manual_upi")) as "gateway" | "manual_upi" | "both" | "free"),
+    manualPaymentEnabled: getBoolean("MANUAL_PAYMENT_ENABLED", parsed.manualPaymentEnabled !== undefined ? parsed.manualPaymentEnabled : (parsed.paymentMode === "manual_upi" || !!parsed.upiQrCodeUrl || true)),
+    upiQrCodeUrl: getString("UPI_QR_CODE_URL", parsed.upiQrCodeUrl ?? ""),
+    upiId: getString("UPI_ID", parsed.upiId ?? "svec@upi"),
+    upiPayeeName: getString("UPI_PAYEE_NAME", parsed.upiPayeeName ?? "Sri Vasavi Engineering College"),
+    upiInstructions: getString("UPI_INSTRUCTIONS", parsed.upiInstructions ?? "Scan the UPI QR code using any UPI App (Google Pay, PhonePe, Paytm, BHIM). Complete the payment, enter your 12-digit UTR/Transaction ID and attach the payment screenshot below."),
+    requirePaymentScreenshot: getBoolean("REQUIRE_PAYMENT_SCREENSHOT", parsed.requirePaymentScreenshot !== undefined ? parsed.requirePaymentScreenshot : true),
+    razorpayKeyId: getString("RAZORPAY_KEY_ID", process.env.RAZORPAY_KEY_ID || parsed.razorpayKeyId || ""),
+    razorpayKeySecret: getString("RAZORPAY_KEY_SECRET", process.env.RAZORPAY_KEY_SECRET || parsed.razorpayKeySecret || ""),
+    jwtEnabled: getBoolean("JWT_ENABLED", parsed.jwtEnabled ?? false),
+    emailEnabled: getBoolean("EMAIL_ENABLED", parsed.emailEnabled ?? false),
+    smtpHost: getString("SMTP_HOST", process.env.SMTP_HOST || parsed.smtpHost || ""),
+    smtpPort: getNumber("SMTP_PORT", process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : (parsed.smtpPort ?? 587)) ?? 587,
+    smtpUser: getString("SMTP_USER", process.env.SMTP_USER || parsed.smtpUser || ""),
+    smtpPass: getString("SMTP_PASS", process.env.SMTP_PASS || process.env.SMTP_PASSWORD || parsed.smtpPass || ""),
+    smtpFrom: getString("SMTP_FROM", process.env.SMTP_FROM || parsed.smtpFrom || ""),
+    portalTheme: (getString("PORTAL_THEME", parsed.portalTheme ?? "light") as "light" | "dark"),
+    logoUrl: getString("LOGO_URL", parsed.logoUrl ?? ""),
+    portalTitle: getString("PORTAL_TITLE", parsed.portalTitle ?? "SVEC - SIH Internal Hackathon 2026"),
+    portalCaption: getString("PORTAL_CAPTION", parsed.portalCaption ?? "Sri Vasavi Engineering College"),
+    teamMembersCount: getNumber("TEAM_MEMBERS_COUNT", parsed.teamMembersCount ?? 5) ?? 5,
+    genderDiversityRequired: getBoolean("GENDER_DIVERSITY_REQUIRED", parsed.genderDiversityRequired ?? true),
+    registrationDeadline: getString("REGISTRATION_DEADLINE", parsed.registrationDeadline ?? ""),
+    submissionDeadline: getString("SUBMISSION_DEADLINE", parsed.submissionDeadline ?? ""),
+    minTeamSize: getNumber("MIN_TEAM_SIZE", parsed.minTeamSize !== undefined ? Number(parsed.minTeamSize) : undefined),
+    maxTeamSize: getNumber("MAX_TEAM_SIZE", parsed.maxTeamSize !== undefined ? Number(parsed.maxTeamSize) : undefined),
+    maxTeamsPerProblemStatement: getNumber("MAX_TEAMS_PER_PROBLEM_STATEMENT", parsed.maxTeamsPerProblemStatement !== undefined ? Number(parsed.maxTeamsPerProblemStatement) : undefined),
 
-    // SMS config
-    smsEnabled: parsed.smsEnabled ?? false,
-    smsProvider: parsed.smsProvider ?? "twilio",
-    twilioSid: process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID || parsed.twilioSid || "",
-    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN || parsed.twilioAuthToken || "",
-    twilioFrom: process.env.TWILIO_FROM || parsed.twilioFrom || "",
-    msg91AuthKey: process.env.MSG91_AUTH_KEY || parsed.msg91AuthKey || "",
-    msg91SenderId: process.env.MSG91_SENDER_ID || parsed.msg91SenderId || "",
-    msg91Route: process.env.MSG91_ROUTE || parsed.msg91Route || "4",
-    smsCustomUrl: parsed.smsCustomUrl ?? "",
-    smsCustomMethod: parsed.smsCustomMethod ?? "POST",
-    smsCustomHeaders: parsed.smsCustomHeaders ?? "",
-    smsCustomPayload: parsed.smsCustomPayload ?? "",
+    smsEnabled: getBoolean("SMS_ENABLED", parsed.smsEnabled ?? false),
+    smsProvider: (getString("SMS_PROVIDER", parsed.smsProvider ?? "twilio") as "twilio" | "msg91" | "custom"),
+    twilioSid: getString("TWILIO_ACCOUNT_SID", process.env.TWILIO_ACCOUNT_SID || process.env.TWILIO_SID || parsed.twilioSid || ""),
+    twilioAuthToken: getString("TWILIO_AUTH_TOKEN", process.env.TWILIO_AUTH_TOKEN || parsed.twilioAuthToken || ""),
+    twilioFrom: getString("TWILIO_FROM", process.env.TWILIO_FROM || parsed.twilioFrom || ""),
+    msg91AuthKey: getString("MSG91_AUTH_KEY", process.env.MSG91_AUTH_KEY || parsed.msg91AuthKey || ""),
+    msg91SenderId: getString("MSG91_SENDER_ID", process.env.MSG91_SENDER_ID || parsed.msg91SenderId || ""),
+    msg91Route: getString("MSG91_ROUTE", process.env.MSG91_ROUTE || parsed.msg91Route || "4"),
+    smsCustomUrl: getString("SMS_CUSTOM_URL", parsed.smsCustomUrl ?? ""),
+    smsCustomMethod: (getString("SMS_CUSTOM_METHOD", parsed.smsCustomMethod ?? "POST") as "GET" | "POST"),
+    smsCustomHeaders: getString("SMS_CUSTOM_HEADERS", parsed.smsCustomHeaders ?? ""),
+    smsCustomPayload: getString("SMS_CUSTOM_PAYLOAD", parsed.smsCustomPayload ?? ""),
 
-    // WhatsApp config
-    whatsappEnabled: parsed.whatsappEnabled ?? false,
-    whatsappProvider: parsed.whatsappProvider ?? "meta",
-    whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN || parsed.whatsappAccessToken || "",
-    whatsappPhoneId: process.env.WHATSAPP_PHONE_ID || parsed.whatsappPhoneId || "",
-    whatsappWabaId: process.env.WHATSAPP_WABA_ID || parsed.whatsappWabaId || "",
-    whatsappCustomUrl: parsed.whatsappCustomUrl ?? "",
-    whatsappCustomMethod: parsed.whatsappCustomMethod ?? "POST",
-    whatsappCustomHeaders: parsed.whatsappCustomHeaders ?? "",
-    whatsappCustomPayload: parsed.whatsappCustomPayload ?? "",
+    whatsappEnabled: getBoolean("WHATSAPP_ENABLED", parsed.whatsappEnabled ?? false),
+    whatsappProvider: (getString("WHATSAPP_PROVIDER", parsed.whatsappProvider ?? "meta") as "meta" | "custom"),
+    whatsappAccessToken: getString("WHATSAPP_ACCESS_TOKEN", process.env.WHATSAPP_ACCESS_TOKEN || parsed.whatsappAccessToken || ""),
+    whatsappPhoneId: getString("WHATSAPP_PHONE_ID", process.env.WHATSAPP_PHONE_ID || parsed.whatsappPhoneId || ""),
+    whatsappWabaId: getString("WHATSAPP_WABA_ID", process.env.WHATSAPP_WABA_ID || parsed.whatsappWabaId || ""),
+    whatsappCustomUrl: getString("WHATSAPP_CUSTOM_URL", parsed.whatsappCustomUrl ?? ""),
+    whatsappCustomMethod: (getString("WHATSAPP_CUSTOM_METHOD", parsed.whatsappCustomMethod ?? "POST") as "GET" | "POST"),
+    whatsappCustomHeaders: getString("WHATSAPP_CUSTOM_HEADERS", parsed.whatsappCustomHeaders ?? ""),
+    whatsappCustomPayload: getString("WHATSAPP_CUSTOM_PAYLOAD", parsed.whatsappCustomPayload ?? ""),
 
-    // External DB config (Enabled by default to preserve settings & data across redeployments)
-    dbEnabled: parsed.dbEnabled !== undefined ? parsed.dbEnabled : true,
-    dbType: (parsed.dbType && parsed.dbType !== "none") ? parsed.dbType : "sql",
-    dbHost: process.env.DB_HOST || process.env.PG_HOST || parsed.dbHost || "",
-    dbPort: process.env.DB_PORT ? Number(process.env.DB_PORT) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : (parsed.dbPort !== undefined ? Number(parsed.dbPort) : 5432)),
-    dbName: process.env.DB_NAME || process.env.PG_DATABASE || parsed.dbName || "postgres",
-    dbUsername: process.env.DB_USERNAME || process.env.PG_USER || parsed.dbUsername || "postgres",
-    dbPassword: process.env.DB_PASSWORD || process.env.PG_PASSWORD || parsed.dbPassword || "",
-    dbCollectionOrTable: parsed.dbCollectionOrTable ?? "registrations",
-    dbStatus: parsed.dbStatus ?? "Connected (Auto-Sync)",
+    dbEnabled: getBoolean("DB_ENABLED", parsed.dbEnabled !== undefined ? parsed.dbEnabled : true),
+    dbType: (getString("DB_TYPE", (parsed.dbType && parsed.dbType !== "none") ? parsed.dbType : "sql") as "none" | "mongodb" | "sql"),
+    dbHost: getString("DB_HOST", process.env.DB_HOST || process.env.PG_HOST || parsed.dbHost || ""),
+    dbPort: getNumber("DB_PORT", process.env.DB_PORT ? Number(process.env.DB_PORT) : (process.env.PG_PORT ? Number(process.env.PG_PORT) : (parsed.dbPort !== undefined ? Number(parsed.dbPort) : 5432))) ?? 5432,
+    dbName: getString("DB_NAME", process.env.DB_NAME || process.env.PG_DATABASE || parsed.dbName || "postgres"),
+    dbUsername: getString("DB_USERNAME", process.env.DB_USERNAME || process.env.PG_USER || parsed.dbUsername || "postgres"),
+    dbPassword: getString("DB_PASSWORD", process.env.DB_PASSWORD || process.env.PG_PASSWORD || parsed.dbPassword || ""),
+    dbCollectionOrTable: getString("DB_COLLECTION_OR_TABLE", parsed.dbCollectionOrTable ?? "registrations"),
+    dbStatus: getString("DB_STATUS", parsed.dbStatus ?? "Connected (Auto-Sync)"),
 
-    // Student Profile & Member updates lock
-    lockStudentUpdates: parsed.lockStudentUpdates ?? false,
-    lockRegisterAnotherTeam: parsed.lockRegisterAnotherTeam ?? false,
+    lockStudentUpdates: getBoolean("LOCK_STUDENT_UPDATES", parsed.lockStudentUpdates ?? false),
+    lockRegisterAnotherTeam: getBoolean("LOCK_REGISTER_ANOTHER_TEAM", parsed.lockRegisterAnotherTeam ?? false),
 
-    // Customizable Certificates
-    enableCertificates: parsed.enableCertificates ?? false,
-    certificateTitle: parsed.certificateTitle ?? "CERTIFICATE OF PARTICIPATION",
-    certificateSubtitle: parsed.certificateSubtitle ?? "This is proudly presented to",
-    certificateBody: parsed.certificateBody ?? "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges.",
-    certificateSignatory1Name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu",
-    certificateSignatory1Title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC",
-    certificateSignatory2Name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu",
-    certificateSignatory2Title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor",
+    enableCertificates: getBoolean("ENABLE_CERTIFICATES", parsed.enableCertificates ?? false),
+    certificateTitle: getString("CERTIFICATE_TITLE", parsed.certificateTitle ?? "CERTIFICATE OF PARTICIPATION"),
+    certificateSubtitle: getString("CERTIFICATE_SUBTITLE", parsed.certificateSubtitle ?? "This is proudly presented to"),
+    certificateBody: getString("CERTIFICATE_BODY", parsed.certificateBody ?? "for outstanding participation in the SVEC Smart India Hackathon 2026 Internal Hackathon. Their team demonstrated outstanding design, creative technical engineering, and dedicated problem-solving skills in developing solutions for high-impact challenges."),
+    certificateSignatory1Name: getString("CERTIFICATE_SIGNATORY_1_NAME", parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu"),
+    certificateSignatory1Title: getString("CERTIFICATE_SIGNATORY_1_TITLE", parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC"),
+    certificateSignatory2Name: getString("CERTIFICATE_SIGNATORY_2_NAME", parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu"),
+    certificateSignatory2Title: getString("CERTIFICATE_SIGNATORY_2_TITLE", parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor"),
     certificateSignatories: parsed.certificateSignatories ?? [
-      { id: "sig-1", name: parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu", title: parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC" },
-      { id: "sig-2", name: parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu", title: parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor" }
+      { id: "sig-1", name: getString("CERTIFICATE_SIGNATORY_1_NAME", parsed.certificateSignatory1Name ?? "Dr. Ch. Rambabu"), title: getString("CERTIFICATE_SIGNATORY_1_TITLE", parsed.certificateSignatory1Title ?? "Principal & Chairman, SVEC") },
+      { id: "sig-2", name: getString("CERTIFICATE_SIGNATORY_2_NAME", parsed.certificateSignatory2Name ?? "Dr. K. Shirin Bhanu"), title: getString("CERTIFICATE_SIGNATORY_2_TITLE", parsed.certificateSignatory2Title ?? "SIH College SPOC & Convenor") }
     ],
-    certificateBgType: parsed.certificateBgType ?? "classic",
-    certificateBgUrl: parsed.certificateBgUrl ?? "",
-    certificateBorderColor: parsed.certificateBorderColor ?? "#4f46e5",
-    certificateDateText: parsed.certificateDateText ?? "July 17, 2026",
-    creditsTitle: parsed.creditsTitle ?? "Department of CSE",
-    creditsContent: parsed.creditsContent ?? "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026",
-    creditsEnabled: parsed.creditsEnabled ?? true,
+    certificateBgType: (getString("CERTIFICATE_BG_TYPE", parsed.certificateBgType ?? "classic") as "classic" | "modern" | "tech" | "image"),
+    certificateBgUrl: getString("CERTIFICATE_BG_URL", parsed.certificateBgUrl ?? ""),
+    certificateBorderColor: getString("CERTIFICATE_BORDER_COLOR", parsed.certificateBorderColor ?? "#4f46e5"),
+    certificateDateText: getString("CERTIFICATE_DATE_TEXT", parsed.certificateDateText ?? "July 17, 2026"),
+    creditsTitle: getString("CREDITS_TITLE", parsed.creditsTitle ?? "Department of CSE"),
+    creditsContent: getString("CREDITS_CONTENT", parsed.creditsContent ?? "### Department of Computer Science & Engineering\n\nSri Vasavi Engineering College has spearheaded this Internal Hackathon Portal to encourage real-world problem solving among students.\n\n**Mentorship Team:** Department Faculty\n**Student Contributors:** CSE Batch 2026"),
+    creditsEnabled: getBoolean("CREDITS_ENABLED", parsed.creditsEnabled ?? true),
 
-    // Sample PPT / Presentation Template & Demo Link
-    samplePptEnabled: parsed.samplePptEnabled !== undefined ? parsed.samplePptEnabled : true,
-    samplePptUrl: parsed.samplePptUrl ?? "",
-    samplePptFileName: parsed.samplePptFileName ?? "",
-    samplePptFileBase64: parsed.samplePptFileBase64 ?? "",
-    samplePptFileUrl: parsed.samplePptFileUrl ?? "",
-    samplePptDescription: parsed.samplePptDescription ?? "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team)."
+    samplePptEnabled: getBoolean("SAMPLE_PPT_ENABLED", parsed.samplePptEnabled !== undefined ? parsed.samplePptEnabled : true),
+    samplePptUrl: getString("SAMPLE_PPT_URL", parsed.samplePptUrl ?? ""),
+    samplePptFileName: getString("SAMPLE_PPT_FILE_NAME", parsed.samplePptFileName ?? ""),
+    samplePptFileBase64: getString("SAMPLE_PPT_FILE_BASE64", parsed.samplePptFileBase64 ?? ""),
+    samplePptFileUrl: getString("SAMPLE_PPT_FILE_URL", parsed.samplePptFileUrl ?? ""),
+    samplePptDescription: getString("SAMPLE_PPT_DESCRIPTION", parsed.samplePptDescription ?? "Official SIH 2026 SVEC Presentation Format (8 Slides: Problem, Proposed Solution, Tech Stack, Feasibility, Architecture, Milestones, Budget, Team).")
   };
 }
 

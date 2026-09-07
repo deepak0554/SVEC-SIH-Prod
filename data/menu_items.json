@@ -40,12 +40,5 @@
     "type": "system",
     "target": "faq",
     "order": 5
-  },
-  {
-    "id": "m7",
-    "label": "Admin Login",
-    "type": "system",
-    "target": "admin",
-    "order": 6
   }
 ]

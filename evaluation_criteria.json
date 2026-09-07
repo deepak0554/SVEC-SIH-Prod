@@ -1,0 +1,32 @@
+[
+  {
+    "id": "c1",
+    "name": "Problem Understanding & Approach",
+    "maxScore": 10,
+    "description": "Clarity of the selected SIH problem statement and innovativeness of proposed solution."
+  },
+  {
+    "id": "c2",
+    "name": "Technical Feasibility & Architecture",
+    "maxScore": 10,
+    "description": "Tech stack, system design, hardware/software specifications and viable execution steps."
+  },
+  {
+    "id": "c3",
+    "name": "Originality & Innovation",
+    "maxScore": 10,
+    "description": "Novelty, USP compared to existing solutions in market/industry."
+  },
+  {
+    "id": "c4",
+    "name": "Presentation & PPT Quality",
+    "maxScore": 10,
+    "description": "Slide clarity, workflow diagram quality, structured deliverable explanation."
+  },
+  {
+    "id": "c5",
+    "name": "Q&A and Team Coordination",
+    "maxScore": 10,
+    "description": "Defense of methodology, answer precision, member participation."
+  }
+]

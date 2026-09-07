@@ -1,3 +1,4 @@
+import "dotenv/config";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -11,14 +12,28 @@ import { db } from "./db";
 const IS_VERCEL = !!process.env.VERCEL;
 
 export function resolveSafeDataDir(): string {
-  if (process.env.DATA_DIR) {
+  const envDataDir = (process.env.DATA_DIR || "").trim();
+  const envUploadsDir = (process.env.UPLOADS_DIR || "").trim();
+
+  if (envUploadsDir) {
     try {
-      if (!fs.existsSync(process.env.DATA_DIR)) {
-        fs.mkdirSync(process.env.DATA_DIR, { recursive: true });
+      if (!fs.existsSync(envUploadsDir)) {
+        fs.mkdirSync(envUploadsDir, { recursive: true });
       }
-      return process.env.DATA_DIR;
+      return path.dirname(envUploadsDir);
     } catch (e: any) {
-      console.warn(`[Storage Warning] DATA_DIR env '${process.env.DATA_DIR}' cannot be accessed (${e.message}). Falling back to automatic directory.`);
+      console.warn(`[Storage Warning] UPLOADS_DIR env '${envUploadsDir}' cannot be accessed (${e.message}). Falling back to automatic directory.`);
+    }
+  }
+
+  if (envDataDir) {
+    try {
+      if (!fs.existsSync(envDataDir)) {
+        fs.mkdirSync(envDataDir, { recursive: true });
+      }
+      return envDataDir;
+    } catch (e: any) {
+      console.warn(`[Storage Warning] DATA_DIR env '${envDataDir}' cannot be accessed (${e.message}). Falling back to automatic directory.`);
     }
   }
 
@@ -52,7 +67,7 @@ export function resolveSafeDataDir(): string {
 }
 
 export const DATA_DIR = resolveSafeDataDir();
-export const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
+export const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(DATA_DIR, "uploads");
 export const UPLOADS_PPTS_DIR = path.join(UPLOADS_DIR, "ppts");
 export const UPLOADS_IMAGES_DIR = path.join(UPLOADS_DIR, "images");
 export const UPLOADS_DOCS_DIR = path.join(UPLOADS_DIR, "documents");
